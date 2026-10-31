@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,20 +12,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 if __package__:
     from .database import Customer, Operator, Service, Transaction, get_db
     from .seed import generate_ussd
+    from .validation import validate_syrian_phone
 else:
     from database import Customer, Operator, Service, Transaction, get_db
     from seed import generate_ussd
+    from validation import validate_syrian_phone
 
 app = FastAPI(title="Uniter")
 
-Phone = Annotated[str, Field(min_length=1, max_length=32, pattern=r"^[0-9]+$")]
 Code = Annotated[str, Field(min_length=1, max_length=50)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 class CustomerCreate(BaseModel):
-    phone: Phone
+    phone: str
     name: str = Field(min_length=1, max_length=255)
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, phone: str) -> str:
+        return validate_syrian_phone(phone)
 
 
 class CustomerResponse(BaseModel):
@@ -38,10 +44,15 @@ class CustomerResponse(BaseModel):
 
 
 class TransactionCreate(BaseModel):
-    customer_phone: Phone
+    customer_phone: str
     operator_code: Code
     service_code: Code
     amount_cents: int = Field(ge=0, le=9223372036854775807, strict=True)
+
+    @field_validator("customer_phone")
+    @classmethod
+    def validate_customer_phone(cls, phone: str) -> str:
+        return validate_syrian_phone(phone)
 
 
 class TransactionResponse(BaseModel):
@@ -71,8 +82,12 @@ def health() -> dict[str, str]:
 @app.get("/api/customers/lookup", response_model=CustomerResponse)
 async def lookup_customer(
     db: DbSession,
-    phone: Annotated[str, Query(min_length=1, max_length=32, pattern=r"^[0-9]+$")],
+    phone: Annotated[str, Query()],
 ) -> Customer:
+    try:
+        phone = validate_syrian_phone(phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     customer = await db.scalar(select(Customer).where(Customer.phone == phone))
     if customer is None:
         raise HTTPException(status_code=404, detail="Customer not found")

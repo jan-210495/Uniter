@@ -128,3 +128,45 @@ def test_failed_transaction_does_not_leave_new_customer(client: TestClient, monk
     with pytest.raises(IntegrityError):
         client.post("/api/transactions", json=payload)
     assert client.get("/api/customers/lookup", params={"phone": "0944123456"}).status_code == 404
+
+
+def test_normalized_customer_and_transaction_phones(client: TestClient) -> None:
+    response = client.post("/api/customers", json={"phone": "+963 933-123-456", "name": "Customer"})
+    assert response.status_code == 200
+    customer = response.json()
+    assert customer["phone"] == "0933123456"
+    for phone in ("0933123456", "+963933123456", "00963 933-123-456"):
+        lookup = client.get("/api/customers/lookup", params={"phone": phone})
+        assert lookup.status_code == 200
+        assert lookup.json() == customer
+    duplicate = client.post("/api/customers", json={"phone": "00963933123456", "name": "Duplicate"})
+    assert duplicate.status_code == 409
+
+    payload = {"customer_phone": "+963933123456", "operator_code": "mtn",
+               "service_code": "prepaid", "amount_cents": 5000}
+    transaction = client.post("/api/transactions", json=payload)
+    assert transaction.status_code == 200
+    assert transaction.json()["ussd_string"] == "10050*0933123456#"
+    assert client.get("/api/customers/lookup", params={"phone": "0933123456"}).json() == customer
+
+    payload["customer_phone"] = "00963 944-123-456"
+    transaction = client.post("/api/transactions", json=payload)
+    assert transaction.status_code == 200
+    assert transaction.json()["ussd_string"] == "10050*0944123456#"
+    created = client.get("/api/customers/lookup", params={"phone": "0944123456"})
+    assert created.status_code == 200
+    assert created.json()["phone"] == "0944123456"
+
+
+def test_phone_validation_errors(client: TestClient) -> None:
+    response = client.get("/api/customers/lookup", params={"phone": "0923123456"})
+    assert response.status_code == 422
+    assert "Invalid Syrian mobile number" in response.json()["detail"]
+    response = client.post("/api/customers", json={"phone": "0923123456", "name": "Customer"})
+    assert response.status_code == 422
+    assert "Invalid Syrian mobile number" in response.json()["detail"][0]["msg"]
+    payload = {"customer_phone": "0923123456", "operator_code": "mtn",
+               "service_code": "prepaid", "amount_cents": 5000}
+    response = client.post("/api/transactions", json=payload)
+    assert response.status_code == 422
+    assert "Invalid Syrian mobile number" in response.json()["detail"][0]["msg"]
