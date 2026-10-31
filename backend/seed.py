@@ -11,13 +11,25 @@ from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
-    from .database import Operator, Service, SessionLocal, init_db
+    from .database import Operator, Service, CurrencyDenomination, SessionLocal, init_db
 else:
-    from database import Operator, Service, SessionLocal, init_db
+    from database import Operator, Service, CurrencyDenomination, SessionLocal, init_db
 
 
 async def seed_data(session: AsyncSession) -> None:
     """Insert missing configuration and commit; leave existing rows unchanged."""
+    # Insert active CurrencyDenomination row if not exists
+    denom = await session.scalar(
+        select(CurrencyDenomination).where(CurrencyDenomination.scale_name == "post-2026")
+    )
+    if denom is None:
+        denom = CurrencyDenomination(
+            scale_name="post-2026",
+            multiplier=1,
+            is_active=True,
+        )
+        session.add(denom)
+
     connection = await session.connection()
     legacy_unique_code = await connection.run_sync(
         lambda conn: any(
