@@ -68,10 +68,39 @@ async def seed_data(session: AsyncSession) -> None:
     await session.commit()
 
 
+async def generate_ussd(
+    session: AsyncSession,
+    operator_code: str,
+    service_code: str,
+    phone: str,
+    amount_cents: int,
+) -> str:
+    """Render an operator's configured USSD template for a service."""
+    operator = await session.scalar(select(Operator).where(Operator.code == operator_code))
+    if operator is None:
+        raise ValueError(f"Operator not found: {operator_code}")
+
+    service = await session.scalar(
+        select(Service).where(
+            Service.operator_id == operator.id, Service.code == service_code
+        )
+    )
+    if service is None:
+        raise ValueError(f"Service not found for operator {operator_code}: {service_code}")
+
+    amount = format(Decimal(amount_cents) / 100, "f")
+    # Seeded suffixes have adjacent placeholders; separate them as in the USSD example.
+    suffix = service.ussd_suffix.replace("amountphone", "amount*phone")
+    suffix = suffix.replace("amount", amount).replace("phone", phone)
+    return f"{operator.ussd_prefix}{suffix}"
+
+
 async def main() -> None:
     await init_db()
     async with SessionLocal() as session:
         await seed_data(session)
+        print(await generate_ussd(session, "mtn", "prepaid", "0933123456", 5000))
+        print(await generate_ussd(session, "syriatel", "postpaid", "0944123456", 0))
 
 
 if __name__ == "__main__":
