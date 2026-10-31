@@ -1,173 +1,346 @@
-from fastapi import FastAPI, Request, Depends, HTTPException, status
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from datetime import datetime
+from decimal import Decimal
+from pathlib import Path
+from typing import Annotated, Any, Dict
+from uuid import uuid4
+
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy.orm import Session
-from pydantic import BaseModel, field_validator
-import os
-import re
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database import SessionLocal, init_db, OperatorModel, ServiceModel, TransactionModel, CustomerModel, LedgerEntryModel, engine
+if __package__:
+    from .commission import get_commission_for_transaction
+    from .database import Customer, Operator, Service, Transaction, DebtLedger, get_db, get_setting, set_setting
+    from .seed import generate_ussd
+    from .validation import validate_syrian_phone
+else:
+    from commission import get_commission_for_transaction
+    from database import Customer, Operator, Service, Transaction, DebtLedger, get_db, get_setting, set_setting
+    from seed import generate_ussd
+    from validation import validate_syrian_phone
 
-app = FastAPI(title="Uniter Shop Charging", version="1.0.0")
+app = FastAPI(title="Uniter")
+templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 
-init_db(engine)
+Code = Annotated[str, Field(min_length=1, max_length=50)]
+DbSession = Annotated[AsyncSession, Depends(get_db)]
 
-os.makedirs("/home/jabboud/projects/Uniter/backend/static", exist_ok=True)
-os.makedirs("/home/jabboud/projects/Uniter/backend/templates", exist_ok=True)
-
-app.mount("/static", StaticFiles(directory="/home/jabboud/projects/Uniter/backend/static"), name="static")
-templates = Jinja2Templates(directory="/home/jabboud/projects/Uniter/backend/templates")
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-class TransactionCreate(BaseModel):
-    operator_name: str
-    service_type: str
-    phone_number: str
-    amount: float
-    note: str | None = None
-    customer_id: int | None = None
-    is_debt: bool = False
-
-    @field_validator('phone_number')
-    @classmethod
-    def validate_syrian_phone(cls, v: str) -> str:
-        cleaned = re.sub(r'\D', '', v)
-        if not re.match(r'^09\d{8}$', cleaned):
-            raise ValueError('رقم الهاتف غير صالح. يجب أن يبدأ ب 09 ويتكون من 10 أرقام (Invalid Syrian phone number)')
-        return cleaned
 
 class CustomerCreate(BaseModel):
-    name: str
     phone: str
+    name: str = Field(min_length=1, max_length=255)
 
-class DebtSettle(BaseModel):
-    amount: float
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, phone: str) -> str:
+        return validate_syrian_phone(phone)
+
+
+class CustomerResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    phone: str
+    name: str
+    balance_cents: int
+
+
+class TransactionCreate(BaseModel):
+    customer_phone: str
+    operator_code: Code
+    service_code: Code
+    amount_cents: int = Field(ge=0, le=9223372036854775807)
+
+    @field_validator("customer_phone")
+    @classmethod
+    def validate_customer_phone(cls, phone: str) -> str:
+        return validate_syrian_phone(phone)
+
+
+class CommissionSettingUpdate(BaseModel):
+    rate: Decimal = Field(ge=0, le=1, allow_inf_nan=False)
+
+
+class TransactionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    reference: str
+    ussd_string: str
+    status: str
+    amount_cents: int
+    created_at: datetime
+
+
+class DebtLedgerCreate(BaseModel):
+    customer_phone: str
+    amount_cents: int = Field(ge=0)
+    description: str = Field(default="", max_length=512)
+    type: str = Field(default="charge", pattern="^charge|payment$")
+
+    @field_validator("customer_phone")
+    @classmethod
+    def validate_customer_phone(cls, phone: str) -> str:
+        return validate_syrian_phone(phone)
+
+
+class DebtLedgerResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    customer_phone: str
+    amount_cents: int
+    description: str
+    type: str
+    created_at: datetime
+
 
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request, db: Session = Depends(get_db)):
-    operators = db.query(OperatorModel).all()
-    services = db.query(ServiceModel).all()
-    transactions = db.query(TransactionModel).order_by(TransactionModel.id.desc()).limit(15).all()
-    customers = db.query(CustomerModel).all()
-    
-    # Calculate register summary
-    total_sales = sum(t.amount for t in db.query(TransactionModel).all())
-    total_commission = sum(t.commission for t in db.query(TransactionModel).all())
-    total_debt = sum(c.debt_balance for c in customers)
+def root() -> HTMLResponse:
+    return HTMLResponse(
+        "<h1>Uniter — Mobile Shop Charging</h1>"
+        "<p>Bilingual MTN/Syriatel prepaid & postpaid management.</p>"
+    )
 
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "operators": operators,
-        "services": services,
-        "transactions": transactions,
-        "customers": customers,
-        "total_sales": total_sales,
-        "total_commission": total_commission,
-        "total_debt": total_debt
-    })
+
+@app.get("/pos", response_class=HTMLResponse)
+def pos_page(request: Request, lang: str = "en") -> HTMLResponse:
+    language = lang if lang in {"en", "ar"} else "en"
+    return templates.TemplateResponse(request=request, name="pos.html", context={"lang": language})
+
 
 @app.get("/api/health")
-def health_check(db: Session = Depends(get_db)):
-    ops = [o.name for o in db.query(OperatorModel).all()]
-    return {"status": "ok", "project": "Uniter", "operators": ops}
+def health() -> dict[str, str]:
+    return {"status": "ok"}
 
-@app.get("/api/operators")
-def api_get_operators(db: Session = Depends(get_db)):
-    return db.query(OperatorModel).all()
 
-@app.get("/api/services")
-def api_get_services(db: Session = Depends(get_db)):
-    return db.query(ServiceModel).all()
+@app.get("/api/settings/commission")
+async def read_commission_setting(db: DbSession) -> dict[str, str]:
+    rate = await get_setting(db, "commission_rate", "0.05")
+    assert rate is not None
+    return {"commission_rate": rate}
 
-@app.get("/api/customers")
-def api_get_customers(db: Session = Depends(get_db)):
-    return db.query(CustomerModel).all()
 
-@app.post("/api/customers")
-def api_create_customer(c: CustomerCreate, db: Session = Depends(get_db)):
-    existing = db.query(CustomerModel).filter(CustomerModel.name == c.name).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Customer already exists")
-    cust = CustomerModel(name=c.name, phone=c.phone, debt_balance=0.0)
-    db.add(cust)
-    db.commit()
-    db.refresh(cust)
-    return cust
+@app.put("/api/settings/commission")
+async def update_commission_setting(data: CommissionSettingUpdate, db: DbSession) -> dict[str, str]:
+    setting = await set_setting(db, "commission_rate", str(data.rate))
+    value = setting.value
+    await db.commit()
+    return {"commission_rate": value}
 
-@app.post("/api/customers/{customer_id}/settle")
-def api_settle_debt(customer_id: int, payload: DebtSettle, db: Session = Depends(get_db)):
-    cust = db.query(CustomerModel).filter(CustomerModel.id == customer_id).first()
-    if not cust:
+
+@app.get("/api/commission/calculate")
+async def commission_calculation(
+    db: DbSession,
+    amount_cents: Annotated[int, Query(ge=0, le=9223372036854775807)],
+    operator_code: Annotated[str, Query(min_length=1, max_length=50)],
+    service_code: Annotated[str, Query(min_length=1, max_length=50)],
+) -> dict[str, int | str]:
+    operator = await db.scalar(select(Operator).where(Operator.code == operator_code))
+    if operator is None:
+        raise HTTPException(status_code=404, detail="Operator not found")
+    service = await db.scalar(
+        select(Service).where(Service.operator_id == operator.id, Service.code == service_code)
+    )
+    if service is None:
+        raise HTTPException(status_code=404, detail="Service not found for operator")
+    try:
+        return await get_commission_for_transaction(db, amount_cents)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail="Invalid stored commission rate") from exc
+
+
+@app.get("/api/customers/lookup", response_model=CustomerResponse)
+async def lookup_customer(
+    db: DbSession,
+    phone: Annotated[str, Query()],
+) -> Customer:
+    try:
+        phone = validate_syrian_phone(phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    customer = await db.scalar(select(Customer).where(Customer.phone == phone))
+    if customer is None:
         raise HTTPException(status_code=404, detail="Customer not found")
-    cust.debt_balance = max(0.0, cust.debt_balance - payload.amount)
-    
-    entry = LedgerEntryModel(
-        customer_id=cust.id,
-        entry_type="debt_settled",
-        amount=payload.amount,
-        description=f"تسديد دين للزبون {cust.name}"
-    )
-    db.add(entry)
-    db.commit()
-    db.refresh(cust)
-    return cust
+    return customer
 
-@app.post("/api/transactions")
-def api_create_transaction(tx: TransactionCreate, db: Session = Depends(get_db)):
-    service = db.query(ServiceModel).join(OperatorModel).filter(
-        OperatorModel.name == tx.operator_name,
-        ServiceModel.service_type == tx.service_type
-    ).first()
-    
-    ussd = "*150*#"
-    if service:
-        ussd = service.ussd_template.format(phone=tx.phone_number, amount=int(tx.amount))
-    
-    commission = round(tx.amount * 0.01, 2)
-    
-    db_tx = TransactionModel(
-        operator_name=tx.operator_name,
-        service_type=tx.service_type,
-        phone_number=tx.phone_number,
-        amount=tx.amount,
-        ussd_string=ussd,
-        commission=commission,
-        note=tx.note,
-        status="completed"
-    )
-    db.add(db_tx)
-    
-    # Handle debt if assigned to customer
-    if tx.customer_id and tx.is_debt:
-        cust = db.query(CustomerModel).filter(CustomerModel.id == tx.customer_id).first()
-        if cust:
-            cust.debt_balance += tx.amount
-            ledger = LedgerEntryModel(
-                customer_id=cust.id,
-                entry_type="debt_added",
-                amount=tx.amount,
-                description=f"شحن دين برقم {tx.phone_number} ({tx.operator_name})"
-            )
-            db.add(ledger)
-            
-    db.commit()
-    db.refresh(db_tx)
-    return db_tx
 
-@app.get("/api/register/summary")
-def api_register_summary(db: Session = Depends(get_db)):
-    transactions = db.query(TransactionModel).all()
-    customers = db.query(CustomerModel).all()
+@app.post("/api/customers", response_model=CustomerResponse)
+async def create_customer(data: CustomerCreate, db: DbSession) -> Customer:
+    customer = Customer(phone=data.phone, name=data.name)
+    db.add(customer)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        existing = await db.scalar(select(Customer).where(Customer.phone == data.phone))
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="Customer phone already exists")
+        raise
+    await db.refresh(customer)
+    return customer
+
+
+@app.post("/api/transactions", response_model=TransactionResponse)
+async def create_transaction(data: TransactionCreate, db: DbSession) -> Transaction:
+    operator = await db.scalar(select(Operator).where(Operator.code == data.operator_code))
+    if operator is None:
+        raise HTTPException(status_code=404, detail="Operator not found")
+    service = await db.scalar(
+        select(Service).where(
+            Service.operator_id == operator.id, Service.code == data.service_code
+        )
+    )
+    if service is None:
+        raise HTTPException(status_code=404, detail="Service not found for operator")
+    if not operator.is_active or not service.is_active:
+        raise HTTPException(status_code=400, detail="Operator or service is inactive")
+
+    try:
+        ussd_string = await generate_ussd(
+            db, data.operator_code, data.service_code, data.customer_phone, data.amount_cents
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    customer = await db.scalar(select(Customer).where(Customer.phone == data.customer_phone))
+    is_new_customer = customer is None
+    if customer is None:
+        # The transaction request has no customer name; use the phone as a placeholder.
+        customer = Customer(phone=data.customer_phone, name=data.customer_phone)
+        db.add(customer)
+
+    transaction = Transaction(
+        customer=customer,
+        service=service,
+        amount_cents=data.amount_cents,
+        status="pending",
+        ussd_string=ussd_string,
+        reference=f"TXN-{uuid4().hex}",
+    )
+    db.add(transaction)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        # Concurrent requests can attempt to create the same new customer.
+        existing = await db.scalar(select(Customer).where(Customer.phone == data.customer_phone))
+        if is_new_customer and existing is not None:
+            raise HTTPException(status_code=409, detail="Customer was created concurrently; retry")
+        raise
+    await db.refresh(transaction)
+    return transaction
+
+
+# --- Debt Ledger Endpoints ---
+
+
+@app.post("/api/debt/charge", response_model=DebtLedgerResponse)
+async def create_debt_charge(data: DebtLedgerCreate, db: DbSession) -> DebtLedger:
+    """Create a debt charge for a customer (lookup by phone, create if not exists)."""
+    try:
+        phone = validate_syrian_phone(data.customer_phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    customer = await db.scalar(select(Customer).where(Customer.phone == phone))
+    if customer is None:
+        # Create customer with phone as name if not exists
+        customer = Customer(phone=phone, name=phone)
+        db.add(customer)
+        await db.flush()  # Get the ID
+
+    debt_entry = DebtLedger(
+        customer_id=customer.id,
+        amount_cents=data.amount_cents,
+        description=data.description,
+        type=data.type,
+    )
+    db.add(debt_entry)
+    await db.commit()
+    await db.refresh(debt_entry)
+
+    # Build response with customer_phone
+    return DebtLedgerResponse(
+        id=debt_entry.id,
+        customer_phone=customer.phone,
+        amount_cents=debt_entry.amount_cents,
+        description=debt_entry.description,
+        type=debt_entry.type,
+        created_at=debt_entry.created_at,
+    )
+
+
+@app.get("/api/debt/ledger", response_model=list[DebtLedgerResponse])
+async def get_debt_ledger(
+    db: DbSession,
+    customer_phone: Annotated[str, Query()],
+) -> list[DebtLedgerResponse]:
+    """List debt ledger entries for a customer."""
+    try:
+        phone = validate_syrian_phone(customer_phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    customer = await db.scalar(select(Customer).where(Customer.phone == phone))
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    result = await db.scalars(
+        select(DebtLedger).where(DebtLedger.customer_id == customer.id).order_by(DebtLedger.created_at.desc())
+    )
+    entries = result.all()
+
+    return [
+        DebtLedgerResponse(
+            id=entry.id,
+            customer_phone=customer.phone,
+            amount_cents=entry.amount_cents,
+            description=entry.description,
+            type=entry.type,
+            created_at=entry.created_at,
+        )
+        for entry in entries
+    ]
+
+
+@app.get("/api/debt/summary")
+async def get_debt_summary(
+    db: DbSession,
+    customer_phone: Annotated[str, Query()],
+) -> dict[str, int]:
+    """Return total debt (sum of charges minus payments) for a customer."""
+    try:
+        phone = validate_syrian_phone(customer_phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    customer = await db.scalar(select(Customer).where(Customer.phone == phone))
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    result = await db.scalars(
+        select(DebtLedger).where(DebtLedger.customer_id == customer.id)
+    )
+    entries = result.all()
+
+    total_charges = sum(e.amount_cents for e in entries if e.type == "charge")
+    total_payments = sum(e.amount_cents for e in entries if e.type == "payment")
+    total_debt = total_charges - total_payments
+
     return {
-        "total_sales": sum(t.amount for t in transactions),
-        "total_commission": sum(t.commission for t in transactions),
-        "total_debt": sum(c.debt_balance for c in customers),
-        "transaction_count": len(transactions)
+        "customer_phone": customer.phone,
+        "total_charges_cents": total_charges,
+        "total_payments_cents": total_payments,
+        "total_debt_cents": total_debt,
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)

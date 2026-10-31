@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="{{ lang|default('en') }}" dir="{{ 'rtl' if lang == 'ar' else 'ltr' }}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Uniter</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Noto Sans Arabic', Tahoma, sans-serif; }
+    </style>
+    {% block head_extra %}{% endblock %}
+</head>
+<body class="min-h-screen overflow-x-hidden bg-slate-50 text-start text-slate-900">
+    <header class="border-b border-slate-200 bg-white">
+        <nav class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6 lg:px-8" aria-label="Main navigation">
+            <a href="/" class="text-lg font-bold text-blue-950">Uniter</a>
+            <div class="flex flex-wrap items-center gap-3 text-sm font-semibold text-slate-600" aria-label="Language">
+                <a href="?lang=en" lang="en" class="hover:text-blue-800"{% if lang|default('en') == 'en' %} aria-current="true"{% endif %}>English</a>
+                <span aria-hidden="true" class="text-slate-300">|</span>
+                <a href="?lang=ar" lang="ar" class="hover:text-blue-800"{% if lang == 'ar' %} aria-current="true"{% endif %}>العربية</a>
+            </div>
+        </nav>
+    </header>
+    <main class="mx-auto max-w-6xl break-words px-4 py-8 sm:px-6 lg:px-8">
+        {% block content %}{% endblock %}
+    </main>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

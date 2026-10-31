@@ -1,84 +1,160 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Boolean
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship
-import datetime
+from __future__ import annotations
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./uniter.db"
+import os
+from collections.abc import AsyncIterator
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Any
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+from sqlalchemy import URL, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint, event, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
+
+DATABASE_URL = URL.create(
+    "sqlite+aiosqlite", database=os.getenv("UNITER_DB", "uniter.db")
 )
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
+engine = create_async_engine(DATABASE_URL)
+SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 Base = declarative_base()
 
-class OperatorModel(Base):
+
+@event.listens_for(engine.sync_engine, "connect")
+def enable_sqlite_foreign_keys(dbapi_connection: Any, connection_record: Any) -> None:
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class Operator(Base):
     __tablename__ = "operators"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, index=True)
-    display_name_ar = Column(String)
-    display_name_en = Column(String)
-    color_class = Column(String)
 
-class ServiceModel(Base):
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True)
+    code: Mapped[str] = mapped_column(String(50), unique=True)
+    ussd_prefix: Mapped[str] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    services: Mapped[list[Service]] = relationship(back_populates="operator")
+
+
+class Service(Base):
     __tablename__ = "services"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    operator_id = Column(Integer, ForeignKey("operators.id"))
-    service_type = Column(String)
-    name_ar = Column(String)
-    name_en = Column(String)
-    ussd_template = Column(String)
+    __table_args__ = (UniqueConstraint("operator_id", "code", name="uq_service_operator_code"),)
 
-class CustomerModel(Base):
+    id: Mapped[int] = mapped_column(primary_key=True)
+    operator_id: Mapped[int] = mapped_column(ForeignKey("operators.id"))
+    name: Mapped[str] = mapped_column(String(255))
+    code: Mapped[str] = mapped_column(String(50))
+    ussd_suffix: Mapped[str] = mapped_column(String(255))
+    price_per_unit: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    operator: Mapped[Operator] = relationship(back_populates="services")
+    transactions: Mapped[list[Transaction]] = relationship(back_populates="service")
+
+
+class Customer(Base):
     __tablename__ = "customers"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, index=True)
-    phone = Column(String)
-    debt_balance = Column(Float, default=0.0)
-    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc))
 
-class LedgerEntryModel(Base):
-    __tablename__ = "ledger_entries"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
-    entry_type = Column(String) # debt_added, debt_settled, cash_sale
-    amount = Column(Float)
-    description = Column(String)
-    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    id: Mapped[int] = mapped_column(primary_key=True)
+    phone: Mapped[str] = mapped_column(String(32), unique=True)
+    name: Mapped[str] = mapped_column(String(255))
+    balance_cents: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
 
-class TransactionModel(Base):
+    transactions: Mapped[list[Transaction]] = relationship(back_populates="customer")
+    debt_ledger: Mapped[list[DebtLedger]] = relationship(back_populates="customer")
+
+
+class Transaction(Base):
     __tablename__ = "transactions"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    operator_name = Column(String)
-    service_type = Column(String)
-    phone_number = Column(String)
-    amount = Column(Float)
-    ussd_string = Column(String)
-    commission = Column(Float, default=0.0)
-    note = Column(String, nullable=True)
-    status = Column(String, default="completed")
-    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'completed', 'failed')", name="transaction_status"),
+    )
 
-def init_db(db_engine=engine):
-    Base.metadata.create_all(bind=db_engine)
-    SessionMaker = sessionmaker(autocommit=False, autoflush=False, bind=db_engine)
-    db = SessionMaker()
-    if not db.query(OperatorModel).first():
-        mtn = OperatorModel(name="MTN", display_name_ar="إم تي إن", display_name_en="MTN", color_class="blue")
-        syriatel = OperatorModel(name="Syriatel", display_name_ar="سيريتل", display_name_en="Syriatel", color_class="red")
-        db.add_all([mtn, syriatel])
-        db.commit()
-        
-        services = [
-            ServiceModel(operator_id=mtn.id, service_type="prepaid_units", name_ar="شحن وحدات (دفع مسبق)", name_en="Pre-Paid Units Recharge", ussd_template="*150*{phone}*{amount}#"),
-            ServiceModel(operator_id=mtn.id, service_type="postpaid_bill", name_ar="دفع فاتورة (لاحق الدفع)", name_en="Post-Paid Bill Payment", ussd_template="*151*{phone}*{amount}#"),
-            ServiceModel(operator_id=syriatel.id, service_type="prepaid_units", name_ar="شحن رصيد (دفع مسبق)", name_en="Pre-Paid Balance Recharge", ussd_template="*250*{phone}*{amount}#"),
-            ServiceModel(operator_id=syriatel.id, service_type="postpaid_bill", name_ar="دفع فاتورة (لاحق الدفع)", name_en="Post-Paid Bill Payment", ussd_template="*251*{phone}*{amount}#"),
-        ]
-        db.add_all(services)
-        db.commit()
-    db.close()
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"))
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"))
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20))
+    ussd_string: Mapped[str] = mapped_column(String(255))
+    reference: Mapped[str] = mapped_column(String(255), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    customer: Mapped[Customer] = relationship(back_populates="transactions")
+    service: Mapped[Service] = relationship(back_populates="transactions")
+
+
+class DebtLedger(Base):
+    __tablename__ = "debt_ledger"
+    __table_args__ = (
+        CheckConstraint("type IN ('charge', 'payment')", name="debt_ledger_type"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"))
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    description: Mapped[str] = mapped_column(String(512), default="")
+    type: Mapped[str] = mapped_column(String(20))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    customer: Mapped[Customer] = relationship(back_populates="debt_ledger")
+
+
+class Setting(Base):
+    __tablename__ = "settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(255), unique=True)
+    value: Mapped[str] = mapped_column(String)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+async def get_setting(
+    session: AsyncSession, key: str, default: str | None = None
+) -> str | None:
+    value = await session.scalar(select(Setting.value).where(Setting.key == key))
+    return default if value is None else value
+
+
+async def set_setting(session: AsyncSession, key: str, value: str) -> Setting:
+    """Upsert a setting in the caller's transaction; the caller commits it."""
+    statement = sqlite_insert(Setting).values(key=key, value=value, updated_at=utc_now())
+    statement = statement.on_conflict_do_update(
+        index_elements=[Setting.key],
+        set_={"value": value, "updated_at": utc_now()},
+    )
+    await session.execute(statement)
+    result = await session.scalar(
+        select(Setting).where(Setting.key == key).execution_options(populate_existing=True)
+    )
+    assert result is not None
+    return result
+
+
+async def get_db() -> AsyncIterator[AsyncSession]:
+    async with SessionLocal() as session:
+        yield session
+
+
+async def init_db() -> None:
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+        statement = sqlite_insert(Setting).values(
+            key="commission_rate", value="0.05", updated_at=utc_now()
+        ).on_conflict_do_nothing(index_elements=[Setting.key])
+        await connection.execute(statement)
