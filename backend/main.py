@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, Dict
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -14,12 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
     from .commission import get_commission_for_transaction
-    from .database import Customer, Operator, Service, Transaction, get_db, get_setting, set_setting
+    from .database import Customer, Operator, Service, Transaction, DebtLedger, get_db, get_setting, set_setting
     from .seed import generate_ussd
     from .validation import validate_syrian_phone
 else:
     from commission import get_commission_for_transaction
-    from database import Customer, Operator, Service, Transaction, get_db, get_setting, set_setting
+    from database import Customer, Operator, Service, Transaction, DebtLedger, get_db, get_setting, set_setting
     from seed import generate_ussd
     from validation import validate_syrian_phone
 
@@ -53,7 +53,7 @@ class TransactionCreate(BaseModel):
     customer_phone: str
     operator_code: Code
     service_code: Code
-    amount_cents: int = Field(ge=0, le=9223372036854775807, strict=True)
+    amount_cents: int = Field(ge=0, le=9223372036854775807)
 
     @field_validator("customer_phone")
     @classmethod
@@ -73,6 +73,29 @@ class TransactionResponse(BaseModel):
     ussd_string: str
     status: str
     amount_cents: int
+    created_at: datetime
+
+
+class DebtLedgerCreate(BaseModel):
+    customer_phone: str
+    amount_cents: int = Field(ge=0)
+    description: str = Field(default="", max_length=512)
+    type: str = Field(default="charge", pattern="^charge|payment$")
+
+    @field_validator("customer_phone")
+    @classmethod
+    def validate_customer_phone(cls, phone: str) -> str:
+        return validate_syrian_phone(phone)
+
+
+class DebtLedgerResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    customer_phone: str
+    amount_cents: int
+    description: str
+    type: str
     created_at: datetime
 
 
@@ -211,6 +234,110 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
         raise
     await db.refresh(transaction)
     return transaction
+
+
+# --- Debt Ledger Endpoints ---
+
+
+@app.post("/api/debt/charge", response_model=DebtLedgerResponse)
+async def create_debt_charge(data: DebtLedgerCreate, db: DbSession) -> DebtLedger:
+    """Create a debt charge for a customer (lookup by phone, create if not exists)."""
+    try:
+        phone = validate_syrian_phone(data.customer_phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    customer = await db.scalar(select(Customer).where(Customer.phone == phone))
+    if customer is None:
+        # Create customer with phone as name if not exists
+        customer = Customer(phone=phone, name=phone)
+        db.add(customer)
+        await db.flush()  # Get the ID
+
+    debt_entry = DebtLedger(
+        customer_id=customer.id,
+        amount_cents=data.amount_cents,
+        description=data.description,
+        type=data.type,
+    )
+    db.add(debt_entry)
+    await db.commit()
+    await db.refresh(debt_entry)
+
+    # Build response with customer_phone
+    return DebtLedgerResponse(
+        id=debt_entry.id,
+        customer_phone=customer.phone,
+        amount_cents=debt_entry.amount_cents,
+        description=debt_entry.description,
+        type=debt_entry.type,
+        created_at=debt_entry.created_at,
+    )
+
+
+@app.get("/api/debt/ledger", response_model=list[DebtLedgerResponse])
+async def get_debt_ledger(
+    db: DbSession,
+    customer_phone: Annotated[str, Query()],
+) -> list[DebtLedgerResponse]:
+    """List debt ledger entries for a customer."""
+    try:
+        phone = validate_syrian_phone(customer_phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    customer = await db.scalar(select(Customer).where(Customer.phone == phone))
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    result = await db.scalars(
+        select(DebtLedger).where(DebtLedger.customer_id == customer.id).order_by(DebtLedger.created_at.desc())
+    )
+    entries = result.all()
+
+    return [
+        DebtLedgerResponse(
+            id=entry.id,
+            customer_phone=customer.phone,
+            amount_cents=entry.amount_cents,
+            description=entry.description,
+            type=entry.type,
+            created_at=entry.created_at,
+        )
+        for entry in entries
+    ]
+
+
+@app.get("/api/debt/summary")
+async def get_debt_summary(
+    db: DbSession,
+    customer_phone: Annotated[str, Query()],
+) -> dict[str, int]:
+    """Return total debt (sum of charges minus payments) for a customer."""
+    try:
+        phone = validate_syrian_phone(customer_phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    customer = await db.scalar(select(Customer).where(Customer.phone == phone))
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    result = await db.scalars(
+        select(DebtLedger).where(DebtLedger.customer_id == customer.id)
+    )
+    entries = result.all()
+
+    total_charges = sum(e.amount_cents for e in entries if e.type == "charge")
+    total_payments = sum(e.amount_cents for e in entries if e.type == "payment")
+    total_debt = total_charges - total_payments
+
+    return {
+        "customer_phone": customer.phone,
+        "total_charges_cents": total_charges,
+        "total_payments_cents": total_payments,
+        "total_debt_cents": total_debt,
+    }
 
 
 if __name__ == "__main__":

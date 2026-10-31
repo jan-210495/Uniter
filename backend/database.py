@@ -75,6 +75,7 @@ class Customer(Base):
     )
 
     transactions: Mapped[list[Transaction]] = relationship(back_populates="customer")
+    debt_ledger: Mapped[list[DebtLedger]] = relationship(back_populates="customer")
 
 
 class Transaction(Base):
@@ -94,6 +95,22 @@ class Transaction(Base):
 
     customer: Mapped[Customer] = relationship(back_populates="transactions")
     service: Mapped[Service] = relationship(back_populates="transactions")
+
+
+class DebtLedger(Base):
+    __tablename__ = "debt_ledger"
+    __table_args__ = (
+        CheckConstraint("type IN ('charge', 'payment')", name="debt_ledger_type"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"))
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    description: Mapped[str] = mapped_column(String(512), default="")
+    type: Mapped[str] = mapped_column(String(20))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    customer: Mapped[Customer] = relationship(back_populates="debt_ledger")
 
 
 class Setting(Base):
