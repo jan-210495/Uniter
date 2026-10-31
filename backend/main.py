@@ -1,10 +1,12 @@
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -22,6 +24,7 @@ else:
     from validation import validate_syrian_phone
 
 app = FastAPI(title="Uniter")
+templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
 
 Code = Annotated[str, Field(min_length=1, max_length=50)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
@@ -79,6 +82,12 @@ def root() -> HTMLResponse:
         "<h1>Uniter — Mobile Shop Charging</h1>"
         "<p>Bilingual MTN/Syriatel prepaid & postpaid management.</p>"
     )
+
+
+@app.get("/pos", response_class=HTMLResponse)
+def pos_page(request: Request, lang: str = "en") -> HTMLResponse:
+    language = lang if lang in {"en", "ar"} else "en"
+    return templates.TemplateResponse(request=request, name="pos.html", context={"lang": language})
 
 
 @app.get("/api/health")
