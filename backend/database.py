@@ -30,6 +30,25 @@ class ServiceModel(Base):
     name_en = Column(String)
     ussd_template = Column(String)
 
+class CustomerModel(Base):
+    __tablename__ = "customers"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    phone = Column(String)
+    debt_balance = Column(Float, default=0.0)
+    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+
+class LedgerEntryModel(Base):
+    __tablename__ = "ledger_entries"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    entry_type = Column(String) # debt_added, debt_settled, cash_sale
+    amount = Column(Float)
+    description = Column(String)
+    created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc))
+
 class TransactionModel(Base):
     __tablename__ = "transactions"
     

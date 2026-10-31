@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Uniter - Shop Charging & Units</title>
+    <title>Uniter - Shop Charging & Debt Ledger</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
@@ -11,91 +11,168 @@
     </style>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col">
+    <!-- Header -->
     <header class="bg-slate-800 border-b border-slate-700 px-6 py-4 flex justify-between items-center shadow-md">
         <div class="flex items-center gap-3">
             <span class="text-xl font-bold tracking-tight text-blue-400">Uniter ⚡</span>
-            <span id="badgeSub" class="text-xs bg-slate-700 text-slate-300 px-2.5 py-1 rounded-full">MTN & Syriatel POS</span>
+            <span id="badgeSub" class="text-xs bg-slate-700 text-slate-300 px-2.5 py-1 rounded-full">MTN & Syriatel POS & Ledger</span>
         </div>
         <div class="flex items-center gap-4">
             <button id="langToggle" onclick="toggleLanguage()" class="text-sm bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded transition font-medium">English / العربية</button>
         </div>
     </header>
 
+    <!-- Cash Register Summary Bar -->
+    <section class="bg-slate-800/80 border-b border-slate-700/60 px-6 py-3">
+        <div class="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+            <div class="bg-slate-900/60 border border-slate-700/50 p-3 rounded-lg">
+                <span id="lblTotalSales" class="block text-xs text-slate-400">إجمالي المبيعات (Total Sales)</span>
+                <span class="text-lg font-bold text-emerald-400">{{ "{:,.0f}".format(total_sales) }} ل.س</span>
+            </div>
+            <div class="bg-slate-900/60 border border-slate-700/50 p-3 rounded-lg">
+                <span id="lblTotalComm" class="block text-xs text-slate-400">أرباح العمولات (Commissions)</span>
+                <span class="text-lg font-bold text-blue-400">{{ "{:,.0f}".format(total_commission) }} ل.س</span>
+            </div>
+            <div class="bg-slate-900/60 border border-slate-700/50 p-3 rounded-lg">
+                <span id="lblTotalDebt" class="block text-xs text-slate-400">إجمالي الذمم والديون (Total Debts)</span>
+                <span class="text-lg font-bold text-amber-400">{{ "{:,.0f}".format(total_debt) }} ل.س</span>
+            </div>
+        </div>
+    </section>
+
     <main class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- Charging Form -->
-        <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 shadow-sm lg:col-span-2">
-            <h2 id="formTitle" class="text-lg font-semibold mb-4 text-slate-200">إدارة الشحن والوحدات (MTN & Syriatel)</h2>
-            
-            <form id="chargeForm" onsubmit="handleCharge(event)" class="space-y-4">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Charging Form & Customer Debt Assignment -->
+        <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 shadow-sm lg:col-span-2 space-y-6">
+            <div>
+                <h2 id="formTitle" class="text-lg font-semibold mb-4 text-slate-200">إدارة الشحن والوحدات (MTN & Syriatel)</h2>
+                
+                <form id="chargeForm" onsubmit="handleCharge(event)" class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label id="lblOperator" class="block text-xs font-medium text-slate-400 mb-1">الشركة (Operator)</label>
+                            <select id="operatorName" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
+                                <option value="MTN">MTN (إم تي إن)</option>
+                                <option value="Syriatel">Syriatel (سيريتل)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label id="lblService" class="block text-xs font-medium text-slate-400 mb-1">نوع الخدمة (Service Type)</label>
+                            <select id="serviceType" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
+                                <option value="prepaid_units">شحن وحدات / رصيد (Pre-Paid)</option>
+                                <option value="postpaid_bill">دفع فاتورة (Post-Paid)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label id="lblPhone" class="block text-xs font-medium text-slate-400 mb-1">رقم الهاتف (Phone Number)</label>
+                            <input type="text" id="phoneNumber" required placeholder="09xxxxxxxx" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
+                        </div>
+                        <div>
+                            <label id="lblAmount" class="block text-xs font-medium text-slate-400 mb-1">المبلغ / الوحدات (Amount / Units)</label>
+                            <input type="number" id="amount" required placeholder="5000" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
+                        </div>
+                    </div>
+
+                    <!-- Quick Amount Chips -->
                     <div>
-                        <label id="lblOperator" class="block text-xs font-medium text-slate-400 mb-1">الشركة (Operator)</label>
-                        <select id="operatorName" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
-                            <option value="MTN">MTN (إم تي إن)</option>
-                            <option value="Syriatel">Syriatel (سيريتل)</option>
-                        </select>
+                        <label id="lblQuick" class="block text-xs font-medium text-slate-400 mb-1.5">مبالغ سريعة (Quick Amounts):</label>
+                        <div class="flex gap-2 flex-wrap">
+                            <button type="button" onclick="setAmount(1000)" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded transition">1,000</button>
+                            <button type="button" onclick="setAmount(2500)" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded transition">2,500</button>
+                            <button type="button" onclick="setAmount(5000)" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded transition">5,000</button>
+                            <button type="button" onclick="setAmount(10000)" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded transition">10,000</button>
+                            <button type="button" onclick="setAmount(25000)" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded transition">25,000</button>
+                        </div>
                     </div>
+
+                    <!-- Customer & Debt Toggle -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-700/60">
+                        <div>
+                            <label id="lblCustSelect" class="block text-xs font-medium text-slate-400 mb-1">الزبون (Customer - Optional for Debt)</label>
+                            <select id="customerId" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
+                                <option value="">-- دفع نقدي مباشر (Cash) --</option>
+                                {% for c in customers %}
+                                <option value="{{ c.id }}">{{ c.name }} (ديون: {{ c.debt_balance }} ل.س)</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="flex items-center pt-5">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="isDebt" class="w-4 h-4 rounded bg-slate-900 border-slate-700 text-blue-600 focus:ring-blue-500">
+                                <span id="lblRegisterDebt" class="text-xs font-medium text-slate-300">تسجيل كدين على حساب الزبون (Record as Debt)</span>
+                            </label>
+                        </div>
+                    </div>
+
                     <div>
-                        <label id="lblService" class="block text-xs font-medium text-slate-400 mb-1">نوع الخدمة (Service Type)</label>
-                        <select id="serviceType" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
-                            <option value="prepaid_units">شحن وحدات / رصيد (Pre-Paid)</option>
-                            <option value="postpaid_bill">دفع فاتورة (Post-Paid)</option>
-                        </select>
+                        <label id="lblNote" class="block text-xs font-medium text-slate-400 mb-1">ملاحظة اختيارية (Optional Note)</label>
+                        <input type="text" id="note" placeholder="اسم الزبون أو ملاحظة..." class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
                     </div>
-                </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label id="lblPhone" class="block text-xs font-medium text-slate-400 mb-1">رقم الهاتف (Phone Number)</label>
-                        <input type="text" id="phoneNumber" required placeholder="09xxxxxxxx" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
+                    <button type="submit" id="btnSubmit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-lg transition shadow">
+                        توليد رمز USSD وتسجيل العملية (Generate USSD & Save)
+                    </button>
+                </form>
+
+                <!-- USSD Output Box -->
+                <div id="ussdResultBox" class="mt-6 p-4 bg-slate-900 border border-emerald-500/40 rounded-lg hidden">
+                    <div class="flex justify-between items-center mb-2">
+                        <span id="ussdTitle" class="text-xs font-bold text-emerald-400">رمز USSD الجاهز للنسخ:</span>
+                        <button onclick="copyUssd()" class="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded transition font-medium">نسخ (Copy)</button>
                     </div>
-                    <div>
-                        <label id="lblAmount" class="block text-xs font-medium text-slate-400 mb-1">المبلغ / الوحدات (Amount / Units)</label>
-                        <input type="number" id="amount" required placeholder="5000" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
-                    </div>
+                    <div id="ussdCodeDisplay" class="text-xl font-mono font-bold text-emerald-300 select-all bg-slate-800 p-3 rounded tracking-wider"></div>
                 </div>
+            </div>
 
-                <!-- Quick Amount Chips -->
-                <div>
-                    <label id="lblQuick" class="block text-xs font-medium text-slate-400 mb-1.5">مبالغ سريعة (Quick Amounts):</label>
-                    <div class="flex gap-2 flex-wrap">
-                        <button type="button" onclick="setAmount(1000)" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded transition">1,000</button>
-                        <button type="button" onclick="setAmount(2500)" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded transition">2,500</button>
-                        <button type="button" onclick="setAmount(5000)" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded transition">5,000</button>
-                        <button type="button" onclick="setAmount(10000)" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded transition">10,000</button>
-                        <button type="button" onclick="setAmount(25000)" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded transition">25,000</button>
-                    </div>
+            <!-- Customer Debt Management Section -->
+            <div class="pt-4 border-t border-slate-700">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 id="debtSectionTitle" class="text-md font-semibold text-slate-200">دفتر الديون والزبائن (Customer Debts)</h3>
+                    <button onclick="openNewCustomerModal()" class="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded transition font-medium">+ إضافة زبون جديد</button>
                 </div>
-
-                <div>
-                    <label id="lblNote" class="block text-xs font-medium text-slate-400 mb-1">ملاحظة اختيارية (Optional Note)</label>
-                    <input type="text" id="note" placeholder="اسم الزبون أو ملاحظة..." class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
+                
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs text-slate-300">
+                        <thead class="bg-slate-900 text-slate-400 uppercase text-[10px]">
+                            <tr>
+                                <th class="p-2.5">الزبون (Name)</th>
+                                <th class="p-2.5">الهاتف (Phone)</th>
+                                <th class="p-2.5">الرصيد / الدين (Debt Balance)</th>
+                                <th class="p-2.5 text-center">إجراء (Action)</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-700/60">
+                            {% for c in customers %}
+                            <tr class="hover:bg-slate-700/30">
+                                <td class="p-2.5 font-medium text-slate-100">{{ c.name }}</td>
+                                <td class="p-2.5 font-mono text-slate-400">{{ c.phone }}</td>
+                                <td class="p-2.5 font-bold {% if c.debt_balance > 0 %}text-amber-400{% else %}text-slate-400{% endif %}">{{ "{:,.0f}".format(c.debt_balance) }} ل.س</td>
+                                <td class="p-2.5 text-center">
+                                    <button onclick="settleDebt({{ c.id }}, '{{ c.name }}', {{ c.debt_balance }})" class="bg-emerald-700 hover:bg-emerald-600 text-white px-2.5 py-1 rounded transition text-[11px]">تسديد دين</button>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="4" class="p-4 text-center text-slate-500">لا يوجد زبائن مسجلين حالياً.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
                 </div>
-
-                <button type="submit" id="btnSubmit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-lg transition shadow">
-                    توليد رمز USSD وتسجيل العملية (Generate USSD & Save)
-                </button>
-            </form>
-
-            <!-- USSD Output Box -->
-            <div id="ussdResultBox" class="mt-6 p-4 bg-slate-900 border border-emerald-500/40 rounded-lg hidden">
-                <div class="flex justify-between items-center mb-2">
-                    <span id="ussdTitle" class="text-xs font-bold text-emerald-400">رمز USSD الجاهز للنسخ:</span>
-                    <button onclick="copyUssd()" class="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded transition font-medium">نسخ (Copy)</button>
-                </div>
-                <div id="ussdCodeDisplay" class="text-xl font-mono font-bold text-emerald-300 select-all bg-slate-800 p-3 rounded tracking-wider"></div>
             </div>
         </div>
 
         <!-- Recent Transactions -->
         <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 shadow-sm flex flex-col">
             <h3 id="historyTitle" class="text-md font-semibold mb-3 text-slate-200">سجل العمليات الأخير</h3>
-            <div id="txList" class="flex-1 overflow-y-auto space-y-3 max-h-[500px]">
+            <div id="txList" class="flex-1 overflow-y-auto space-y-3 max-h-[700px]">
                 {% for tx in transactions %}
                 <div class="bg-slate-900 border border-slate-700/60 p-3 rounded-lg text-xs space-y-1">
                     <div class="flex justify-between font-semibold">
                         <span class="text-blue-400">{{ tx.operator_name }} ({{ tx.service_type }})</span>
-                        <span class="text-emerald-400 font-bold">{{ tx.amount }} ل.س</span>
+                        <span class="text-emerald-400 font-bold">{{ "{:,.0f}".format(tx.amount) }} ل.س</span>
                     </div>
                     <div class="text-slate-300 flex justify-between">
                         <span>الرقم: <span class="text-slate-100 font-mono">{{ tx.phone_number }}</span></span>
@@ -110,37 +187,70 @@
         </div>
     </main>
 
+    <!-- New Customer Modal -->
+    <div id="customerModal" class="fixed inset-0 bg-black/70 flex items-center justify-center hidden z-50 p-4">
+        <div class="bg-slate-800 border border-slate-700 rounded-xl p-6 max-w-md w-full space-y-4">
+            <h3 class="text-lg font-bold text-slate-100">إضافة زبون جديد للديون</h3>
+            <form onsubmit="handleCreateCustomer(event)" class="space-y-3">
+                <div>
+                    <label class="block text-xs font-medium text-slate-400 mb-1">اسم الزبون (Customer Name)</label>
+                    <input type="text" id="newCustName" required class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-slate-400 mb-1">رقم الهاتف (Phone Number)</label>
+                    <input type="text" id="newCustPhone" required placeholder="09xxxxxxxx" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
+                </div>
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" onclick="closeNewCustomerModal()" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded text-xs">إلغاء</button>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-xs font-semibold">حفظ الزبون</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <footer class="bg-slate-800 border-t border-slate-700 py-3 text-center text-xs text-slate-500">
-        Uniter Shop Charging System &bull; Phase 3 Transaction Engine
+        Uniter Shop Charging System &bull; Phase 4 Customer Debts & Cash Register
     </footer>
 
     <script>
         let currentLang = 'ar';
         const translations = {
             ar: {
-                badge: "MTN & Syriatel POS",
+                badge: "MTN & Syriatel POS & Ledger",
+                lblTotalSales: "إجمالي المبيعات (Total Sales)",
+                lblTotalComm: "أرباح العمولات (Commissions)",
+                lblTotalDebt: "إجمالي الذمم والديون (Total Debts)",
                 formTitle: "إدارة الشحن والوحدات (MTN & Syriatel)",
                 lblOperator: "الشركة (Operator)",
                 lblService: "نوع الخدمة (Service Type)",
                 lblPhone: "رقم الهاتف (Phone Number)",
                 lblAmount: "المبلغ / الوحدات (Amount / Units)",
                 lblQuick: "مبالغ سريعة (Quick Amounts):",
+                lblCustSelect: "الزبون (Customer - Optional for Debt)",
+                lblRegisterDebt: "تسجيل كدين على حساب الزبون (Record as Debt)",
                 lblNote: "ملاحظة اختيارية (Optional Note)",
                 btnSubmit: "توليد رمز USSD وتسجيل العملية (Generate USSD & Save)",
+                debtSectionTitle: "دفتر الديون والزبائن (Customer Debts)",
                 historyTitle: "سجل العمليات الأخير",
                 noTxText: "لا توجد عمليات مسجلة بعد.",
                 ussdTitle: "رمز USSD الجاهز للنسخ:"
             },
             en: {
-                badge: "MTN & Syriatel POS",
+                badge: "MTN & Syriatel POS & Ledger",
+                lblTotalSales: "Total Sales",
+                lblTotalComm: "Commissions",
+                lblTotalDebt: "Total Debts",
                 formTitle: "Units Charging & Billing (MTN & Syriatel)",
                 lblOperator: "Operator",
                 lblService: "Service Type",
                 lblPhone: "Phone Number",
                 lblAmount: "Amount / Units",
                 lblQuick: "Quick Amounts:",
+                lblCustSelect: "Customer (Optional for Debt)",
+                lblRegisterDebt: "Record as Debt on Customer Account",
                 lblNote: "Optional Note",
                 btnSubmit: "Generate USSD & Save Transaction",
+                debtSectionTitle: "Customer Debts & Ledger",
                 historyTitle: "Recent Transactions",
                 noTxText: "No transactions recorded yet.",
                 ussdTitle: "Generated USSD Code:"
@@ -155,14 +265,20 @@
             
             const t = translations[currentLang];
             document.getElementById('badgeSub').innerText = t.badge;
+            document.getElementById('lblTotalSales').innerText = t.lblTotalSales;
+            document.getElementById('lblTotalComm').innerText = t.lblTotalComm;
+            document.getElementById('lblTotalDebt').innerText = t.lblTotalDebt;
             document.getElementById('formTitle').innerText = t.formTitle;
             document.getElementById('lblOperator').innerText = t.lblOperator;
             document.getElementById('lblService').innerText = t.lblService;
             document.getElementById('lblPhone').innerText = t.lblPhone;
             document.getElementById('lblAmount').innerText = t.lblAmount;
             document.getElementById('lblQuick').innerText = t.lblQuick;
+            document.getElementById('lblCustSelect').innerText = t.lblCustSelect;
+            document.getElementById('lblRegisterDebt').innerText = t.lblRegisterDebt;
             document.getElementById('lblNote').innerText = t.lblNote;
             document.getElementById('btnSubmit').innerText = t.btnSubmit;
+            document.getElementById('debtSectionTitle').innerText = t.debtSectionTitle;
             document.getElementById('historyTitle').innerText = t.historyTitle;
             document.getElementById('ussdTitle').innerText = t.ussdTitle;
             const noTx = document.getElementById('noTxText');
@@ -182,11 +298,13 @@
             const phone_number = document.getElementById('phoneNumber').value;
             const amount = parseFloat(document.getElementById('amount').value);
             const note = document.getElementById('note').value;
+            const customer_id = document.getElementById('customerId').value ? parseInt(document.getElementById('customerId').value) : null;
+            const is_debt = document.getElementById('isDebt').checked;
 
             const res = await fetch('/api/transactions', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({operator_name, service_type, phone_number, amount, note})
+                body: JSON.stringify({operator_name, service_type, phone_number, amount, note, customer_id, is_debt})
             });
 
             if (res.ok) {
@@ -204,6 +322,52 @@
         function copyUssd() {
             navigator.clipboard.writeText(lastGeneratedUssd);
             alert(currentLang === 'ar' ? 'تم نسخ رمز USSD بنجاح! الصقه في لوحة الاتصال.' : 'USSD code copied! Paste it into your dialer.');
+        }
+
+        function openNewCustomerModal() {
+            document.getElementById('customerModal').classList.remove('hidden');
+        }
+
+        function closeNewCustomerModal() {
+            document.getElementById('customerModal').classList.add('hidden');
+        }
+
+        async function handleCreateCustomer(e) {
+            e.preventDefault();
+            const name = document.getElementById('newCustName').value;
+            const phone = document.getElementById('newCustPhone').value;
+
+            const res = await fetch('/api/customers', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, phone})
+            });
+
+            if (res.ok) {
+                location.reload();
+            } else {
+                const err = await res.json();
+                alert('خطأ: ' + (err.detail || 'تعذر إضافة الزبون'));
+            }
+        }
+
+        async function settleDebt(customerId, customerName, currentDebt) {
+            const amountStr = prompt(currentLang === 'ar' ? `أدخل المبلغ المراد تسديده لـ ${customerName} (الدين الحالي: ${currentDebt} ل.س):` : `Enter settlement amount for ${customerName} (Current debt: ${currentDebt}):`);
+            if (!amountStr) return;
+            const amount = parseFloat(amountStr);
+            if (isNaN(amount) || amount <= 0) return;
+
+            const res = await fetch(`/api/customers/${customerId}/settle`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({amount})
+            });
+
+            if (res.ok) {
+                location.reload();
+            } else {
+                alert('تعذر تسجيل التسديد');
+            }
         }
     </script>
 </body>
