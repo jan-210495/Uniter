@@ -105,6 +105,7 @@ class DebtLedger(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"))
+    register_id: Mapped[int | None] = mapped_column(ForeignKey("cash_register.id"), nullable=True)
     amount_cents: Mapped[int] = mapped_column(Integer)
     description: Mapped[str] = mapped_column(String(512), default="")
     type: Mapped[str] = mapped_column(String(20))

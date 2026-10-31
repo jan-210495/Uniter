@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% set ar = lang|default('en') == 'ar' %}
+
+{% block content %}
+<section class="mx-auto max-w-5xl">
+    <header class="mb-8 flex flex-wrap items-end justify-between gap-4">
+        <div>
+            <p class="mb-2 text-xs font-bold uppercase tracking-widest text-blue-800">{{ 'الذمم المالية' if ar else 'Debt Ledger' }}</p>
+            <h1 class="text-3xl font-bold tracking-tight text-blue-950 sm:text-4xl">{{ 'تسوية الديون' if ar else 'Debt Settlement' }}</h1>
+            <p class="mt-2 max-w-xl text-sm leading-6 text-slate-600">{{ 'تسجيل المدفوعات المستلمة وتحديث الحالة المالية للعميل.' if ar else 'Record customer payments and update ledger balances.' }}</p>
+        </div>
+    </header>
+
+    <div class="grid gap-6 md:grid-cols-2">
+        <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+            <h2 class="mb-4 text-lg font-bold text-slate-900">{{ 'تسجيل الدفع' if ar else 'Record Payment' }}</h2>
+            <form id="payment-form" class="space-y-4">
+                <div>
+                    <label for="customer-phone" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'رقم الهاتف' if ar else 'Customer phone' }}</label>
+                    <input type="tel" id="customer-phone" name="customer-phone" required pattern="(?:[0-9]|\+|\s|\x2D)+" placeholder="09XXXXXXXX" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                    <p class="mt-1.5 text-xs text-slate-500">{{ 'رقم سوري يبدأ بـ 093 أو 094 أو 095 أو 096 أو 099.' if ar else 'Syrian mobile number starting with 093, 094, 095, 096 or 099.' }}</p>
+                </div>
+                <div>
+                    <label for="payment-amount" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'المبلغ (ل.س)' if ar else 'Amount (SYP)' }}</label>
+                    <input type="number" id="payment-amount" name="payment-amount" min="0" required class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                </div>
+                <div>
+                    <label for="payment-description" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'الوصف (اختياري)' if ar else 'Description (optional)' }}</label>
+                    <input type="text" id="payment-description" name="payment-description" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                </div>
+                <button type="submit" class="w-full rounded-lg bg-blue-900 px-4 py-3 font-semibold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تسجيل الدفع' if ar else 'Record Payment' }}</button>
+            </form>
+
+            <div id="payment-result" class="mt-4 hidden rounded-lg bg-green-50 p-4 text-sm text-green-800">{{ 'تم تسجيل الدفع بنجاح.' if ar else 'Payment recorded successfully.' }}</div>
+        </section>
+
+        <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+            <h2 class="mb-4 text-lg font-bold text-slate-900">{{ 'معلومات الديون' if ar else 'Debt Summary' }}</h2>
+            <div class="mb-4">
+                <label for="lookup-phone" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'رقم هاتف العميل' if ar else 'Customer phone' }}</label>
+                <input type="tel" id="lookup-phone" name="lookup-phone" pattern="(?:[0-9]|\+|\s|\x2D)+" placeholder="09XXXXXXXX" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                <button id="lookup-debt" class="mt-2 w-full rounded-lg bg-slate-200 px-4 py-2 font-semibold text-slate-800 transition hover:bg-slate-300">{{ 'تحقق من الديون' if ar else 'Lookup Debt' }}</button>
+            </div>
+            <div id="debt-summary" class="hidden rounded-lg bg-slate-50 p-4">
+                <p class="mb-1 text-sm text-slate-600"><span class="font-semibold">{{ 'إجمالي المبلغ المتراكم:' if ar else 'Total accumulated amount:' }}</span> <span id="total-debt-cents" class="font-bold">0</span> {{ 'ل.س' if ar else 'SYP' }}</p>
+                <p class="mb-1 text-sm text-slate-600"><span class="font-semibold">{{ 'إجمالي الدفعات:' if ar else 'Total payments:' }}</span> <span id="total-payments-cents" class="font-bold">0</span> {{ 'ل.س' if ar else 'SYP' }}</p>
+                <p class="mb-1 text-sm text-slate-600"><span class="font-semibold">{{ 'إجمالي الدفعات:' if ar else 'Total charges:' }}</span> <span id="total-charges-cents" class="font-bold">0</span> {{ 'ل.س' if ar else 'SYP' }}</p>
+            </div>
+        </section>
+    </div>
+
+    <section class="mt-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <h2 class="mb-4 text-lg font-bold text-slate-900">{{ 'سجل الديون' if ar else 'Debt Ledger' }}</h2>
+        <div id="ledger-container" class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-slate-200 text-sm">
+                <thead class="bg-slate-50">
+                    <tr>
+                        <th class="px-4 py-3 text-start font-semibold text-slate-700">{{ 'التاريخ' if ar else 'Date' }}</th>
+                        <th class="px-4 py-3 text-start font-semibold text-slate-700">{{ 'النوع' if ar else 'Type' }}</th>
+                        <th class="px-4 py-3 text-start font-semibold text-slate-700">{{ 'المبلغ (ل.س)' if ar else 'Amount (SYP)' }}</th>
+                        <th class="px-4 py-3 text-start font-semibold text-slate-700">{{ 'الوصف' if ar else 'Description' }}</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-200 bg-white">
+                    <tr>
+                        <td colspan="4" class="px-4 py-6 text-center text-slate-500">{{ 'لا توجد سجلات للعميل المحدد.' if ar else 'No ledger entries for this customer.' }}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    const isRTL = '{{ "rtl" if lang == "ar" else "ltr" }}';
+    document.documentElement.dir = isRTL;
+
+    const apiBase = '';
+
+    async function normalizePhone(input) {
+        let cleaned = input.replace(/[\s-]+/g, '');
+        if (cleaned.startsWith('+963')) cleaned = '0' + cleaned.slice(4);
+        else if (cleaned.startsWith('00963')) cleaned = '0' + cleaned.slice(5);
+        return /^09[34569][0-9]{7}$/.test(cleaned) ? cleaned : null;
+    }
+
+    async function lookupDebt(phone) {
+        const summaryDiv = document.getElementById('debt-summary');
+        const summaryCentsEl = document.getElementById('total-debt-cents');
+        const totalPaymentsCentsEl = document.getElementById('total-payments-cents');
+        const totalChargesCentsEl = document.getElementById('total-charges-cents');
+        summaryDiv.classList.add('hidden');
+
+        try {
+            const response = await fetch(`${apiBase}/api/debt/summary?customer_phone=${encodeURIComponent(phone)}`);
+            if (!response.ok) throw new Error(await response.text());
+            const data = await response.json();
+            summaryCentsEl.textContent = data.total_debt_cents;
+            totalPaymentsCentsEl.textContent = data.total_payments_cents;
+            totalChargesCentsEl.textContent = data.total_charges_cents;
+            summaryDiv.classList.remove('hidden');
+        } catch (e) {
+            alert('{{ 'خطأ في جلب معلومات الديون.' if ar else 'Error fetching debt info.' }}');
+        }
+    }
+
+    async function loadLedger(phone) {
+        const tbody = document.querySelector('#ledger-container tbody');
+        tbody.innerHTML = '';
+        if (!phone) return;
+
+        try {
+            const response = await fetch(`${apiBase}/api/debt/ledger?customer_phone=${encodeURIComponent(phone)}`);
+            if (!response.ok) throw new Error(await response.text());
+            const data = await response.json();
+            if (data.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="px-4 py-6 text-center text-slate-500">{{ 'لا توجد سجلات للعميل المحدد.' if ar else 'No ledger entries for this customer.' }}</td></tr>`;
+                return;
+            }
+            data.forEach(entry => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-50';
+                const date = new Date(entry.created_at).toLocaleString();
+                tr.innerHTML = `
+                    <td class="px-4 py-3 text-slate-900">${date}</td>
+                    <td class="px-4 py-3 text-slate-900 capitalize">${entry.type}</td>
+                    <td class="px-4 py-3 text-slate-900">${entry.amount_cents}</td>
+                    <td class="px-4 py-3 text-slate-900">${entry.description || ''}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        } catch (e) {
+            alert('{{ 'خطأ في تحميل سجل الديون.' if ar else 'Error loading ledger.' }}');
+        }
+    }
+
+    document.getElementById('lookup-debt').addEventListener('click', async () => {
+        const phoneInput = document.getElementById('lookup-phone');
+        const phone = await normalizePhone(phoneInput.value);
+        if (!phone) {
+            alert('{{ 'أدخل رقم هاتف سوري صحيح.' if ar else 'Enter a valid Syrian phone number.' }}');
+            return;
+        }
+        await lookupDebt(phone);
+        await loadLedger(phone);
+    });
+
+    document.getElementById('payment-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const phoneInput = document.getElementById('customer-phone');
+        const amountInput = document.getElementById('payment-amount');
+        const descInput = document.getElementById('payment-description');
+        const resultDiv = document.getElementById('payment-result');
+
+        const phone = await normalizePhone(phoneInput.value);
+        if (!phone) {
+            alert('{{ 'أدخل رقم هاتف سوري صحيح.' if ar else 'Enter a valid Syrian phone number.' }}');
+            return;
+        }
+        const amount = parseInt(amountInput.value, 10);
+        if (isNaN(amount) || amount < 0) {
+            alert('{{ 'أدخل مبلغًا صحيحًا.' if ar else 'Enter a valid amount.' }}');
+            return;
+        }
+
+        try {
+            const response = await fetch(`${apiBase}/api/debt/payment`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    customer_phone: phone,
+                    amount_cents: amount,
+                    description: descInput.value || undefined,
+                }),
+            });
+            if (!response.ok) throw new Error(await response.text());
+            const data = await response.json();
+            resultDiv.textContent = '{{ 'تم تسجيل الدفع بنجاح.' if ar else 'Payment recorded successfully.' }}';
+            resultDiv.classList.remove('hidden');
+            setTimeout(() => resultDiv.classList.add('hidden'), 3000);
+            await loadLedger(phone);
+            await lookupDebt(phone);
+        } catch (err) {
+            alert('{{ 'خطأ في تسجيل الدفع.' if ar else 'Error recording payment.' }}');
+        }
+    });
+})();
+</script>
+{% endblock %}

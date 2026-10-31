@@ -102,6 +102,17 @@ class DebtLedgerResponse(BaseModel):
 # --- Cash Register Models ---
 
 
+class DebtPaymentCreate(BaseModel):
+    customer_phone: str
+    amount_cents: int = Field(ge=0)
+    description: str = Field(default="")
+
+    @field_validator("customer_phone")
+    @classmethod
+    def validate_customer_phone(cls, phone: str) -> str:
+        return validate_syrian_phone(phone)
+
+
 class CashRegisterCreate(BaseModel):
     opening_balance_cents: int = Field(ge=0, default=0)
 
@@ -366,6 +377,53 @@ async def get_debt_summary(
         "total_debt_cents": total_debt,
     }
 
+
+# --- Debt Payment Endpoint ---
+
+
+@app.post("/api/debt/payment", response_model=DebtLedgerResponse)
+async def record_debt_payment(
+    data: DebtPaymentCreate,
+    db: DbSession,
+) -> DebtLedger:
+    """Record a debt payment for a customer."""
+    try:
+        phone = validate_syrian_phone(data.customer_phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    customer = await db.scalar(select(Customer).where(Customer.phone == phone))
+    if customer is None:
+        # Create customer with phone as name if not exists
+        customer = Customer(phone=phone, name=phone)
+        db.add(customer)
+        await db.flush()
+
+    # Find open register if any
+    register = await db.scalar(
+        select(CashRegister).where(CashRegister.status == "open")
+    )
+
+    debt_entry = DebtLedger(
+        customer_id=customer.id,
+        register_id=register.id if register else None,
+        amount_cents=data.amount_cents,
+        description=data.description,
+        type="payment",
+    )
+    db.add(debt_entry)
+    await db.commit()
+    await db.refresh(debt_entry)
+
+    # Build response with customer_phone
+    return DebtLedgerResponse(
+        id=debt_entry.id,
+        customer_phone=customer.phone,
+        amount_cents=debt_entry.amount_cents,
+        description=debt_entry.description,
+        type=debt_entry.type,
+        created_at=debt_entry.created_at,
+    )
 
 # --- Cash Register Endpoints ---
 
