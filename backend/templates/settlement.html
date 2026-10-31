@@ -6,7 +6,7 @@
     <header class="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
             <p class="mb-2 text-xs font-bold uppercase tracking-widest text-blue-800">{{ 'الذمم المالية' if ar else 'Debt Ledger' }}</p>
-            <h1 class="text-3xl font-bold tracking-tight text-blue-950 sm:text-4xl">{{ 'تسوية الديون' if ar else 'Debt Settlement' }}</h1>
+            <h1 class="text-3xl font-bold tracking-tight text-blue-950 sm:text-4xl">{{ 'تسوية الديون' if ar else 'Debt Settlement' }}</p>
             <p class="mt-2 max-w-xl text-sm leading-6 text-slate-600">{{ 'تسجيل المدفوعات المستلمة وتحديث الحالة المالية للعميل.' if ar else 'Record customer payments and update ledger balances.' }}</p>
         </div>
     </header>
@@ -44,44 +44,21 @@
             <div id="debt-summary" class="hidden rounded-lg bg-slate-50 p-4">
                 <p class="mb-1 text-sm text-slate-600"><span class="font-semibold">{{ 'إجمالي المبلغ المتراكم:' if ar else 'Total accumulated amount:' }}</span> <span id="total-debt-cents" class="font-bold">0</span> {{ 'ل.س' if ar else 'SYP' }}</p>
                 <p class="mb-1 text-sm text-slate-600"><span class="font-semibold">{{ 'إجمالي الدفعات:' if ar else 'Total payments:' }}</span> <span id="total-payments-cents" class="font-bold">0</span> {{ 'ل.س' if ar else 'SYP' }}</p>
-                <p class="mb-1 text-sm text-slate-600"><span class="font-semibold">{{ 'إجمالي الدفعات:' if ar else 'Total charges:' }}</span> <span id="total-charges-cents" class="font-bold">0</span> {{ 'ل.س' if ar else 'SYP' }}</p>
+                <p class="mb-1 text-sm text-slate-600"><span class="font-semibold">{{ 'إجمالي المبيعات:' if ar else 'Total charges:' }}</span> <span id="total-charges-cents" class="font-bold">0</span> {{ 'ل.س' if ar else 'SYP' }}</p>
             </div>
         </section>
     </div>
-
-    <section class="mt-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-        <h2 class="mb-4 text-lg font-bold text-slate-900">{{ 'سجل الديون' if ar else 'Debt Ledger' }}</h2>
-        <div id="ledger-container" class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-slate-200 text-sm">
-                <thead class="bg-slate-50">
-                    <tr>
-                        <th class="px-4 py-3 text-start font-semibold text-slate-700">{{ 'التاريخ' if ar else 'Date' }}</th>
-                        <th class="px-4 py-3 text-start font-semibold text-slate-700">{{ 'النوع' if ar else 'Type' }}</th>
-                        <th class="px-4 py-3 text-start font-semibold text-slate-700">{{ 'المبلغ (ل.س)' if ar else 'Amount (SYP)' }}</th>
-                        <th class="px-4 py-3 text-start font-semibold text-slate-700">{{ 'الوصف' if ar else 'Description' }}</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-200 bg-white">
-                    <tr>
-                        <td colspan="4" class="px-4 py-6 text-center text-slate-500">{{ 'لا توجد سجلات للعميل المحدد.' if ar else 'No ledger entries for this customer.' }}</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-    </section>
 </section>
 {% endblock %}
 
 {% block scripts %}
 <script>
-(function() {
-    const isRTL = '{{ "rtl" if lang == "ar" else "ltr" }}';
-    document.documentElement.dir = isRTL;
-
+(() => {
+    'use strict';
     const apiBase = '';
 
-    async function normalizePhone(input) {
-        let cleaned = input.replace(/[\s-]+/g, '');
+    function normalizePhone(value) {
+        let cleaned = value.replace(/[\s-]+/g, '');
         if (cleaned.startsWith('+963')) cleaned = '0' + cleaned.slice(4);
         else if (cleaned.startsWith('00963')) cleaned = '0' + cleaned.slice(5);
         return /^09[34569][0-9]{7}$/.test(cleaned) ? cleaned : null;

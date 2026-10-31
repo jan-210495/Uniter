@@ -3,13 +3,17 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Uniter</title>
+    <title>{% block title %}Uniter{% endblock %}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: 'Noto Sans Arabic', Tahoma, sans-serif; }
+        [dir="rtl"] .text-start { text-align: right; }
+        [dir="ltr"] .text-start { text-align: left; }
+        [dir="rtl"] .text-end { text-align: left; }
+        [dir="ltr"] .text-end { text-align: right; }
     </style>
     {% block head_extra %}{% endblock %}
 </head>
