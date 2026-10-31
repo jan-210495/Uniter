@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import URL, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, event
+from sqlalchemy import URL, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
 
@@ -46,11 +46,12 @@ class Operator(Base):
 
 class Service(Base):
     __tablename__ = "services"
+    __table_args__ = (UniqueConstraint("operator_id", "code", name="uq_service_operator_code"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     operator_id: Mapped[int] = mapped_column(ForeignKey("operators.id"))
     name: Mapped[str] = mapped_column(String(255))
-    code: Mapped[str] = mapped_column(String(50), unique=True)
+    code: Mapped[str] = mapped_column(String(50))
     ussd_suffix: Mapped[str] = mapped_column(String(255))
     price_per_unit: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
