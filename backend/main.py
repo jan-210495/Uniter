@@ -2,21 +2,85 @@ from fastapi import FastAPI, Request, Depends, HTTPException, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
 import os
+
+from backend.database import SessionLocal, init_db, OperatorModel, ServiceModel, TransactionModel, engine
 
 app = FastAPI(title="Uniter Shop Charging", version="1.0.0")
 
-# Mount static and templates
+# Initialize DB on startup
+init_db(engine)
+
 os.makedirs("/home/jabboud/projects/Uniter/backend/static", exist_ok=True)
 os.makedirs("/home/jabboud/projects/Uniter/backend/templates", exist_ok=True)
 
 app.mount("/static", StaticFiles(directory="/home/jabboud/projects/Uniter/backend/static"), name="static")
 templates = Jinja2Templates(directory="/home/jabboud/projects/Uniter/backend/templates")
 
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+class TransactionCreate(BaseModel):
+    operator_name: str
+    service_type: str
+    phone_number: str
+    amount: float
+
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+async def index(request: Request, db: Session = Depends(get_db)):
+    operators = db.query(OperatorModel).all()
+    services = db.query(ServiceModel).all()
+    transactions = db.query(TransactionModel).order_by(TransactionModel.id.desc()).limit(10).all()
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "operators": operators,
+        "services": services,
+        "transactions": transactions
+    })
 
 @app.get("/api/health")
-async def health_check():
-    return {"status": "ok", "project": "Uniter", "operators": ["MTN", "Syriatel"]}
+def health_check(db: Session = Depends(get_db)):
+    ops = [o.name for o in db.query(OperatorModel).all()]
+    return {"status": "ok", "project": "Uniter", "operators": ops}
+
+@app.get("/api/operators")
+def api_get_operators(db: Session = Depends(get_db)):
+    return db.query(OperatorModel).all()
+
+@app.get("/api/services")
+def api_get_services(db: Session = Depends(get_db)):
+    return db.query(ServiceModel).all()
+
+@app.post("/api/transactions")
+def api_create_transaction(tx: TransactionCreate, db: Session = Depends(get_db)):
+    service = db.query(ServiceModel).join(OperatorModel).filter(
+        OperatorModel.name == tx.operator_name,
+        ServiceModel.service_type == tx.service_type
+    ).first()
+    
+    ussd = "*150*#"
+    if service:
+        ussd = service.ussd_template.format(phone=tx.phone_number, amount=int(tx.amount))
+    
+    db_tx = TransactionModel(
+        operator_name=tx.operator_name,
+        service_type=tx.service_type,
+        phone_number=tx.phone_number,
+        amount=tx.amount,
+        ussd_string=ussd,
+        status="completed"
+    )
+    db.add(db_tx)
+    db.commit()
+    db.refresh(db_tx)
+    return db_tx
+
+@app.get("/api/transactions")
+def api_get_transactions(db: Session = Depends(get_db)):
+    return db.query(TransactionModel).order_by(TransactionModel.id.desc()).limit(50).all()
