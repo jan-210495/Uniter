@@ -170,3 +170,31 @@ def test_phone_validation_errors(client: TestClient) -> None:
     response = client.post("/api/transactions", json=payload)
     assert response.status_code == 422
     assert "Invalid Syrian mobile number" in response.json()["detail"][0]["msg"]
+
+
+def test_commission_settings_and_calculation(client: TestClient) -> None:
+    assert client.get("/api/settings/commission").json() == {"commission_rate": "0.05"}
+    params = {"amount_cents": 5000, "operator_code": "mtn", "service_code": "prepaid"}
+    response = client.get("/api/commission/calculate", params=params)
+    assert response.status_code == 200
+    assert response.json() == {"amount_cents": 5000, "commission_cents": 250, "net_cents": 4750, "rate": "0.05"}
+    update = client.put("/api/settings/commission", json={"rate": "0.12"})
+    assert update.status_code == 200
+    assert update.json() == {"commission_rate": "0.12"}
+    assert client.get("/api/settings/commission").json() == {"commission_rate": "0.12"}
+    response = client.get("/api/commission/calculate", params=params)
+    assert response.json() == {"amount_cents": 5000, "commission_cents": 600, "net_cents": 4400, "rate": "0.12"}
+    params.update(operator_code="syriatel", service_code="postpaid")
+    assert client.get("/api/commission/calculate", params=params).json()["commission_cents"] == 600
+    params["operator_code"] = "unknown"
+    assert client.get("/api/commission/calculate", params=params).status_code == 404
+    params.update(operator_code="mtn", service_code="unknown")
+    assert client.get("/api/commission/calculate", params=params).status_code == 404
+    params.update(service_code="prepaid", amount_cents=-1)
+    assert client.get("/api/commission/calculate", params=params).status_code == 422
+
+
+@pytest.mark.parametrize("rate", ["-0.01", "1.01", "NaN", "Infinity", "-Infinity", "not a number"])
+def test_invalid_commission_setting(client: TestClient, rate: str) -> None:
+    assert client.put("/api/settings/commission", json={"rate": rate}).status_code == 422
+    assert client.get("/api/settings/commission").json() == {"commission_rate": "0.05"}

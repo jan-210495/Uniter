@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import URL, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint, event
+from sqlalchemy import URL, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint, event, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
 
@@ -95,6 +96,39 @@ class Transaction(Base):
     service: Mapped[Service] = relationship(back_populates="transactions")
 
 
+class Setting(Base):
+    __tablename__ = "settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(255), unique=True)
+    value: Mapped[str] = mapped_column(String)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+async def get_setting(
+    session: AsyncSession, key: str, default: str | None = None
+) -> str | None:
+    value = await session.scalar(select(Setting.value).where(Setting.key == key))
+    return default if value is None else value
+
+
+async def set_setting(session: AsyncSession, key: str, value: str) -> Setting:
+    """Upsert a setting in the caller's transaction; the caller commits it."""
+    statement = sqlite_insert(Setting).values(key=key, value=value, updated_at=utc_now())
+    statement = statement.on_conflict_do_update(
+        index_elements=[Setting.key],
+        set_={"value": value, "updated_at": utc_now()},
+    )
+    await session.execute(statement)
+    result = await session.scalar(
+        select(Setting).where(Setting.key == key).execution_options(populate_existing=True)
+    )
+    assert result is not None
+    return result
+
+
 async def get_db() -> AsyncIterator[AsyncSession]:
     async with SessionLocal() as session:
         yield session
@@ -103,3 +137,7 @@ async def get_db() -> AsyncIterator[AsyncSession]:
 async def init_db() -> None:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        statement = sqlite_insert(Setting).values(
+            key="commission_rate", value="0.05", updated_at=utc_now()
+        ).on_conflict_do_nothing(index_elements=[Setting.key])
+        await connection.execute(statement)

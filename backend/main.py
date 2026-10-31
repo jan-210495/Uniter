@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Annotated
 from uuid import uuid4
 
@@ -10,11 +11,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
-    from .database import Customer, Operator, Service, Transaction, get_db
+    from .commission import get_commission_for_transaction
+    from .database import Customer, Operator, Service, Transaction, get_db, get_setting, set_setting
     from .seed import generate_ussd
     from .validation import validate_syrian_phone
 else:
-    from database import Customer, Operator, Service, Transaction, get_db
+    from commission import get_commission_for_transaction
+    from database import Customer, Operator, Service, Transaction, get_db, get_setting, set_setting
     from seed import generate_ussd
     from validation import validate_syrian_phone
 
@@ -55,6 +58,10 @@ class TransactionCreate(BaseModel):
         return validate_syrian_phone(phone)
 
 
+class CommissionSettingUpdate(BaseModel):
+    rate: Decimal = Field(ge=0, le=1, allow_inf_nan=False)
+
+
 class TransactionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -77,6 +84,42 @@ def root() -> HTMLResponse:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/settings/commission")
+async def read_commission_setting(db: DbSession) -> dict[str, str]:
+    rate = await get_setting(db, "commission_rate", "0.05")
+    assert rate is not None
+    return {"commission_rate": rate}
+
+
+@app.put("/api/settings/commission")
+async def update_commission_setting(data: CommissionSettingUpdate, db: DbSession) -> dict[str, str]:
+    setting = await set_setting(db, "commission_rate", str(data.rate))
+    value = setting.value
+    await db.commit()
+    return {"commission_rate": value}
+
+
+@app.get("/api/commission/calculate")
+async def commission_calculation(
+    db: DbSession,
+    amount_cents: Annotated[int, Query(ge=0, le=9223372036854775807)],
+    operator_code: Annotated[str, Query(min_length=1, max_length=50)],
+    service_code: Annotated[str, Query(min_length=1, max_length=50)],
+) -> dict[str, int | str]:
+    operator = await db.scalar(select(Operator).where(Operator.code == operator_code))
+    if operator is None:
+        raise HTTPException(status_code=404, detail="Operator not found")
+    service = await db.scalar(
+        select(Service).where(Service.operator_id == operator.id, Service.code == service_code)
+    )
+    if service is None:
+        raise HTTPException(status_code=404, detail="Service not found for operator")
+    try:
+        return await get_commission_for_transaction(db, amount_cents)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail="Invalid stored commission rate") from exc
 
 
 @app.get("/api/customers/lookup", response_model=CustomerResponse)
