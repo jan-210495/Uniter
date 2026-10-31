@@ -14,12 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
     from .commission import get_commission_for_transaction
-    from .database import Customer, Operator, Service, Transaction, DebtLedger, CashRegister, get_db, get_setting, set_setting
+    from .database import Customer, Operator, Service, Transaction, DebtLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
     from .seed import generate_ussd
     from .validation import validate_syrian_phone
 else:
     from commission import get_commission_for_transaction
-    from database import Customer, Operator, Service, Transaction, DebtLedger, CashRegister, get_db, get_setting, set_setting
+    from database import Customer, Operator, Service, Transaction, DebtLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
     from seed import generate_ussd
     from validation import validate_syrian_phone
 
@@ -135,6 +135,18 @@ class RegisterSummary(BaseModel):
     closing_balance_cents: int | None
     transaction_count: int
     debt_payment_count: int
+class CurrencyDenominationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    scale_name: str
+    multiplier: int
+    is_active: bool
+
+
+class SetDenomination(BaseModel):
+    scale_name: str
+
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -425,6 +437,54 @@ async def record_debt_payment(
         created_at=debt_entry.created_at,
     )
 
+
+# --- Currency Denomination Endpoints ---
+
+
+@app.get("/api/currency/denomination", response_model=CurrencyDenominationResponse)
+async def get_active_denomination(db: DbSession) -> CurrencyDenomination:
+    """Return the active currency denomination."""
+    denom = await db.scalar(
+        select(CurrencyDenomination).where(CurrencyDenomination.is_active == True)
+    )
+    if denom is None:
+        raise HTTPException(status_code=404, detail="No active currency denomination found")
+    return denom
+
+
+@app.put("/api/currency/denomination", response_model=CurrencyDenominationResponse)
+async def set_active_denomination(data: SetDenomination, db: DbSession) -> CurrencyDenomination:
+    """Set active denomination (deactivate all others)."""
+    denom = await db.scalar(
+        select(CurrencyDenomination).where(CurrencyDenomination.scale_name == data.scale_name)
+    )
+    if denom is None:
+        raise HTTPException(status_code=404, detail="Currency denomination not found")
+
+    # Deactivate all others
+    await db.execute(
+        select(CurrencyDenomination).where(CurrencyDenomination.is_active == True)
+    )
+    all_denoms = await db.scalars(select(CurrencyDenomination).where(CurrencyDenomination.is_active == True))
+    for d in all_denoms:
+        d.is_active = False
+        await db.flush()
+
+    denom.is_active = True
+    await db.commit()
+    await db.refresh(denom)
+
+    return denom
+
+
+def format_amount(amount_cents: int, denomination: CurrencyDenomination) -> str:
+    """Format amount in Syrian Pounds with ل.س symbol."""
+    multiplier = denomination.multiplier if denomination else 1
+    value = amount_cents / multiplier
+    return f"{value:,.2f} ل.س"
+
+
+# --- Cash Register Endpoints ---
 # --- Cash Register Endpoints ---
 
 
