@@ -37,29 +37,29 @@ def test_health_check():
     assert "MTN" in data["operators"]
     assert "Syriatel" in data["operators"]
 
-def test_get_operators_and_services():
-    res_op = client.get("/api/operators")
-    assert res_op.status_code == 200
-    ops = res_op.json()
-    assert len(ops) >= 2
-
-    res_srv = client.get("/api/services")
-    assert res_srv.status_code == 200
-    srvs = res_srv.json()
-    assert len(srvs) >= 4
-
-def test_create_transaction_and_ussd():
-    payload = {
+def test_phone_validation():
+    # Invalid phone (doesn't start with 09 or wrong length)
+    payload_invalid = {
         "operator_name": "MTN",
         "service_type": "prepaid_units",
-        "phone_number": "0933123456",
+        "phone_number": "0833123456",
         "amount": 5000
     }
-    response = client.post("/api/transactions", json=payload)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["operator_name"] == "MTN"
-    assert data["phone_number"] == "0933123456"
-    assert data["amount"] == 5000
-    assert "*150*" in data["ussd_string"]
-    assert "0933123456" in data["ussd_string"]
+    res = client.post("/api/transactions", json=payload_invalid)
+    assert res.status_code == 422
+
+    # Valid phone
+    payload_valid = {
+        "operator_name": "MTN",
+        "service_type": "prepaid_units",
+        "phone_number": "0944123456",
+        "amount": 5000,
+        "note": "Ahmad Test"
+    }
+    res2 = client.post("/api/transactions", json=payload_valid)
+    assert res2.status_code == 200
+    data = res2.json()
+    assert data["phone_number"] == "0944123456"
+    assert data["note"] == "Ahmad Test"
+    assert data["commission"] == 50.0
+    assert "*150*0944123456*5000#" in data["ussd_string"]

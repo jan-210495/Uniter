@@ -28,7 +28,7 @@ class ServiceModel(Base):
     service_type = Column(String)
     name_ar = Column(String)
     name_en = Column(String)
-    ussd_template = Column(String) # e.g., *150*{phone}*{amount}#
+    ussd_template = Column(String)
 
 class TransactionModel(Base):
     __tablename__ = "transactions"
@@ -39,6 +39,8 @@ class TransactionModel(Base):
     phone_number = Column(String)
     amount = Column(Float)
     ussd_string = Column(String)
+    commission = Column(Float, default=0.0)
+    note = Column(String, nullable=True)
     status = Column(String, default="completed")
     created_at = Column(DateTime, default=lambda: datetime.datetime.now(datetime.timezone.utc))
 

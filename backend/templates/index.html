@@ -11,7 +11,7 @@
     </style>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col">
-    <header class="bg-slate-800 border-b border-slate-700 px-6 py-4 flex justify-between items-center">
+    <header class="bg-slate-800 border-b border-slate-700 px-6 py-4 flex justify-between items-center shadow-md">
         <div class="flex items-center gap-3">
             <span class="text-xl font-bold tracking-tight text-blue-400">Uniter ⚡</span>
             <span id="badgeSub" class="text-xs bg-slate-700 text-slate-300 px-2.5 py-1 rounded-full">MTN & Syriatel POS</span>
@@ -55,33 +55,53 @@
                     </div>
                 </div>
 
+                <!-- Quick Amount Chips -->
+                <div>
+                    <label id="lblQuick" class="block text-xs font-medium text-slate-400 mb-1.5">مبالغ سريعة (Quick Amounts):</label>
+                    <div class="flex gap-2 flex-wrap">
+                        <button type="button" onclick="setAmount(1000)" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded transition">1,000</button>
+                        <button type="button" onclick="setAmount(2500)" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded transition">2,500</button>
+                        <button type="button" onclick="setAmount(5000)" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded transition">5,000</button>
+                        <button type="button" onclick="setAmount(10000)" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded transition">10,000</button>
+                        <button type="button" onclick="setAmount(25000)" class="bg-slate-700 hover:bg-slate-600 text-xs px-3 py-1 rounded transition">25,000</button>
+                    </div>
+                </div>
+
+                <div>
+                    <label id="lblNote" class="block text-xs font-medium text-slate-400 mb-1">ملاحظة اختيارية (Optional Note)</label>
+                    <input type="text" id="note" placeholder="اسم الزبون أو ملاحظة..." class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-slate-100 text-sm focus:border-blue-500 focus:outline-none">
+                </div>
+
                 <button type="submit" id="btnSubmit" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-lg transition shadow">
                     توليد رمز USSD وتسجيل العملية (Generate USSD & Save)
                 </button>
             </form>
 
-            <!-- USSD Output Modal/Box -->
-            <div id="ussdResultBox" class="mt-6 p-4 bg-slate-900 border border-slate-700 rounded-lg hidden">
+            <!-- USSD Output Box -->
+            <div id="ussdResultBox" class="mt-6 p-4 bg-slate-900 border border-emerald-500/40 rounded-lg hidden">
                 <div class="flex justify-between items-center mb-2">
                     <span id="ussdTitle" class="text-xs font-bold text-emerald-400">رمز USSD الجاهز للنسخ:</span>
-                    <button onclick="copyUssd()" class="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded transition">نسخ (Copy)</button>
+                    <button onclick="copyUssd()" class="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded transition font-medium">نسخ (Copy)</button>
                 </div>
-                <div id="ussdCodeDisplay" class="text-lg font-mono font-bold text-slate-100 select-all bg-slate-800 p-2 rounded"></div>
+                <div id="ussdCodeDisplay" class="text-xl font-mono font-bold text-emerald-300 select-all bg-slate-800 p-3 rounded tracking-wider"></div>
             </div>
         </div>
 
         <!-- Recent Transactions -->
         <div class="bg-slate-800 border border-slate-700 rounded-xl p-5 shadow-sm flex flex-col">
             <h3 id="historyTitle" class="text-md font-semibold mb-3 text-slate-200">سجل العمليات الأخير</h3>
-            <div id="txList" class="flex-1 overflow-y-auto space-y-3 max-h-[400px]">
+            <div id="txList" class="flex-1 overflow-y-auto space-y-3 max-h-[500px]">
                 {% for tx in transactions %}
                 <div class="bg-slate-900 border border-slate-700/60 p-3 rounded-lg text-xs space-y-1">
                     <div class="flex justify-between font-semibold">
-                        <span class="text-blue-400">{{ tx.operator_name }}</span>
-                        <span class="text-emerald-400">{{ tx.amount }} ل.س</span>
+                        <span class="text-blue-400">{{ tx.operator_name }} ({{ tx.service_type }})</span>
+                        <span class="text-emerald-400 font-bold">{{ tx.amount }} ل.س</span>
                     </div>
-                    <div class="text-slate-400">الرقم: <span class="text-slate-200 font-mono">{{ tx.phone_number }}</span></div>
-                    <div class="text-slate-500 font-mono text-[10px]">{{ tx.ussd_string }}</div>
+                    <div class="text-slate-300 flex justify-between">
+                        <span>الرقم: <span class="text-slate-100 font-mono">{{ tx.phone_number }}</span></span>
+                        {% if tx.note %}<span class="text-amber-400 italic">{{ tx.note }}</span>{% endif %}
+                    </div>
+                    <div class="text-slate-500 font-mono text-[10px] truncate">{{ tx.ussd_string }}</div>
                 </div>
                 {% else %}
                 <p id="noTxText" class="text-xs text-slate-500">لا توجد عمليات مسجلة بعد.</p>
@@ -91,7 +111,7 @@
     </main>
 
     <footer class="bg-slate-800 border-t border-slate-700 py-3 text-center text-xs text-slate-500">
-        Uniter Shop Charging System &bull; Phase 2 Core Models & POS
+        Uniter Shop Charging System &bull; Phase 3 Transaction Engine
     </footer>
 
     <script>
@@ -104,6 +124,8 @@
                 lblService: "نوع الخدمة (Service Type)",
                 lblPhone: "رقم الهاتف (Phone Number)",
                 lblAmount: "المبلغ / الوحدات (Amount / Units)",
+                lblQuick: "مبالغ سريعة (Quick Amounts):",
+                lblNote: "ملاحظة اختيارية (Optional Note)",
                 btnSubmit: "توليد رمز USSD وتسجيل العملية (Generate USSD & Save)",
                 historyTitle: "سجل العمليات الأخير",
                 noTxText: "لا توجد عمليات مسجلة بعد.",
@@ -116,6 +138,8 @@
                 lblService: "Service Type",
                 lblPhone: "Phone Number",
                 lblAmount: "Amount / Units",
+                lblQuick: "Quick Amounts:",
+                lblNote: "Optional Note",
                 btnSubmit: "Generate USSD & Save Transaction",
                 historyTitle: "Recent Transactions",
                 noTxText: "No transactions recorded yet.",
@@ -136,11 +160,17 @@
             document.getElementById('lblService').innerText = t.lblService;
             document.getElementById('lblPhone').innerText = t.lblPhone;
             document.getElementById('lblAmount').innerText = t.lblAmount;
+            document.getElementById('lblQuick').innerText = t.lblQuick;
+            document.getElementById('lblNote').innerText = t.lblNote;
             document.getElementById('btnSubmit').innerText = t.btnSubmit;
             document.getElementById('historyTitle').innerText = t.historyTitle;
             document.getElementById('ussdTitle').innerText = t.ussdTitle;
             const noTx = document.getElementById('noTxText');
             if (noTx) noTx.innerText = t.noTxText;
+        }
+
+        function setAmount(val) {
+            document.getElementById('amount').value = val;
         }
 
         let lastGeneratedUssd = "";
@@ -151,11 +181,12 @@
             const service_type = document.getElementById('serviceType').value;
             const phone_number = document.getElementById('phoneNumber').value;
             const amount = parseFloat(document.getElementById('amount').value);
+            const note = document.getElementById('note').value;
 
             const res = await fetch('/api/transactions', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({operator_name, service_type, phone_number, amount})
+                body: JSON.stringify({operator_name, service_type, phone_number, amount, note})
             });
 
             if (res.ok) {
@@ -163,16 +194,16 @@
                 lastGeneratedUssd = data.ussd_string;
                 document.getElementById('ussdCodeDisplay').innerText = lastGeneratedUssd;
                 document.getElementById('ussdResultBox').classList.remove('hidden');
-                // Reload page or refresh tx list
                 location.reload();
             } else {
-                alert('Error recording transaction');
+                const err = await res.json();
+                alert('خطأ في إدخال البيانات: ' + (err.detail ? JSON.stringify(err.detail) : 'خطأ غير معروف'));
             }
         }
 
         function copyUssd() {
             navigator.clipboard.writeText(lastGeneratedUssd);
-            alert(currentLang === 'ar' ? 'تم نسخ الرمز بنجاح!' : 'USSD copied to clipboard!');
+            alert(currentLang === 'ar' ? 'تم نسخ رمز USSD بنجاح! الصقه في لوحة الاتصال.' : 'USSD code copied! Paste it into your dialer.');
         }
     </script>
 </body>
