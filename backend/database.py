@@ -113,6 +113,24 @@ class DebtLedger(Base):
     customer: Mapped[Customer] = relationship(back_populates="debt_ledger")
 
 
+class CashRegister(Base):
+    __tablename__ = "cash_register"
+    __table_args__ = (
+        # Only one register can be open at a time - enforced in code
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    opening_balance_cents: Mapped[int] = mapped_column(Integer, default=0)
+    closing_balance_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(20))
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    @property
+    def is_open(self) -> bool:
+        return self.status == "open"
+
+
 class Setting(Base):
     __tablename__ = "settings"
 

@@ -14,12 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
     from .commission import get_commission_for_transaction
-    from .database import Customer, Operator, Service, Transaction, DebtLedger, get_db, get_setting, set_setting
+    from .database import Customer, Operator, Service, Transaction, DebtLedger, CashRegister, get_db, get_setting, set_setting
     from .seed import generate_ussd
     from .validation import validate_syrian_phone
 else:
     from commission import get_commission_for_transaction
-    from database import Customer, Operator, Service, Transaction, DebtLedger, get_db, get_setting, set_setting
+    from database import Customer, Operator, Service, Transaction, DebtLedger, CashRegister, get_db, get_setting, set_setting
     from seed import generate_ussd
     from validation import validate_syrian_phone
 
@@ -80,7 +80,7 @@ class DebtLedgerCreate(BaseModel):
     customer_phone: str
     amount_cents: int = Field(ge=0)
     description: str = Field(default="", max_length=512)
-    type: str = Field(default="charge", pattern="^charge|payment$")
+    type: str = Field(default="charge", pattern="^(charge|payment)$")
 
     @field_validator("customer_phone")
     @classmethod
@@ -97,6 +97,33 @@ class DebtLedgerResponse(BaseModel):
     description: str
     type: str
     created_at: datetime
+
+
+# --- Cash Register Models ---
+
+
+class CashRegisterCreate(BaseModel):
+    opening_balance_cents: int = Field(ge=0, default=0)
+
+
+class CashRegisterResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    opening_balance_cents: int
+    closing_balance_cents: int | None = None
+    status: str
+    opened_at: datetime
+    closed_at: datetime | None = None
+
+
+class RegisterSummary(BaseModel):
+    opening_balance_cents: int
+    cash_collected_cents: int
+    debt_collected_cents: int
+    closing_balance_cents: int | None
+    transaction_count: int
+    debt_payment_count: int
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -338,6 +365,133 @@ async def get_debt_summary(
         "total_payments_cents": total_payments,
         "total_debt_cents": total_debt,
     }
+
+
+# --- Cash Register Endpoints ---
+
+
+@app.post("/api/register/open", response_model=CashRegisterResponse)
+async def open_register(
+    data: CashRegisterCreate,
+    db: DbSession,
+) -> CashRegister:
+    """Open a new register. Fail if one is already open."""
+    # Check if a register is already open
+    existing = await db.scalar(
+        select(CashRegister).where(CashRegister.status == "open")
+    )
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="A register is already open")
+
+    register = CashRegister(
+        opening_balance_cents=data.opening_balance_cents,
+        status="open",
+        opened_at=datetime.now(timezone.utc),
+        closed_at=None,
+    )
+    db.add(register)
+    await db.commit()
+    await db.refresh(register)
+
+    return register
+
+
+@app.post("/api/register/close", response_model=CashRegisterResponse)
+async def close_register(
+    db: DbSession,
+    register_id: int,
+) -> CashRegister:
+    """Close the current open register, compute closing balance."""
+    register = await db.get(CashRegister, register_id)
+    if register is None:
+        raise HTTPException(status_code=404, detail="Register not found")
+
+    if register.status != "open":
+        raise HTTPException(status_code=400, detail="Can only close an open register")
+
+    # Compute cash collected: sum of completed transaction amount_cents since register opened
+    transactions_result = await db.scalars(
+        select(Transaction)
+        .where(
+            Transaction.created_at >= register.opened_at,
+            Transaction.status == "completed",
+        )
+    )
+    transactions = transactions_result.all()
+    cash_collected = sum(t.amount_cents for t in transactions)
+
+    # Compute debt collected: sum of DebtLedger payments (type='payment') since register opened
+    debt_result = await db.scalars(
+        select(DebtLedger)
+        .where(
+            DebtLedger.created_at >= register.opened_at,
+            DebtLedger.type == "payment",
+        )
+    )
+    debt_entries = debt_result.all()
+    debt_collected = sum(d.amount_cents for d in debt_entries)
+
+    register.closing_balance_cents = register.opening_balance_cents + cash_collected + debt_collected
+    register.status = "closed"
+    register.closed_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(register)
+
+    return register
+
+
+@app.get("/api/register/summary", response_model=RegisterSummary)
+async def get_register_summary(
+    db: DbSession,
+) -> RegisterSummary:
+    """Return summary for current/open register, or last closed one."""
+    # Try to find open register first
+    register = await db.scalar(
+        select(CashRegister).where(CashRegister.status == "open")
+    )
+
+    if register is None:
+        # Fall back to most recent closed register
+        register = await db.scalar(
+            select(CashRegister).where(CashRegister.status == "closed").order_by(CashRegister.closed_at.desc())
+        )
+
+    if register is None:
+        raise HTTPException(status_code=404, detail="No register found")
+
+    # Compute cash collected: sum of completed transaction amount_cents since register opened
+    transactions_result = await db.scalars(
+        select(Transaction)
+        .where(
+            Transaction.created_at >= register.opened_at,
+            Transaction.status == "completed",
+        )
+    )
+    transactions = transactions_result.all()
+    cash_collected = sum(t.amount_cents for t in transactions)
+
+    # Compute debt collected: sum of DebtLedger payments (type='payment') since register opened
+    debt_result = await db.scalars(
+        select(DebtLedger)
+        .where(
+            DebtLedger.created_at >= register.opened_at,
+            DebtLedger.type == "payment",
+        )
+    )
+    debt_entries = debt_result.all()
+    debt_collected = sum(d.amount_cents for d in debt_entries)
+
+    closing_balance = register.opening_balance_cents + cash_collected + debt_collected
+
+    return RegisterSummary(
+        opening_balance_cents=register.opening_balance_cents,
+        cash_collected_cents=cash_collected,
+        debt_collected_cents=debt_collected,
+        closing_balance_cents=closing_balance if register.status == "closed" else None,
+        transaction_count=len(transactions),
+        debt_payment_count=len(debt_entries),
+    )
 
 
 if __name__ == "__main__":
