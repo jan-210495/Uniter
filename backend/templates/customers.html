@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% set ar = lang|default('en') == 'ar' %}
 {% set currency = 'ل.س' if ar else 'SYP' %}
+{% set operators = [('mtn', 'إم تي إن (MTN)' if ar else 'MTN'), ('syriatel', 'سيرياتيل' if ar else 'Syriatel')] %}
 
 {% block title %}{{ 'العملاء' if ar else 'Customers' }} · Uniter{% endblock %}
 
@@ -60,12 +61,12 @@
                 <button id="refresh-customers" type="button" class="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'تحديث' if ar else 'Refresh' }}</button>
             </div>
             <div class="overflow-x-auto">
-                <table class="w-full min-w-[40rem] text-sm">
+                <table class="w-full min-w-[44rem] text-sm">
                     <caption class="sr-only">{{ 'العملاء وأرصدة الديون' if ar else 'Customers and debt balances' }}</caption>
                     <thead class="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
                         <tr>
-                            <th scope="col" class="px-4 py-3 text-start">{{ 'الهاتف' if ar else 'Phone' }}</th>
                             <th scope="col" class="px-4 py-3 text-start">{{ 'الاسم' if ar else 'Name' }}</th>
+                            <th scope="col" class="px-4 py-3 text-start">{{ 'الهاتف' if ar else 'Phone' }}</th>
                             <th scope="col" class="px-4 py-3 text-start">{{ 'الرصيد' if ar else 'Balance' }}</th>
                             <th scope="col" class="px-4 py-3 text-start">{{ 'الدين' if ar else 'Debt' }}</th>
                             <th scope="col" class="px-4 py-3 text-end">{{ 'إجراءات' if ar else 'Actions' }}</th>
@@ -73,9 +74,9 @@
                     </thead>
                     <tbody id="customers-body" class="divide-y divide-slate-100">
                         {% for customer in customers %}
-                        <tr class="hover:bg-slate-50" data-customer-id="{{ customer.id }}" data-name="{{ customer.name }}">
-                            <td class="px-4 py-3 font-mono text-sm tabular-nums text-slate-700" dir="ltr" data-field="phone">{{ customer.phone }}</td>
+                        <tr class="hover:bg-slate-50" data-customer-id="{{ customer.id }}" data-name="{{ customer.name }}" data-phone="{{ customer.phone }}">
                             <td class="px-4 py-3 font-semibold text-slate-900" data-field="name">{{ customer.name }}</td>
+                            <td class="px-4 py-3 font-mono text-sm tabular-nums text-slate-700" dir="ltr" data-field="phone">{{ customer.phone }}</td>
                             <td class="px-4 py-3 tabular-nums text-slate-700" data-field="balance"><span dir="ltr">{{ "{:,}".format(customer.balance_cents) }}</span> <span class="text-xs font-semibold text-slate-500">{{ currency }}</span></td>
                             {% if customer.debt_cents > 0 %}
                             <td class="px-4 py-3 tabular-nums" data-field="debt"><span dir="ltr" class="rounded-full bg-amber-50 px-2.5 py-1 text-sm font-semibold text-amber-800">{{ "{:,}".format(customer.debt_cents) }}</span> <span class="text-xs font-semibold text-amber-700">{{ currency }}</span></td>
@@ -84,6 +85,7 @@
                             {% endif %}
                             <td class="px-4 py-3" data-field="actions">
                                 <div class="flex flex-wrap items-center justify-end gap-2">
+                                    <button type="button" data-action="debt" data-id="{{ customer.id }}" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'الديون' if ar else 'Debt' }}</button>
                                     <button type="button" data-action="edit" data-id="{{ customer.id }}" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 transition hover:border-blue-300 hover:text-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تعديل' if ar else 'Edit' }}</button>
                                     <button type="button" data-action="remove" data-id="{{ customer.id }}" class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600">{{ 'حذف' if ar else 'Remove' }}</button>
                                 </div>
@@ -98,6 +100,123 @@
                 </table>
             </div>
         </section>
+    </div>
+
+    <section class="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="operator-balance-title">
+        <div class="mb-5 flex flex-wrap items-end justify-between gap-3 border-b border-slate-100 pb-4">
+            <div>
+                <h2 id="operator-balance-title" class="text-lg font-bold text-slate-900">{{ 'أرصدة المشغّلين' if ar else 'Operator balances' }}</h2>
+                <p class="mt-1 text-sm text-slate-500">{{ 'الرصيد المتبقي المدفوع مسبقاً لدى كل مشغّل، وأضف رصيداً عند الحاجة.' if ar else 'Prepaid credit remaining with each operator; add credit when needed.' }}</p>
+            </div>
+            <button id="refresh-operators" type="button" class="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'تحديث' if ar else 'Refresh' }}</button>
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2">
+            {% for code, label in operators %}
+            <article class="rounded-xl border border-slate-200 bg-slate-50 p-4" data-operator="{{ code }}">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <h3 class="text-base font-bold text-slate-900">{{ label }}</h3>
+                    <span class="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">{{ 'رصيد مسبق الدفع' if ar else 'Prepaid credit' }}</span>
+                </div>
+                <p class="mt-3 text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'الرصيد المتبقي' if ar else 'Remaining balance' }}</p>
+                <p class="mt-1 text-2xl font-bold tabular-nums text-blue-950"><span data-field="operator-balance" dir="ltr">—</span> <span class="text-sm font-semibold text-slate-500">{{ currency }}</span></p>
+                <form class="mt-4 flex flex-wrap items-end gap-2" data-topup-form novalidate>
+                    <div class="min-w-0 flex-1">
+                        <label for="topup-{{ code }}" class="mb-1 block text-xs font-semibold text-slate-700">{{ 'مبلغ الشحن (سنت)' if ar else 'Top-up amount (cents)' }}</label>
+                        <input id="topup-{{ code }}" type="number" min="1" step="1" required data-topup-amount class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                    </div>
+                    <button type="submit" class="rounded-lg bg-blue-950 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'شحن الرصيد' if ar else 'Top up' }}</button>
+                </form>
+                <p class="mt-2 min-h-[1rem] text-xs font-medium text-slate-600" data-topup-status role="status" aria-live="polite"></p>
+            </article>
+            {% endfor %}
+        </div>
+    </section>
+
+    <div id="debt-modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="debt-modal-title">
+        <div id="debt-modal-backdrop" class="absolute inset-0 bg-slate-900/50"></div>
+        <div class="relative mx-auto mt-6 w-full max-w-2xl px-4 sm:mt-12">
+            <div class="max-h-[85vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-xl">
+                <header class="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-6">
+                    <div>
+                        <p class="text-xs font-bold uppercase tracking-widest text-blue-800">{{ 'سجل الديون' if ar else 'Debt ledger' }}</p>
+                        <h2 id="debt-modal-title" class="text-lg font-bold text-slate-900">{{ 'الديون' if ar else 'Debt' }}</h2>
+                        <p id="debt-modal-subtitle" class="mt-1 text-sm text-slate-500"></p>
+                    </div>
+                    <button id="debt-modal-close" type="button" aria-label="{{ 'إغلاق' if ar else 'Close' }}" class="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">✕</button>
+                </header>
+                <div class="px-5 py-4 sm:px-6">
+                    <dl class="grid gap-3 sm:grid-cols-3">
+                        <div class="rounded-xl border border-slate-200 bg-white p-3">
+                            <dt class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'إجمالي الرسوم' if ar else 'Charges' }}</dt>
+                            <dd class="mt-1 text-lg font-bold tabular-nums text-slate-900"><span id="debt-total-charges" dir="ltr">0</span></dd>
+                        </div>
+                        <div class="rounded-xl border border-slate-200 bg-white p-3">
+                            <dt class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'إجمالي الدفعات' if ar else 'Payments' }}</dt>
+                            <dd class="mt-1 text-lg font-bold tabular-nums text-slate-900"><span id="debt-total-payments" dir="ltr">0</span></dd>
+                        </div>
+                        <div class="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                            <dt class="text-xs font-bold uppercase tracking-widest text-amber-800">{{ 'الدين المستحق' if ar else 'Debt balance' }}</dt>
+                            <dd class="mt-1 text-lg font-bold tabular-nums text-amber-900"><span id="debt-total-debt" dir="ltr">0</span></dd>
+                        </div>
+                    </dl>
+
+                    <form id="debt-form" class="mt-5 space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4" novalidate>
+                        <p id="debt-form-title" class="text-sm font-bold text-slate-900">{{ 'إضافة قيد' if ar else 'Add entry' }}</p>
+                        <div class="grid gap-3 sm:grid-cols-2">
+                            <div>
+                                <label for="debt-amount" class="mb-1 block text-xs font-semibold text-slate-700">{{ 'المبلغ (سنت)' if ar else 'Amount (cents)' }}</label>
+                                <input id="debt-amount" type="number" min="0" step="1" required class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                            </div>
+                            <div>
+                                <label for="debt-type" class="mb-1 block text-xs font-semibold text-slate-700">{{ 'النوع' if ar else 'Type' }}</label>
+                                <select id="debt-type" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                                    <option value="charge">{{ 'دين (رسوم)' if ar else 'Charge (debt)' }}</option>
+                                    <option value="payment">{{ 'دفعة' if ar else 'Payment' }}</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <label for="debt-description" class="mb-1 block text-xs font-semibold text-slate-700">{{ 'الوصف (اختياري)' if ar else 'Description (optional)' }}</label>
+                            <input id="debt-description" type="text" maxlength="512" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button type="submit" id="debt-submit" class="rounded-lg bg-blue-950 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'إضافة القيد' if ar else 'Add entry' }}</button>
+                            <button type="button" id="debt-cancel-edit" class="hidden rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'إلغاء التعديل' if ar else 'Cancel edit' }}</button>
+                            <span id="debt-status" role="status" aria-live="polite" class="text-sm font-medium text-slate-600"></span>
+                        </div>
+                    </form>
+
+                    <div class="mt-5 overflow-x-auto">
+                        <table class="w-full min-w-[32rem] text-sm">
+                            <caption class="sr-only">{{ 'قيود ديون العميل' if ar else 'Customer debt entries' }}</caption>
+                            <thead class="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
+                                <tr>
+                                    <th scope="col" class="px-3 py-2 text-start">{{ 'التاريخ' if ar else 'Date' }}</th>
+                                    <th scope="col" class="px-3 py-2 text-start">{{ 'النوع' if ar else 'Type' }}</th>
+                                    <th scope="col" class="px-3 py-2 text-start">{{ 'المبلغ' if ar else 'Amount' }}</th>
+                                    <th scope="col" class="px-3 py-2 text-start">{{ 'الوصف' if ar else 'Description' }}</th>
+                                    <th scope="col" class="px-3 py-2 text-end">{{ 'إجراءات' if ar else 'Actions' }}</th>
+                                </tr>
+                            </thead>
+                            <tbody id="debt-entries" class="divide-y divide-slate-100">
+                                <tr><td colspan="5" class="px-3 py-6 text-center text-sm text-slate-500">{{ 'لا توجد قيود بعد.' if ar else 'No debt entries yet.' }}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# Utility classes rendered by the page script, listed here so the Tailwind CDN emits them. #}
+    <div class="hidden" aria-hidden="true">
+        <span class="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800"></span>
+        <span class="rounded-full bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-800"></span>
+        <span class="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-800"></span>
+        <span class="min-h-[1rem] text-sm font-medium text-green-700"></span>
+        <span class="min-h-[1rem] text-sm font-medium text-red-700"></span>
+        <span class="min-h-[1rem] text-xs font-medium text-green-700"></span>
+        <span class="min-h-[1rem] text-xs font-medium text-red-700"></span>
     </div>
 </section>
 {% endblock %}
@@ -123,11 +242,34 @@
         'cancel': 'إلغاء' if ar else 'Cancel',
         'edit': 'تعديل' if ar else 'Edit',
         'remove': 'حذف' if ar else 'Remove',
+        'debt': 'الديون' if ar else 'Debt',
         'currency': currency,
-        'empty': 'لا يوجد عملاء بعد. أضف أول عميل من النموذج.' if ar else 'No customers yet. Add the first one with the form.'
+        'empty': 'لا يوجد عملاء بعد. أضف أول عميل من النموذج.' if ar else 'No customers yet. Add the first one with the form.',
+        'debtTitle': 'ديون {name}' if ar else 'Debt — {name}',
+        'debtSubtitle': 'قيود الرسوم والدفعات لهذا العميل.' if ar else 'Charge and payment entries recorded for this customer.',
+        'debtAddTitle': 'إضافة قيد' if ar else 'Add entry',
+        'debtEditTitle': 'تعديل القيد' if ar else 'Edit entry',
+        'debtAdd': 'إضافة القيد' if ar else 'Add entry',
+        'debtSave': 'حفظ التعديل' if ar else 'Save changes',
+        'debtAdded': 'تمت إضافة القيد.' if ar else 'Debt entry added.',
+        'debtUpdated': 'تم تحديث القيد.' if ar else 'Debt entry updated.',
+        'debtRemoved': 'تم حذف القيد.' if ar else 'Debt entry removed.',
+        'debtInvalidAmount': 'أدخل مبلغاً صحيحاً بالـسنت.' if ar else 'Enter a valid amount in cents.',
+        'debtLoadFailed': 'تعذر تحميل قيود الديون.' if ar else 'Could not load the debt entries.',
+        'debtSaveFailed': 'تعذر حفظ القيد. حاول مرة أخرى.' if ar else 'Could not save the debt entry. Try again.',
+        'debtRemoveFailed': 'تعذر حذف القيد. حاول مرة أخرى.' if ar else 'Could not remove the debt entry. Try again.',
+        'debtEmpty': 'لا توجد قيود بعد.' if ar else 'No debt entries yet.',
+        'confirmDebtRemove': 'حذف هذا القيد؟' if ar else 'Remove this debt entry?',
+        'typeCharge': 'دين' if ar else 'Charge',
+        'typePayment': 'دفعة' if ar else 'Payment',
+        'topupInvalid': 'أدخل مبلغاً صحيحاً أكبر من صفر.' if ar else 'Enter a valid amount greater than zero.',
+        'topupDone': 'تم شحن الرصيد. الرصيد الجديد: {balance}.' if ar else 'Top-up recorded. New balance: {balance}.',
+        'topupFailed': 'تعذر شحن الرصيد. حاول مرة أخرى.' if ar else 'Could not record the top-up. Try again.',
+        'balanceUnavailable': 'غير متاح' if ar else 'Unavailable'
     }|tojson }};
 
     const apiBase = '';
+    const pageLang = {{ lang|default('en')|tojson }};
     const tbody = document.getElementById('customers-body');
     const form = document.getElementById('customer-form');
     const phoneInput = document.getElementById('new-phone');
@@ -137,9 +279,11 @@
     const totalBalanceEl = document.getElementById('total-balance');
     const totalDebtEl = document.getElementById('total-debt');
 
-    function setStatus(text, tone) {
-        statusEl.textContent = text;
-        statusEl.className = 'min-h-[1.25rem] text-sm font-medium ' + (tone === 'error' ? 'text-red-700' : 'text-green-700');
+    function setStatus(element, text, tone) {
+        element.textContent = text;
+        element.className = element.id === 'customer-status'
+            ? 'min-h-[1.25rem] text-sm font-medium ' + (tone === 'error' ? 'text-red-700' : 'text-green-700')
+            : 'min-h-[1rem] text-xs font-medium ' + (tone === 'error' ? 'text-red-700' : 'text-green-700');
     }
 
     function normalizePhone(value) {
@@ -153,10 +297,19 @@
         return Number(value || 0).toLocaleString('en-US');
     }
 
-    function makeCell(className) {
-        const td = document.createElement('td');
-        td.className = className;
-        return td;
+    function formatDate(value) {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value || '';
+        return date.toLocaleString(pageLang === 'ar' ? 'ar-SY' : 'en-GB', {
+            dateStyle: 'short',
+            timeStyle: 'short'
+        });
+    }
+
+    function makeCell(className, tag) {
+        const cell = document.createElement(tag || 'td');
+        cell.className = className;
+        return cell;
     }
 
     function makeAmount(value, numberClass, unitClass) {
@@ -172,11 +325,12 @@
         return fragment;
     }
 
-    function makeActionButton(label, action, id, extraClass) {
+    function makeActionButton(label, action, id, extraClass, datasetKey, datasetValue) {
         const button = document.createElement('button');
         button.type = 'button';
-        button.dataset.action = action;
-        button.dataset.id = String(id);
+        button.dataset[datasetKey || 'action'] = action;
+        if (id !== undefined && id !== null) button.dataset.id = String(id);
+        if (datasetValue !== undefined) button.dataset[datasetValue[0]] = String(datasetValue[1]);
         button.className = 'rounded-lg border px-3 py-1.5 text-xs font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ' + extraClass;
         button.textContent = label;
         return button;
@@ -187,15 +341,16 @@
         tr.className = 'hover:bg-slate-50';
         tr.dataset.customerId = String(customer.id);
         tr.dataset.name = customer.name;
+        tr.dataset.phone = customer.phone;
+
+        const name = makeCell('px-4 py-3 font-semibold text-slate-900');
+        name.dataset.field = 'name';
+        name.textContent = customer.name;
 
         const phone = makeCell('px-4 py-3 font-mono text-sm tabular-nums text-slate-700');
         phone.dataset.field = 'phone';
         phone.dir = 'ltr';
         phone.textContent = customer.phone;
-
-        const name = makeCell('px-4 py-3 font-semibold text-slate-900');
-        name.dataset.field = 'name';
-        name.textContent = customer.name;
 
         const balance = makeCell('px-4 py-3 tabular-nums text-slate-700');
         balance.dataset.field = 'balance';
@@ -213,12 +368,13 @@
         const wrap = document.createElement('div');
         wrap.className = 'flex flex-wrap items-center justify-end gap-2';
         wrap.append(
+            makeActionButton(messages.debt, 'debt', customer.id, 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'),
             makeActionButton(messages.edit, 'edit', customer.id, 'border-slate-200 bg-white text-blue-900 hover:border-blue-300 hover:text-blue-800'),
             makeActionButton(messages.remove, 'remove', customer.id, 'border-red-200 bg-white text-red-700 hover:bg-red-50')
         );
         actions.appendChild(wrap);
 
-        tr.append(phone, name, balance, debt, actions);
+        tr.append(name, phone, balance, debt, actions);
         return tr;
     }
 
@@ -245,7 +401,7 @@
             totalDebtEl.textContent = formatCents(debt);
             return true;
         } catch (_) {
-            if (showError) setStatus(messages.loadFailed, 'error');
+            if (showError) setStatus(statusEl, messages.loadFailed, 'error');
             return false;
         }
     }
@@ -290,7 +446,7 @@
         const field = input || tr.querySelector('[data-field="name"] input');
         const name = (field ? field.value : '').trim();
         if (!name) {
-            setStatus(messages.nameRequired, 'error');
+            setStatus(statusEl, messages.nameRequired, 'error');
             if (field) field.focus();
             return;
         }
@@ -301,10 +457,10 @@
                 body: JSON.stringify({ name }),
             });
             if (!response.ok) throw new Error('update failed');
-            setStatus(messages.updated, 'success');
+            setStatus(statusEl, messages.updated, 'success');
             await refresh(false);
         } catch (_) {
-            setStatus(messages.saveFailed, 'error');
+            setStatus(statusEl, messages.saveFailed, 'error');
         }
     }
 
@@ -316,24 +472,296 @@
                 method: 'DELETE',
             });
             if (!response.ok) throw new Error('delete failed');
-            setStatus(messages.removed, 'success');
+            setStatus(statusEl, messages.removed, 'success');
             await refresh(false);
         } catch (_) {
-            setStatus(messages.removeFailed, 'error');
+            setStatus(statusEl, messages.removeFailed, 'error');
         }
     }
+
+    // --- Debt ledger modal ---
+
+    const debtModal = document.getElementById('debt-modal');
+    const debtModalTitle = document.getElementById('debt-modal-title');
+    const debtModalSubtitle = document.getElementById('debt-modal-subtitle');
+    const debtForm = document.getElementById('debt-form');
+    const debtFormTitle = document.getElementById('debt-form-title');
+    const debtAmount = document.getElementById('debt-amount');
+    const debtType = document.getElementById('debt-type');
+    const debtDescription = document.getElementById('debt-description');
+    const debtSubmit = document.getElementById('debt-submit');
+    const debtCancelEdit = document.getElementById('debt-cancel-edit');
+    const debtStatus = document.getElementById('debt-status');
+    const debtEntries = document.getElementById('debt-entries');
+    const debtChargesEl = document.getElementById('debt-total-charges');
+    const debtPaymentsEl = document.getElementById('debt-total-payments');
+    const debtBalanceEl = document.getElementById('debt-total-debt');
+    const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    let debtCustomer = null;
+    let editingDebtId = null;
+    let lastFocused = null;
+
+    function setModalOpen(open) {
+        debtModal.classList.toggle('hidden', !open);
+        if (open) {
+            debtModal.classList.remove('hidden');
+            if (lastFocused === null) lastFocused = document.activeElement;
+            debtAmount.focus();
+        } else {
+            debtModal.classList.add('hidden');
+            if (lastFocused && typeof lastFocused.focus === 'function') lastFocused.focus();
+            lastFocused = null;
+        }
+    }
+
+    function resetDebtForm() {
+        editingDebtId = null;
+        debtForm.reset();
+        debtType.value = 'charge';
+        debtFormTitle.textContent = messages.debtAddTitle;
+        debtSubmit.textContent = messages.debtAdd;
+        debtCancelEdit.classList.add('hidden');
+        setStatus(debtStatus, '', 'success');
+    }
+
+    function renderDebtEntry(entry) {
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-50';
+        tr.dataset.debtId = String(entry.id);
+        tr.dataset.amount = String(entry.amount_cents);
+        tr.dataset.description = entry.description || '';
+        tr.dataset.type = entry.type;
+
+        const date = makeCell('px-3 py-2 text-xs text-slate-600');
+        date.dataset.field = 'date';
+        date.textContent = formatDate(entry.created_at);
+
+        const type = makeCell('px-3 py-2');
+        type.dataset.field = 'type';
+        const badge = document.createElement('span');
+        badge.className = entry.type === 'payment'
+            ? 'rounded-full bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-800'
+            : 'rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800';
+        badge.textContent = entry.type === 'payment' ? messages.typePayment : messages.typeCharge;
+        type.appendChild(badge);
+
+        const amount = makeCell('px-3 py-2 font-semibold tabular-nums text-slate-900');
+        amount.dataset.field = 'amount';
+        amount.dir = 'ltr';
+        amount.textContent = formatCents(entry.amount_cents);
+
+        const description = makeCell('px-3 py-2 text-slate-700');
+        description.dataset.field = 'description';
+        description.textContent = entry.description || '—';
+
+        const actions = makeCell('px-3 py-2');
+        actions.dataset.field = 'actions';
+        const wrap = document.createElement('div');
+        wrap.className = 'flex flex-wrap items-center justify-end gap-2';
+        wrap.append(
+            makeActionButton(messages.edit, 'edit', entry.id, 'border-slate-200 bg-white text-blue-900 hover:border-blue-300 hover:text-blue-800'),
+            makeActionButton(messages.remove, 'remove', entry.id, 'border-red-200 bg-white text-red-700 hover:bg-red-50')
+        );
+        actions.appendChild(wrap);
+
+        tr.append(date, type, amount, description, actions);
+        return tr;
+    }
+
+    function renderDebtEmpty() {
+        const tr = document.createElement('tr');
+        const td = makeCell('px-3 py-6 text-center text-sm text-slate-500');
+        td.colSpan = 5;
+        td.textContent = messages.debtEmpty;
+        tr.appendChild(td);
+        return tr;
+    }
+
+    async function loadDebt() {
+        if (!debtCustomer) return;
+        try {
+            const [balanceResponse, ledgerResponse] = await Promise.all([
+                fetch(`${apiBase}/api/customers/${encodeURIComponent(debtCustomer.id)}/balance`, { cache: 'no-store' }),
+                fetch(`${apiBase}/api/debt/ledger?customer_phone=${encodeURIComponent(debtCustomer.phone)}`, { cache: 'no-store' })
+            ]);
+            if (!balanceResponse.ok || !ledgerResponse.ok) throw new Error('debt load failed');
+            const balance = await balanceResponse.json();
+            const entries = await ledgerResponse.json();
+            debtChargesEl.textContent = formatCents(balance.total_charges_cents);
+            debtPaymentsEl.textContent = formatCents(balance.total_payments_cents);
+            debtBalanceEl.textContent = formatCents(balance.total_debt_cents);
+            debtEntries.replaceChildren(...(entries.length ? entries.map(renderDebtEntry) : [renderDebtEmpty()]));
+        } catch (_) {
+            setStatus(debtStatus, messages.debtLoadFailed, 'error');
+        }
+    }
+
+    function openDebtModal(customer) {
+        debtCustomer = customer;
+        debtModalTitle.textContent = messages.debtTitle.replace('{name}', customer.name);
+        debtModalSubtitle.textContent = `${customer.phone} · ${messages.debtSubtitle}`;
+        resetDebtForm();
+        debtEntries.replaceChildren(renderDebtEmpty());
+        setModalOpen(true);
+        loadDebt();
+    }
+
+    function closeDebtModal() {
+        debtCustomer = null;
+        resetDebtForm();
+        setModalOpen(false);
+    }
+
+    function beginDebtEdit(tr) {
+        editingDebtId = Number(tr.dataset.debtId);
+        debtAmount.value = tr.dataset.amount;
+        debtDescription.value = tr.dataset.description;
+        debtType.value = tr.dataset.type;
+        debtFormTitle.textContent = messages.debtEditTitle;
+        debtSubmit.textContent = messages.debtSave;
+        debtCancelEdit.classList.remove('hidden');
+        setStatus(debtStatus, '', 'success');
+        debtAmount.focus();
+    }
+
+    async function removeDebtEntry(tr) {
+        if (!debtCustomer) return;
+        if (!window.confirm(messages.confirmDebtRemove)) return;
+        try {
+            const response = await fetch(
+                `${apiBase}/api/customers/${encodeURIComponent(debtCustomer.id)}/debt/${encodeURIComponent(tr.dataset.debtId)}`,
+                { method: 'DELETE' }
+            );
+            if (!response.ok) throw new Error('delete failed');
+            if (editingDebtId === Number(tr.dataset.debtId)) resetDebtForm();
+            setStatus(debtStatus, messages.debtRemoved, 'success');
+            await loadDebt();
+            await refresh(false);
+        } catch (_) {
+            setStatus(debtStatus, messages.debtRemoveFailed, 'error');
+        }
+    }
+
+    debtForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!debtCustomer) return;
+        const amount = Number(debtAmount.value);
+        if (!Number.isInteger(amount) || amount < 0) {
+            setStatus(debtStatus, messages.debtInvalidAmount, 'error');
+            debtAmount.focus();
+            return;
+        }
+        const payload = {
+            amount_cents: amount,
+            description: debtDescription.value.trim(),
+            type: debtType.value
+        };
+        const editing = editingDebtId !== null;
+        const url = editing
+            ? `${apiBase}/api/customers/${encodeURIComponent(debtCustomer.id)}/debt/${encodeURIComponent(editingDebtId)}`
+            : `${apiBase}/api/customers/${encodeURIComponent(debtCustomer.id)}/debt`;
+        try {
+            const response = await fetch(url, {
+                method: editing ? 'PUT' : 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) throw new Error('debt save failed');
+            setStatus(debtStatus, editing ? messages.debtUpdated : messages.debtAdded, 'success');
+            resetDebtForm();
+            await loadDebt();
+            await refresh(false);
+        } catch (_) {
+            setStatus(debtStatus, messages.debtSaveFailed, 'error');
+        }
+    });
+
+    debtCancelEdit.addEventListener('click', resetDebtForm);
+    document.getElementById('debt-modal-close').addEventListener('click', closeDebtModal);
+    document.getElementById('debt-modal-backdrop').addEventListener('click', closeDebtModal);
+    debtEntries.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-action]');
+        if (!button || !debtEntries.contains(button)) return;
+        const tr = button.closest('tr');
+        if (!tr) return;
+        if (button.dataset.action === 'edit') beginDebtEdit(tr);
+        else if (button.dataset.action === 'remove') removeDebtEntry(tr);
+    });
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !debtModal.classList.contains('hidden')) {
+            event.preventDefault();
+            closeDebtModal();
+        }
+    });
+
+    // --- Operator balances ---
+
+    const operatorCards = [...document.querySelectorAll('[data-operator]')];
+
+    async function loadOperatorBalances() {
+        await Promise.all(operatorCards.map(async (card) => {
+            const code = card.dataset.operator;
+            const valueEl = card.querySelector('[data-field="operator-balance"]');
+            try {
+                const response = await fetch(
+                    `${apiBase}/api/operators/balance?operator_code=${encodeURIComponent(code)}`,
+                    { cache: 'no-store' }
+                );
+                if (!response.ok) throw new Error('balance unavailable');
+                const data = await response.json();
+                valueEl.textContent = formatCents(data.balance_cents);
+            } catch (_) {
+                valueEl.textContent = messages.balanceUnavailable;
+            }
+        }));
+    }
+
+    operatorCards.forEach((card) => {
+        const formEl = card.querySelector('[data-topup-form]');
+        const amountEl = card.querySelector('[data-topup-amount]');
+        const statusLine = card.querySelector('[data-topup-status]');
+        if (!formEl || !amountEl || !statusLine) return;
+        formEl.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const amount = Number(amountEl.value);
+            if (!Number.isInteger(amount) || amount <= 0) {
+                setStatus(statusLine, messages.topupInvalid, 'error');
+                amountEl.focus();
+                return;
+            }
+            try {
+                const response = await fetch(`${apiBase}/api/operators/topup`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ operator_code: card.dataset.operator, amount_cents: amount })
+                });
+                if (!response.ok) throw new Error('topup failed');
+                const data = await response.json();
+                setStatus(statusLine, messages.topupDone.replace('{balance}', formatCents(data.new_balance_cents)), 'success');
+                amountEl.value = '';
+                await loadOperatorBalances();
+            } catch (_) {
+                setStatus(statusLine, messages.topupFailed, 'error');
+            }
+        });
+    });
+
+    document.getElementById('refresh-operators').addEventListener('click', loadOperatorBalances);
+
+    // --- Shared wiring ---
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const phone = normalizePhone(phoneInput.value);
         if (!phone) {
-            setStatus(messages.invalidPhone, 'error');
+            setStatus(statusEl, messages.invalidPhone, 'error');
             phoneInput.focus();
             return;
         }
         const name = nameInput.value.trim();
         if (!name) {
-            setStatus(messages.nameRequired, 'error');
+            setStatus(statusEl, messages.nameRequired, 'error');
             nameInput.focus();
             return;
         }
@@ -344,18 +772,18 @@
                 body: JSON.stringify({ phone, name }),
             });
             if (response.status === 409) {
-                setStatus(messages.duplicate, 'error');
+                setStatus(statusEl, messages.duplicate, 'error');
                 return;
             }
             if (!response.ok) {
-                setStatus(response.status === 422 ? messages.invalidPhone : messages.saveFailed, 'error');
+                setStatus(statusEl, response.status === 422 ? messages.invalidPhone : messages.saveFailed, 'error');
                 return;
             }
             form.reset();
-            setStatus(messages.added, 'success');
+            setStatus(statusEl, messages.added, 'success');
             await refresh(false);
         } catch (_) {
-            setStatus(messages.saveFailed, 'error');
+            setStatus(statusEl, messages.saveFailed, 'error');
         }
     });
 
@@ -369,9 +797,11 @@
         else if (action === 'save') saveName(tr);
         else if (action === 'cancel') refresh(false);
         else if (action === 'remove') removeCustomer(tr);
+        else if (action === 'debt') openDebtModal({ id: tr.dataset.customerId, name: tr.dataset.name, phone: tr.dataset.phone });
     });
 
     document.getElementById('refresh-customers').addEventListener('click', () => refresh(true));
+    loadOperatorBalances();
 })();
 </script>
 {% endblock %}

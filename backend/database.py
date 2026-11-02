@@ -114,6 +114,31 @@ class DebtLedger(Base):
     customer: Mapped[Customer] = relationship(back_populates="debt_ledger")
 
 
+class OperatorBalance(Base):
+    """Prepaid credit the shop holds with an operator (one row per operator)."""
+
+    __tablename__ = "operator_balance"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    operator_id: Mapped[int] = mapped_column(ForeignKey("operators.id"), unique=True)
+    balance_cents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class OperatorTopup(Base):
+    """Audit trail of credit top-ups made against an operator balance."""
+
+    __tablename__ = "operator_topup"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    operator_id: Mapped[int] = mapped_column(ForeignKey("operators.id"))
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    reference: Mapped[str] = mapped_column(String(255), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class CashRegister(Base):
     __tablename__ = "cash_register"
     __table_args__ = (

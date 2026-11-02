@@ -86,7 +86,7 @@ def test_add_customer_is_listed_in_both_languages(client: TestClient) -> None:
     english = client.get("/customers")
     arabic = client.get("/customers", params={"lang": "ar"})
     for page, heading in ((english.text, "Customer list"), (arabic.text, "قائمة العملاء")):
-        assert 'data-name="Ahmad">' in page
+        assert 'data-name="Ahmad"' in page
         assert 'data-field="name">Ahmad</td>' in page
         assert AHMAD_PHONE in page
         assert f'data-customer-id="{customer["id"]}"' in page

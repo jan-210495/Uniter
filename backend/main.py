@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any, Dict
@@ -16,12 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
     from .commission import get_commission_for_transaction
-    from .database import Customer, Operator, Service, Transaction, DebtLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
+    from .database import Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
     from .seed import generate_ussd
     from .validation import validate_syrian_phone
 else:
     from commission import get_commission_for_transaction
-    from database import Customer, Operator, Service, Transaction, DebtLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
+    from database import Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
     from seed import generate_ussd
     from validation import validate_syrian_phone
 
@@ -67,6 +67,46 @@ class CustomerListItem(CustomerResponse):
     """A customer plus the debt balance aggregated from the debt ledger."""
 
     debt_cents: int
+
+
+class CustomerDebtCreate(BaseModel):
+    """A debt entry created against a customer id (no phone lookup needed)."""
+
+    amount_cents: int = Field(ge=0, le=9223372036854775807)
+    description: str = Field(default="", max_length=512)
+    type: str = Field(default="charge", pattern="^(charge|payment)$")
+
+
+class CustomerDebtUpdate(BaseModel):
+    """Partial update of an existing debt entry."""
+
+    amount_cents: int | None = Field(default=None, ge=0, le=9223372036854775807)
+    description: str | None = Field(default=None, max_length=512)
+    type: str | None = Field(default=None, pattern="^(charge|payment)$")
+
+
+class CustomerBalanceResponse(BaseModel):
+    total_debt_cents: int
+    total_charges_cents: int
+    total_payments_cents: int
+
+
+class OperatorBalanceResponse(BaseModel):
+    operator_code: str
+    operator_name: str
+    balance_cents: int
+
+
+class OperatorTopupCreate(BaseModel):
+    operator_code: Code
+    amount_cents: int = Field(gt=0, le=9223372036854775807)
+
+
+class OperatorTopupResponse(BaseModel):
+    operator_code: str
+    amount_cents: int
+    new_balance_cents: int
+    reference: str
 
 
 class TransactionCreate(BaseModel):
@@ -352,6 +392,185 @@ async def delete_customer(customer_id: int, db: DbSession) -> Response:
     await db.delete(customer)
     await db.commit()
     return Response(status_code=204)
+
+
+# --- Customer-scoped debt management ---
+
+
+def _debt_entry_response(entry: DebtLedger, customer: Customer) -> DebtLedgerResponse:
+    return DebtLedgerResponse(
+        id=entry.id,
+        customer_phone=customer.phone,
+        amount_cents=entry.amount_cents,
+        description=entry.description,
+        type=entry.type,
+        created_at=entry.created_at,
+    )
+
+
+async def _debt_totals_for(db: AsyncSession, customer_id: int) -> tuple[int, int]:
+    """Return (total_charges_cents, total_payments_cents) for one customer."""
+    row = (
+        await db.execute(
+            select(
+                func.coalesce(
+                    func.sum(case((DebtLedger.type == "charge", DebtLedger.amount_cents), else_=0)),
+                    0,
+                ),
+                func.coalesce(
+                    func.sum(case((DebtLedger.type == "payment", DebtLedger.amount_cents), else_=0)),
+                    0,
+                ),
+            ).where(DebtLedger.customer_id == customer_id)
+        )
+    ).one()
+    return int(row[0] or 0), int(row[1] or 0)
+
+
+async def _get_customer_or_404(db: AsyncSession, customer_id: int) -> Customer:
+    customer = await db.get(Customer, customer_id)
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return customer
+
+
+async def _get_debt_entry_or_404(
+    db: AsyncSession, customer_id: int, debt_id: int
+) -> DebtLedger:
+    entry = await db.scalar(
+        select(DebtLedger).where(
+            DebtLedger.id == debt_id,
+            DebtLedger.customer_id == customer_id,
+        )
+    )
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Debt entry not found")
+    return entry
+
+
+@app.get("/api/customers/{customer_id}/balance", response_model=CustomerBalanceResponse)
+async def get_customer_balance(customer_id: int, db: DbSession) -> CustomerBalanceResponse:
+    """Per-customer debt summary addressed by customer id."""
+    await _get_customer_or_404(db, customer_id)
+    charges, payments = await _debt_totals_for(db, customer_id)
+    return CustomerBalanceResponse(
+        total_debt_cents=charges - payments,
+        total_charges_cents=charges,
+        total_payments_cents=payments,
+    )
+
+
+@app.post("/api/customers/{customer_id}/debt", response_model=DebtLedgerResponse)
+async def add_customer_debt(
+    customer_id: int, data: CustomerDebtCreate, db: DbSession
+) -> DebtLedgerResponse:
+    """Record a manual charge or payment against an existing customer."""
+    customer = await _get_customer_or_404(db, customer_id)
+
+    register_id = None
+    if data.type == "payment":
+        # Mirror /api/debt/payment: payments belong to the open register if any.
+        register = await db.scalar(select(CashRegister).where(CashRegister.status == "open"))
+        register_id = register.id if register is not None else None
+
+    entry = DebtLedger(
+        customer_id=customer.id,
+        register_id=register_id,
+        amount_cents=data.amount_cents,
+        description=data.description,
+        type=data.type,
+    )
+    db.add(entry)
+    await db.commit()
+    await db.refresh(entry)
+    return _debt_entry_response(entry, customer)
+
+
+@app.put("/api/customers/{customer_id}/debt/{debt_id}", response_model=DebtLedgerResponse)
+async def update_customer_debt(
+    customer_id: int, debt_id: int, data: CustomerDebtUpdate, db: DbSession
+) -> DebtLedgerResponse:
+    """Edit the amount, description and/or type of one debt entry."""
+    customer = await _get_customer_or_404(db, customer_id)
+    entry = await _get_debt_entry_or_404(db, customer_id, debt_id)
+
+    if data.amount_cents is not None:
+        entry.amount_cents = data.amount_cents
+    if data.description is not None:
+        entry.description = data.description
+    if data.type is not None:
+        entry.type = data.type
+    await db.commit()
+    await db.refresh(entry)
+    return _debt_entry_response(entry, customer)
+
+
+@app.delete("/api/customers/{customer_id}/debt/{debt_id}", status_code=204, response_class=Response)
+async def delete_customer_debt(customer_id: int, debt_id: int, db: DbSession) -> Response:
+    """Remove a single debt entry from a customer's ledger."""
+    await _get_customer_or_404(db, customer_id)
+    entry = await _get_debt_entry_or_404(db, customer_id, debt_id)
+    await db.delete(entry)
+    await db.commit()
+    return Response(status_code=204)
+
+
+# --- Operator balance endpoints ---
+
+
+@app.get("/api/operators/balance", response_model=OperatorBalanceResponse)
+async def get_operator_balance(
+    db: DbSession,
+    operator_code: Annotated[str, Query(min_length=1, max_length=50)],
+) -> OperatorBalanceResponse:
+    """Return the prepaid credit held with one operator."""
+    operator = await db.scalar(select(Operator).where(Operator.code == operator_code))
+    if operator is None:
+        raise HTTPException(status_code=404, detail="Operator not found")
+    balance = await db.scalar(
+        select(OperatorBalance.balance_cents).where(OperatorBalance.operator_id == operator.id)
+    )
+    return OperatorBalanceResponse(
+        operator_code=operator.code,
+        operator_name=operator.name,
+        balance_cents=int(balance or 0),
+    )
+
+
+@app.post("/api/operators/topup", response_model=OperatorTopupResponse)
+async def topup_operator_balance(
+    data: OperatorTopupCreate, db: DbSession
+) -> OperatorTopupResponse:
+    """Add credit to an operator balance and record the top-up."""
+    operator = await db.scalar(select(Operator).where(Operator.code == data.operator_code))
+    if operator is None:
+        raise HTTPException(status_code=404, detail="Operator not found")
+
+    balance = await db.scalar(
+        select(OperatorBalance).where(OperatorBalance.operator_id == operator.id)
+    )
+    if balance is None:
+        balance = OperatorBalance(operator_id=operator.id, balance_cents=0)
+        db.add(balance)
+        await db.flush()
+
+    balance.balance_cents += data.amount_cents
+    reference = f"TOPUP-{uuid4().hex}"
+    db.add(
+        OperatorTopup(
+            operator_id=operator.id,
+            amount_cents=data.amount_cents,
+            reference=reference,
+        )
+    )
+    await db.commit()
+    await db.refresh(balance)
+    return OperatorTopupResponse(
+        operator_code=operator.code,
+        amount_cents=data.amount_cents,
+        new_balance_cents=balance.balance_cents,
+        reference=reference,
+    )
 
 
 @app.post("/api/transactions", response_model=TransactionResponse)
