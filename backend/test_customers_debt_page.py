@@ -1,4 +1,4 @@
-"""Tests for customer debt management and operator balances on /customers."""
+"""Tests for customer debt management on /customers and the operator balance API."""
 
 import asyncio
 from collections.abc import AsyncIterator, Iterator
@@ -258,21 +258,32 @@ def test_customers_page_renders_debt_ui_in_both_languages(client: TestClient) ->
             "debt-total-charges",
             "debt-total-payments",
             "debt-total-debt",
-            "operator-balance-title",
-            "refresh-operators",
         ):
             assert f'id="{element_id}"' in page
-        assert 'data-operator="mtn"' in page
-        assert 'data-operator="syriatel"' in page
-        assert page.count('data-topup-form novalidate') == 2
+        # Operator balances live on their own page; none of that UI belongs here.
+        for operator_markup in (
+            "operator-balance-title",
+            "refresh-operators",
+            "data-operator=",
+            "data-topup-form",
+            "data-topup-amount",
+            "data-field=\"operator-balance\"",
+            "loadOperatorBalances",
+            "operatorCards",
+        ):
+            assert operator_markup not in page
         assert 'href="/customers"' in page
         assert 'aria-current="page"' in page
         assert "Noto+Sans+Arabic" in page
 
-    for english_text in ("Add entry", "Operator balances", "Top up", "Debt balance", "Ahmad"):
+    for english_text in ("Add entry", "Debt balance", "Ahmad"):
         assert english_text in english.text
-    for arabic_text in ("إضافة قيد", "أرصدة المشغّلين", "شحن الرصيد", "الدين المستحق", "Ahmad"):
+    for arabic_text in ("إضافة قيد", "الدين المستحق", "Ahmad"):
         assert arabic_text in arabic.text
+    for operator_text in ("Operator balances", "Top up", "Prepaid credit"):
+        assert operator_text not in english.text
+    for operator_text in ("أرصدة المشغّلين", "شحن الرصيد", "رصيد مسبق الدفع"):
+        assert operator_text not in arabic.text
 
     # The list keeps its documented column order.
     headers = english.text.split("<thead", 1)[1].split("</thead>", 1)[0]

@@ -1,7 +1,6 @@
 {% extends "base.html" %}
 {% set ar = lang|default('en') == 'ar' %}
 {% set currency = 'ل.س' if ar else 'SYP' %}
-{% set operators = [('mtn', 'إم تي إن (MTN)' if ar else 'MTN'), ('syriatel', 'سيرياتيل' if ar else 'Syriatel')] %}
 
 {% block title %}{{ 'العملاء' if ar else 'Customers' }} · Uniter{% endblock %}
 
@@ -101,36 +100,6 @@
             </div>
         </section>
     </div>
-
-    <section class="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="operator-balance-title">
-        <div class="mb-5 flex flex-wrap items-end justify-between gap-3 border-b border-slate-100 pb-4">
-            <div>
-                <h2 id="operator-balance-title" class="text-lg font-bold text-slate-900">{{ 'أرصدة المشغّلين' if ar else 'Operator balances' }}</h2>
-                <p class="mt-1 text-sm text-slate-500">{{ 'الرصيد المتبقي المدفوع مسبقاً لدى كل مشغّل، وأضف رصيداً عند الحاجة.' if ar else 'Prepaid credit remaining with each operator; add credit when needed.' }}</p>
-            </div>
-            <button id="refresh-operators" type="button" class="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'تحديث' if ar else 'Refresh' }}</button>
-        </div>
-        <div class="grid gap-4 sm:grid-cols-2">
-            {% for code, label in operators %}
-            <article class="rounded-xl border border-slate-200 bg-slate-50 p-4" data-operator="{{ code }}">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                    <h3 class="text-base font-bold text-slate-900">{{ label }}</h3>
-                    <span class="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">{{ 'رصيد مسبق الدفع' if ar else 'Prepaid credit' }}</span>
-                </div>
-                <p class="mt-3 text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'الرصيد المتبقي' if ar else 'Remaining balance' }}</p>
-                <p class="mt-1 text-2xl font-bold tabular-nums text-blue-950"><span data-field="operator-balance" dir="ltr">—</span> <span class="text-sm font-semibold text-slate-500">{{ currency }}</span></p>
-                <form class="mt-4 flex flex-wrap items-end gap-2" data-topup-form novalidate>
-                    <div class="min-w-0 flex-1">
-                        <label for="topup-{{ code }}" class="mb-1 block text-xs font-semibold text-slate-700">{{ 'مبلغ الشحن (سنت)' if ar else 'Top-up amount (cents)' }}</label>
-                        <input id="topup-{{ code }}" type="number" min="1" step="1" required data-topup-amount class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
-                    </div>
-                    <button type="submit" class="rounded-lg bg-blue-950 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'شحن الرصيد' if ar else 'Top up' }}</button>
-                </form>
-                <p class="mt-2 min-h-[1rem] text-xs font-medium text-slate-600" data-topup-status role="status" aria-live="polite"></p>
-            </article>
-            {% endfor %}
-        </div>
-    </section>
 
     <div id="debt-modal" class="fixed inset-0 z-50 hidden" role="dialog" aria-modal="true" aria-labelledby="debt-modal-title">
         <div id="debt-modal-backdrop" class="absolute inset-0 bg-slate-900/50"></div>
@@ -261,11 +230,7 @@
         'debtEmpty': 'لا توجد قيود بعد.' if ar else 'No debt entries yet.',
         'confirmDebtRemove': 'حذف هذا القيد؟' if ar else 'Remove this debt entry?',
         'typeCharge': 'دين' if ar else 'Charge',
-        'typePayment': 'دفعة' if ar else 'Payment',
-        'topupInvalid': 'أدخل مبلغاً صحيحاً أكبر من صفر.' if ar else 'Enter a valid amount greater than zero.',
-        'topupDone': 'تم شحن الرصيد. الرصيد الجديد: {balance}.' if ar else 'Top-up recorded. New balance: {balance}.',
-        'topupFailed': 'تعذر شحن الرصيد. حاول مرة أخرى.' if ar else 'Could not record the top-up. Try again.',
-        'balanceUnavailable': 'غير متاح' if ar else 'Unavailable'
+        'typePayment': 'دفعة' if ar else 'Payment'
     }|tojson }};
 
     const apiBase = '';
@@ -695,60 +660,6 @@
         }
     });
 
-    // --- Operator balances ---
-
-    const operatorCards = [...document.querySelectorAll('[data-operator]')];
-
-    async function loadOperatorBalances() {
-        await Promise.all(operatorCards.map(async (card) => {
-            const code = card.dataset.operator;
-            const valueEl = card.querySelector('[data-field="operator-balance"]');
-            try {
-                const response = await fetch(
-                    `${apiBase}/api/operators/balance?operator_code=${encodeURIComponent(code)}`,
-                    { cache: 'no-store' }
-                );
-                if (!response.ok) throw new Error('balance unavailable');
-                const data = await response.json();
-                valueEl.textContent = formatCents(data.balance_cents);
-            } catch (_) {
-                valueEl.textContent = messages.balanceUnavailable;
-            }
-        }));
-    }
-
-    operatorCards.forEach((card) => {
-        const formEl = card.querySelector('[data-topup-form]');
-        const amountEl = card.querySelector('[data-topup-amount]');
-        const statusLine = card.querySelector('[data-topup-status]');
-        if (!formEl || !amountEl || !statusLine) return;
-        formEl.addEventListener('submit', async (event) => {
-            event.preventDefault();
-            const amount = Number(amountEl.value);
-            if (!Number.isInteger(amount) || amount <= 0) {
-                setStatus(statusLine, messages.topupInvalid, 'error');
-                amountEl.focus();
-                return;
-            }
-            try {
-                const response = await fetch(`${apiBase}/api/operators/topup`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ operator_code: card.dataset.operator, amount_cents: amount })
-                });
-                if (!response.ok) throw new Error('topup failed');
-                const data = await response.json();
-                setStatus(statusLine, messages.topupDone.replace('{balance}', formatCents(data.new_balance_cents)), 'success');
-                amountEl.value = '';
-                await loadOperatorBalances();
-            } catch (_) {
-                setStatus(statusLine, messages.topupFailed, 'error');
-            }
-        });
-    });
-
-    document.getElementById('refresh-operators').addEventListener('click', loadOperatorBalances);
-
     // --- Shared wiring ---
 
     form.addEventListener('submit', async (event) => {
@@ -801,7 +712,6 @@
     });
 
     document.getElementById('refresh-customers').addEventListener('click', () => refresh(true));
-    loadOperatorBalances();
 })();
 </script>
 {% endblock %}
