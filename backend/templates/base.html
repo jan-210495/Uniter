@@ -21,10 +21,17 @@
     <header class="border-b border-slate-200 bg-white">
         <nav class="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6 lg:px-8" aria-label="Main navigation">
             <a href="/" class="text-lg font-bold text-blue-950">Uniter</a>
-            <div class="flex flex-wrap items-center gap-3 text-sm font-semibold text-slate-600" aria-label="Language">
-                <a href="?lang=en" lang="en" class="hover:text-blue-800"{% if lang|default('en') == 'en' %} aria-current="true"{% endif %}>English</a>
-                <span aria-hidden="true" class="text-slate-300">|</span>
-                <a href="?lang=ar" lang="ar" class="hover:text-blue-800"{% if lang == 'ar' %} aria-current="true"{% endif %}>العربية</a>
+            <div class="flex flex-wrap items-center gap-4 text-sm font-semibold text-slate-600 sm:gap-5">
+                <div class="flex flex-wrap items-center gap-4" aria-label="Pages">
+                    <a href="/pos" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'pos' %} aria-current="page"{% endif %}>{{ 'نقطة البيع' if lang|default('en') == 'ar' else 'POS' }}</a>
+                    <a href="/settlement" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'settlement' %} aria-current="page"{% endif %}>{{ 'تسوية الديون' if lang|default('en') == 'ar' else 'Settlement' }}</a>
+                    <a href="/customers" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'customers' %} aria-current="page"{% endif %}>{{ 'العملاء' if lang|default('en') == 'ar' else 'Customers' }}</a>
+                </div>
+                <div class="flex flex-wrap items-center gap-3" aria-label="Language">
+                    <a href="?lang=en" lang="en" class="hover:text-blue-800"{% if lang|default('en') == 'en' %} aria-current="true"{% endif %}>English</a>
+                    <span aria-hidden="true" class="text-slate-300">|</span>
+                    <a href="?lang=ar" lang="ar" class="hover:text-blue-800"{% if lang == 'ar' %} aria-current="true"{% endif %}>العربية</a>
+                </div>
             </div>
         </nav>
     </header>

@@ -5,10 +5,12 @@ from typing import Annotated, Any, Dict
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import case, func, select
+from sqlalchemy import delete as sql_delete
+from sqlalchemy.sql.selectable import Subquery
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,6 +49,24 @@ class CustomerResponse(BaseModel):
     phone: str
     name: str
     balance_cents: int
+
+
+class CustomerUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, name: str) -> str:
+        cleaned = name.strip()
+        if not cleaned:
+            raise ValueError("Customer name cannot be empty")
+        return cleaned
+
+
+class CustomerListItem(CustomerResponse):
+    """A customer plus the debt balance aggregated from the debt ledger."""
+
+    debt_cents: int
 
 
 class TransactionCreate(BaseModel):
@@ -172,6 +192,63 @@ async def settlement_page(request: Request, lang: str = "en") -> HTMLResponse:
         return templates.TemplateResponse(request=request, name="settlement.html", context={"lang": language, "currency_denomination": denom})
 
 
+def _debt_totals_by_customer() -> Subquery:
+    """Aggregate DebtLedger into (customer_id, charges - payments) per customer."""
+    charges = func.sum(case((DebtLedger.type == "charge", DebtLedger.amount_cents), else_=0))
+    payments = func.sum(case((DebtLedger.type == "payment", DebtLedger.amount_cents), else_=0))
+    return (
+        select(
+            DebtLedger.customer_id.label("customer_id"),
+            (charges - payments).label("debt_cents"),
+        )
+        .group_by(DebtLedger.customer_id)
+        .subquery()
+    )
+
+
+async def list_customers_with_debt(db: AsyncSession) -> list[CustomerListItem]:
+    """Return every customer with its debt balance (charges minus payments)."""
+    debt = _debt_totals_by_customer()
+    rows = await db.execute(
+        select(
+            Customer.id,
+            Customer.phone,
+            Customer.name,
+            Customer.balance_cents,
+            func.coalesce(debt.c.debt_cents, 0).label("debt_cents"),
+        )
+        .outerjoin(debt, debt.c.customer_id == Customer.id)
+        .order_by(Customer.name, Customer.id)
+    )
+    return [
+        CustomerListItem(
+            id=row.id,
+            phone=row.phone,
+            name=row.name,
+            balance_cents=row.balance_cents,
+            debt_cents=int(row.debt_cents or 0),
+        )
+        for row in rows.all()
+    ]
+
+
+@app.get("/customers", response_class=HTMLResponse)
+async def customers_page(request: Request, db: DbSession, lang: str = "en") -> HTMLResponse:
+    language = lang if lang in {"en", "ar"} else "en"
+    customers = await list_customers_with_debt(db)
+    return templates.TemplateResponse(
+        request=request,
+        name="customers.html",
+        context={
+            "lang": language,
+            "nav_page": "customers",
+            "customers": customers,
+            "total_debt_cents": sum(customer.debt_cents for customer in customers),
+            "total_balance_cents": sum(customer.balance_cents for customer in customers),
+        },
+    )
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -242,6 +319,39 @@ async def create_customer(data: CustomerCreate, db: DbSession) -> Customer:
         raise
     await db.refresh(customer)
     return customer
+
+
+@app.get("/api/customers", response_model=list[CustomerListItem])
+async def list_customers(db: DbSession) -> list[CustomerListItem]:
+    """List every customer with its aggregated debt balance."""
+    return await list_customers_with_debt(db)
+
+
+@app.put("/api/customers/{customer_id}", response_model=CustomerResponse)
+async def update_customer(customer_id: int, data: CustomerUpdate, db: DbSession) -> Customer:
+    """Rename a customer. Phone numbers are the ledger key and stay immutable."""
+    customer = await db.get(Customer, customer_id)
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    customer.name = data.name
+    await db.commit()
+    await db.refresh(customer)
+    return customer
+
+
+@app.delete("/api/customers/{customer_id}", status_code=204, response_class=Response)
+async def delete_customer(customer_id: int, db: DbSession) -> Response:
+    """Remove a customer together with its transactions and debt ledger rows."""
+    customer = await db.get(Customer, customer_id)
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    # Dependent rows are removed explicitly: SQLite enforces the foreign keys,
+    # and the customer row owns this history once the customer is deleted.
+    await db.execute(sql_delete(DebtLedger).where(DebtLedger.customer_id == customer_id))
+    await db.execute(sql_delete(Transaction).where(Transaction.customer_id == customer_id))
+    await db.delete(customer)
+    await db.commit()
+    return Response(status_code=204)
 
 
 @app.post("/api/transactions", response_model=TransactionResponse)
