@@ -25,8 +25,18 @@
             <div class="space-y-5">
                 <div>
                     <label for="phone" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'رقم هاتف العميل' if ar else 'Customer phone' }}</label>
-                    <input id="phone" name="phone" type="tel" dir="ltr" autocomplete="tel" autofocus required pattern="(?:[0-9]|\+|\s|\x2D)+" placeholder="09XXXXXXXX" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                    <input id="phone" name="phone" type="tel" dir="ltr" autocomplete="tel" autofocus required pattern="(?:[0-9]|\\+|\\s|\\x2D)+" placeholder="09XXXXXXXX" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
                     <p class="mt-1.5 text-xs text-slate-500">{{ 'رقم سوري يبدأ بـ 093 أو 094 أو 095 أو 096 أو 099.' if ar else 'Syrian mobile number starting with 093, 094, 095, 096 or 099.' }}</p>
+                    <div id="customer-recognized" class="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 hidden">
+                        <p class="mb-1 text-xs font-bold uppercase tracking-widest text-blue-800">{{ 'تم التعرف على العميل' if ar else 'Customer recognized' }}</p>
+                        <p class="text-sm font-semibold text-slate-900"><span id="recognized-name" class="text-blue-900"></span></p>
+                        <p class="mt-1 text-xs text-slate-600"><span id="recognized-phone" class="font-mono text-sm"></span>
+                            <span id="recognized-balance" class="ml-2 text-slate-500"></span>
+                            <span id="recognized-debt" class="ml-2 text-amber-700"></span>
+                        </p>
+                    </div>
+                    <datalist id="customer-search-results"></datalist>
+                    <div id="customer-search-status" class="mt-1 text-xs text-slate-500"></div>
                 </div>
                 <div class="grid gap-4 sm:grid-cols-2">
                     <div>
@@ -101,6 +111,12 @@
     const messages = {{ {
         'invalidPhone': 'أدخل رقم هاتف سوري صالحاً.' if ar else 'Enter a valid Syrian mobile number.',
         'invalidAmount': 'أدخل مبلغاً صالحاً حتى منزلتين عشريتين.' if ar else 'Enter a valid amount with up to two decimal places.',
+        'recognizing': 'يتم التعرف على العميل…' if ar else 'Recognizing customer…',
+        'recognized': 'تم التعرف على العميل.' if ar else 'Customer recognized.',
+        'notFound': 'لم يتم العثور على عميل بهذا الرقم.' if ar else 'No customer found with this number.',
+        'searchError': 'تعذر البحث عن العملاء. حاول مرة أخرى.' if ar else 'Could not search customers. Try again.',
+        'selectCustomer': 'اختر عميلاً من القائمة.' if ar else 'Select a customer from the list.',
+        'customerSelected': 'تم اختيار العميل.' if ar else 'Customer selected.',
         'rateLoaded': 'نسبة العمولة الحالية. اضغط تحديث للحصول على أحدث نسبة.' if ar else 'Current commission rate. Refresh to get the latest rate.',
         'rateError': 'تعذر تحميل نسبة العمولة. حاول التحديث.' if ar else 'Could not load the commission rate. Try refreshing.',
         'copied': 'تم نسخ الرمز.' if ar else 'Code copied.',
@@ -108,6 +124,13 @@
     }|tojson }};
     const form = document.getElementById('charge-form');
     const phone = document.getElementById('phone');
+    const customerRecognized = document.getElementById('customer-recognized');
+    const recognizedName = document.getElementById('recognized-name');
+    const recognizedPhone = document.getElementById('recognized-phone');
+    const recognizedBalance = document.getElementById('recognized-balance');
+    const recognizedDebt = document.getElementById('recognized-debt');
+    const customerSearchResults = document.getElementById('customer-search-results');
+    const customerSearchStatus = document.getElementById('customer-search-status');
     const amount = document.getElementById('amount');
     const operator = document.getElementById('operator');
     const service = document.getElementById('service');
@@ -193,11 +216,100 @@
         copyStatus.textContent = '';
     }
     function normalizePhone(value) {
-        let cleaned = value.replace(/[\s-]+/g, '');
+        let cleaned = value.replace(/[\\s-]+/g, '');
         if (cleaned.startsWith('+963')) cleaned = '0' + cleaned.slice(4);
         else if (cleaned.startsWith('00963')) cleaned = '0' + cleaned.slice(5);
         return /^09[34569][0-9]{7}$/.test(cleaned) ? cleaned : null;
     }
+
+    function formatMoney(value) {
+        return Number(value || 0).toLocaleString('en-US');
+    }
+    function showCustomerStatus(text) {
+        customerSearchStatus.textContent = text;
+    }
+    function hideRecognition() {
+        customerRecognized.classList.add('hidden');
+        recognizedName.textContent = '';
+        recognizedPhone.textContent = '';
+        recognizedBalance.textContent = '';
+        recognizedDebt.textContent = '';
+    }
+    function showRecognition(customer) {
+        recognizedName.textContent = customer.name;
+        recognizedPhone.textContent = customer.phone;
+        const currency = '{{ currency }}';
+        recognizedBalance.textContent = `({{ 'الرصيد' if ar else 'Balance' }}: ${formatMoney(customer.balance_cents)} ${currency})`;
+        const debt = Number(customer.debt_cents) || 0;
+        if (debt > 0) {
+            recognizedDebt.textContent = `| {{ 'الدين' if ar else 'Debt' }}: ${formatMoney(debt)} ${currency}`;
+        } else {
+            recognizedDebt.textContent = '';
+        }
+        customerRecognized.classList.remove('hidden');
+        showCustomerStatus(messages.recognized);
+    }
+    function populateDatalist(customers) {
+        customerSearchResults.innerHTML = '';
+        customers.forEach((customer) => {
+            const option = document.createElement('option');
+            option.value = customer.phone;
+            option.dataset.name = customer.name;
+            option.dataset.id = customer.id;
+            customerSearchResults.appendChild(option);
+        });
+    }
+    async function searchCustomers(query) {
+        try {
+            const response = await fetch(`/api/customers/search?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
+            if (!response.ok) throw new Error('search failed');
+            return await response.json();
+        } catch (_) {
+            showCustomerStatus(messages.searchError);
+            return [];
+        }
+    }
+    async function recognizePhone(value) {
+        const normalized = normalizePhone(value);
+        if (!normalized) {
+            hideRecognition();
+            populateDatalist([]);
+            showCustomerStatus('');
+            return;
+        }
+        showCustomerStatus(messages.recognizing);
+        const customers = await searchCustomers(normalized);
+        if (customers.length === 1) {
+            showRecognition(customers[0]);
+            populateDatalist(customers);
+            return;
+        }
+        if (customers.length > 1) {
+            hideRecognition();
+            populateDatalist(customers);
+            showCustomerStatus(messages.selectCustomer);
+            return;
+        }
+        hideRecognition();
+        populateDatalist([]);
+        showCustomerStatus(messages.notFound);
+    }
+    let recognizeTimer = null;
+    phone.addEventListener('input', (event) => {
+        phone.setCustomValidity('');
+        clearResult();
+        clearTimeout(recognizeTimer);
+        recognizeTimer = setTimeout(() => recognizePhone(phone.value), 300);
+    });
+    customerSearchResults.addEventListener('click', (event) => {
+        const option = event.target.closest('option');
+        if (!option) return;
+        phone.value = option.value;
+        phone.setCustomValidity('');
+        clearResult();
+        recognizePhone(option.value);
+        showCustomerStatus(messages.customerSelected);
+    });
     async function loadRate() {
         rate = null;
         updateSummary();

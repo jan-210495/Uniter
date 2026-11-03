@@ -367,6 +367,39 @@ async def list_customers(db: DbSession) -> list[CustomerListItem]:
     return await list_customers_with_debt(db)
 
 
+@app.get("/api/customers/search", response_model=list[CustomerListItem])
+async def search_customers(
+    q: Annotated[str, Query(min_length=1, max_length=255)],
+    db: DbSession,
+) -> list[CustomerListItem]:
+    """Search customers by phone or name fragment for POS recognition."""
+    debt = _debt_totals_by_customer()
+    like = f"%{q}%"
+    rows = await db.execute(
+        select(
+            Customer.id,
+            Customer.phone,
+            Customer.name,
+            Customer.balance_cents,
+            func.coalesce(debt.c.debt_cents, 0).label("debt_cents"),
+        )
+        .outerjoin(debt, debt.c.customer_id == Customer.id)
+        .where(Customer.phone.ilike(like) | Customer.name.ilike(like))
+        .order_by(Customer.name, Customer.id)
+        .limit(20)
+    )
+    return [
+        CustomerListItem(
+            id=row.id,
+            phone=row.phone,
+            name=row.name,
+            balance_cents=row.balance_cents,
+            debt_cents=int(row.debt_cents or 0),
+        )
+        for row in rows.all()
+    ]
+
+
 @app.put("/api/customers/{customer_id}", response_model=CustomerResponse)
 async def update_customer(customer_id: int, data: CustomerUpdate, db: DbSession) -> Customer:
     """Rename a customer. Phone numbers are the ledger key and stay immutable."""

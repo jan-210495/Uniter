@@ -198,3 +198,76 @@ def test_commission_settings_and_calculation(client: TestClient) -> None:
 def test_invalid_commission_setting(client: TestClient, rate: str) -> None:
     assert client.put("/api/settings/commission", json={"rate": rate}).status_code == 422
     assert client.get("/api/settings/commission").json() == {"commission_rate": "0.05"}
+
+
+def test_customer_search_by_phone(client: TestClient) -> None:
+    client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
+    client.post("/api/customers", json={"phone": "0944123456", "name": "Rami"})
+    client.post("/api/customers", json={"phone": "0955123456", "name": "Leila"})
+
+    response = client.get("/api/customers/search", params={"q": "0933"})
+    assert response.status_code == 200
+    results = response.json()
+    assert len(results) == 1
+    assert results[0]["phone"] == "0933123456"
+    assert results[0]["name"] == "Ahmad"
+
+
+def test_customer_search_by_name(client: TestClient) -> None:
+    client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
+    client.post("/api/customers", json={"phone": "0944123456", "name": "Rami"})
+    client.post("/api/customers", json={"phone": "0955123456", "name": "Amira"})
+
+    response = client.get("/api/customers/search", params={"q": "ami"})
+    assert response.status_code == 200
+    results = response.json()
+    names = {r["name"] for r in results}
+    assert names == {"Rami", "Amira"}
+
+
+def test_customer_search_case_insensitive(client: TestClient) -> None:
+    client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
+
+    response = client.get("/api/customers/search", params={"q": "AHMAD"})
+    assert response.status_code == 200
+    results = response.json()
+    assert len(results) == 1
+    assert results[0]["name"] == "Ahmad"
+
+
+def test_customer_search_includes_debt_and_balance(client: TestClient) -> None:
+    customer = client.post(
+        "/api/customers", json={"phone": "0933123456", "name": "Ahmad"}
+    ).json()
+    client.post(
+        "/api/customers/1/debt",
+        json={"amount_cents": 5000, "description": "charge", "type": "charge"},
+    )
+
+    response = client.get("/api/customers/search", params={"q": "Ahmad"})
+    assert response.status_code == 200
+    result = response.json()[0]
+    assert result["balance_cents"] == customer["balance_cents"]
+    assert result["debt_cents"] == 5000
+
+
+def test_customer_search_empty_query_rejected(client: TestClient) -> None:
+    assert client.get("/api/customers/search", params={"q": ""}).status_code == 422
+
+
+def test_customer_search_no_match(client: TestClient) -> None:
+    client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
+    response = client.get("/api/customers/search", params={"q": "0999"})
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_customer_search_limit(client: TestClient) -> None:
+    for i in range(25):
+        client.post(
+            "/api/customers",
+            json={"phone": f"0933{i:06d}", "name": f"Customer {i}"},
+        )
+    response = client.get("/api/customers/search", params={"q": "0933"})
+    assert response.status_code == 200
+    assert len(response.json()) == 20
