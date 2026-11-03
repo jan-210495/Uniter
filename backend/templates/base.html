@@ -25,6 +25,7 @@
                 <div class="flex flex-wrap items-center gap-4" aria-label="Pages">
                     <a href="/pos" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'pos' %} aria-current="page"{% endif %}>{{ 'نقطة البيع' if lang|default('en') == 'ar' else 'POS' }}</a>
                     <a href="/settlement" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'settlement' %} aria-current="page"{% endif %}>{{ 'تسوية الديون' if lang|default('en') == 'ar' else 'Settlement' }}</a>
+                    <a href="/transactions" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'transactions' %} aria-current="page"{% endif %}>{{ 'المعاملات' if lang|default('en') == 'ar' else 'Transactions' }}</a>
                     <a href="/customers" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'customers' %} aria-current="page"{% endif %}>{{ 'العملاء' if lang|default('en') == 'ar' else 'Customers' }}</a>
                 </div>
                 <div class="flex flex-wrap items-center gap-3" aria-label="Language">

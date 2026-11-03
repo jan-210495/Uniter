@@ -136,6 +136,23 @@ class TransactionResponse(BaseModel):
     created_at: datetime
 
 
+class TransactionListItem(BaseModel):
+    """A transaction enriched with customer, operator and service labels."""
+
+    id: int
+    reference: str
+    ussd_string: str
+    status: str
+    amount_cents: int
+    created_at: datetime
+    customer_phone: str
+    customer_name: str
+    operator_code: str
+    operator_name: str
+    service_code: str
+    service_name: str
+
+
 class DebtLedgerCreate(BaseModel):
     customer_phone: str
     amount_cents: int = Field(ge=0)
@@ -228,6 +245,16 @@ async def settlement_page(request: Request, db: DbSession, lang: str = "en") -> 
     language = lang if lang in {"en", "ar"} else "en"
     denom = await db.scalar(select(CurrencyDenomination).where(CurrencyDenomination.is_active == True))
     return templates.TemplateResponse(request=request, name="settlement.html", context={"lang": language, "currency_denomination": denom})
+
+
+@app.get("/transactions", response_class=HTMLResponse)
+async def transactions_page(request: Request, lang: str = "en") -> HTMLResponse:
+    language = lang if lang in {"en", "ar"} else "en"
+    return templates.TemplateResponse(
+        request=request,
+        name="transactions.html",
+        context={"lang": language, "nav_page": "transactions"},
+    )
 
 
 def _debt_totals_by_customer() -> Subquery:
@@ -653,6 +680,48 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
         raise
     await db.refresh(transaction)
     return transaction
+
+
+@app.get("/api/transactions", response_model=list[TransactionListItem])
+async def list_transactions(
+    db: DbSession,
+    operator_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
+    service_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
+    status: Annotated[str | None, Query(pattern="^(pending|completed|failed)$")] = None,
+    customer_phone: Annotated[str | None, Query(min_length=1, max_length=32)] = None,
+) -> list[TransactionListItem]:
+    """List transactions newest-first, optionally filtered by operator code,
+    service code, status, or a case-insensitive customer phone fragment.
+    Filters that match nothing return an empty list."""
+    statement = (
+        select(
+            Transaction.id,
+            Transaction.reference,
+            Transaction.ussd_string,
+            Transaction.status,
+            Transaction.amount_cents,
+            Transaction.created_at,
+            Customer.phone.label("customer_phone"),
+            Customer.name.label("customer_name"),
+            Operator.code.label("operator_code"),
+            Operator.name.label("operator_name"),
+            Service.code.label("service_code"),
+            Service.name.label("service_name"),
+        )
+        .join(Customer, Transaction.customer_id == Customer.id)
+        .join(Service, Transaction.service_id == Service.id)
+        .join(Operator, Service.operator_id == Operator.id)
+    )
+    if operator_code is not None:
+        statement = statement.where(Operator.code == operator_code)
+    if service_code is not None:
+        statement = statement.where(Service.code == service_code)
+    if status is not None:
+        statement = statement.where(Transaction.status == status)
+    if customer_phone is not None:
+        statement = statement.where(Customer.phone.ilike(f"%{customer_phone}%"))
+    rows = await db.execute(statement.order_by(Transaction.created_at.desc(), Transaction.id.desc()))
+    return [TransactionListItem(**row._mapping) for row in rows.all()]
 
 
 # --- Debt Ledger Endpoints ---
