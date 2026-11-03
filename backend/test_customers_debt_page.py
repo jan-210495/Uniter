@@ -309,14 +309,11 @@ def test_customer_rows_show_balance_and_debt_balances(client: TestClient) -> Non
 
 
 def test_operator_balance_and_topup(client: TestClient) -> None:
-    for code, name in (("mtn", "MTN"), ("syriatel", "Syriatel")):
-        response = client.get("/api/operators/balance", params={"operator_code": code})
-        assert response.status_code == 200
-        assert response.json() == {
-            "operator_code": code,
-            "operator_name": name,
-            "balance_cents": 0,
-        }
+    listing = {item["operator_code"]: item for item in client.get("/api/operators/balance").json()}
+    assert listing == {
+        "mtn": {"operator_code": "mtn", "operator_name": "MTN", "balance_cents": 0},
+        "syriatel": {"operator_code": "syriatel", "operator_name": "Syriatel", "balance_cents": 0},
+    }
 
     first = client.post("/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 50000})
     assert first.status_code == 200
@@ -331,12 +328,10 @@ def test_operator_balance_and_topup(client: TestClient) -> None:
     assert second.json()["new_balance_cents"] == 75000
     assert second.json()["reference"] != first_body["reference"]
 
-    balance = client.get("/api/operators/balance", params={"operator_code": "mtn"}).json()
-    assert balance["balance_cents"] == 75000
-    syriatel = client.get("/api/operators/balance", params={"operator_code": "syriatel"}).json()
-    assert syriatel["balance_cents"] == 0
+    listing = {item["operator_code"]: item for item in client.get("/api/operators/balance").json()}
+    assert listing["mtn"]["balance_cents"] == 75000
+    assert listing["syriatel"]["balance_cents"] == 0
 
-    assert client.get("/api/operators/balance", params={"operator_code": "unknown"}).status_code == 404
     assert client.post(
         "/api/operators/topup", json={"operator_code": "unknown", "amount_cents": 1000}
     ).status_code == 404
@@ -344,4 +339,3 @@ def test_operator_balance_and_topup(client: TestClient) -> None:
         assert client.post(
             "/api/operators/topup", json={"operator_code": "mtn", "amount_cents": amount}
         ).status_code == 422
-    assert client.get("/api/operators/balance").status_code == 422

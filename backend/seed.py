@@ -11,9 +11,9 @@ from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
-    from .database import Operator, Service, CurrencyDenomination, SessionLocal, init_db
+    from .database import Operator, OperatorBalance, Service, CurrencyDenomination, SessionLocal, init_db
 else:
-    from database import Operator, Service, CurrencyDenomination, SessionLocal, init_db
+    from database import Operator, OperatorBalance, Service, CurrencyDenomination, SessionLocal, init_db
 
 
 async def seed_data(session: AsyncSession) -> None:
@@ -58,6 +58,14 @@ async def seed_data(session: AsyncSession) -> None:
             operator = Operator(name=name, code=code, ussd_prefix=prefix, is_active=True)
             session.add(operator)
             await session.flush()
+
+        # One balance row per operator, seeded at zero; existing balances are
+        # left untouched so re-seeding never resets credit.
+        balance = await session.scalar(
+            select(OperatorBalance).where(OperatorBalance.operator_id == operator.id)
+        )
+        if balance is None:
+            session.add(OperatorBalance(operator_id=operator.id, balance_cents=0))
 
         for service_name, service_code, price in services:
             service = await session.scalar(

@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% set ar = lang|default('en') == 'ar' %}
+{% set currency = 'ل.س' if ar else 'SYP' %}
+
+{% block title %}{{ 'تعبئة الرصيد' if ar else 'Balance top-up' }} · Uniter{% endblock %}
+
+{% block head_extra %}
+    <meta name="theme-color" content="#f8fafc">
+{% endblock %}
+
+{% block content %}
+<section class="mx-auto max-w-5xl">
+    <header class="mb-8 flex flex-wrap items-end justify-between gap-4">
+        <div>
+            <p class="mb-2 text-xs font-bold uppercase tracking-widest text-blue-800">{{ 'رصيد المشغّلين' if ar else 'Operator credit' }}</p>
+            <h1 class="text-3xl font-bold tracking-tight text-blue-950 sm:text-4xl">{{ 'تعبئة الرصيد' if ar else 'Balance top-up' }}</h1>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{{ 'اطّلع على الرصيد المتبقي لدى كل مشغّل وسجّل تعبئة جديدة مع مرجع تدقيق.' if ar else 'Track the credit remaining with each operator and record new top-ups with an audit reference.' }}</p>
+        </div>
+        <span class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">{{ 'رصيد مسبق الدفع' if ar else 'Prepaid credit' }}</span>
+    </header>
+
+    {# Cards are rendered server-side from the operator balances and the topup
+       audit trail. Top-ups are submitted directly (a form action, not a search),
+       while the balance refresh reuses the abortable-fetch discipline. #}
+    <div class="grid gap-6 md:grid-cols-2">
+        {% for operator in operators %}
+        <section class="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" data-operator-card="{{ operator.code }}" aria-labelledby="topup-{{ operator.code }}-title">
+            <div class="mb-5 border-b border-slate-100 pb-4">
+                <h2 id="topup-{{ operator.code }}-title" class="text-lg font-bold text-slate-900">{{ operator.name }}</h2>
+                <p class="mt-1 font-mono text-xs text-slate-500" dir="ltr">{{ operator.code }}</p>
+            </div>
+            <dl class="grid gap-3 sm:grid-cols-2">
+                <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <dt class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'الرصيد المتبقي' if ar else 'Remaining balance' }}</dt>
+                    <dd class="mt-1 text-2xl font-bold tabular-nums text-blue-950"><span data-field="balance" dir="ltr">{{ "{:,}".format(operator.balance_cents) }}</span> <span class="text-sm font-semibold text-slate-500">{{ currency }}</span></dd>
+                </div>
+                <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <dt class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'آخر تعبئة' if ar else 'Last top-up' }}</dt>
+                    <dd class="mt-1 text-sm font-semibold text-slate-700"><time data-field="last-topup"{% if operator.last_topup_at %} data-iso="{{ operator.last_topup_at.isoformat() }}"{% endif %} dir="ltr">{{ operator.last_topup_at.strftime('%Y-%m-%d %H:%M') if operator.last_topup_at else ('—' if not ar else 'لا يوجد') }}</time></dd>
+                </div>
+            </dl>
+            <form class="topup-form mt-4 space-y-3" data-operator-code="{{ operator.code }}" novalidate>
+                <div>
+                    <label for="topup-amount-{{ operator.code }}" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'المبلغ (سنت)' if ar else 'Amount (cents)' }}</label>
+                    <input id="topup-amount-{{ operator.code }}" name="amount" type="number" min="1" step="1" inputmode="numeric" dir="ltr" required placeholder="50000" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                    <p class="mt-1.5 text-xs text-slate-500">{{ 'مبلغ صحيح بالسنت أكبر من صفر.' if ar else 'A whole number of cents, greater than zero.' }}</p>
+                </div>
+                <button type="submit" class="w-full rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تعبئة' if ar else 'Top up' }}</button>
+                <p class="feedback min-h-[1.25rem] text-sm font-medium text-slate-600" role="status" aria-live="polite"></p>
+            </form>
+        </section>
+        {% else %}
+        <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 md:col-span-2">
+            <p class="py-6 text-center text-sm text-slate-500">{{ 'لا يوجد مشغّلون مهيأون.' if ar else 'No operators configured.' }}</p>
+        </section>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    'use strict';
+    const messages = {{ {
+        'invalidAmount': 'أدخل مبلغاً صحيحاً بالسنت أكبر من صفر.' if ar else 'Enter a whole amount in cents, greater than zero.',
+        'topupRecorded': 'تم تسجيل التعبئة.' if ar else 'Top-up recorded.',
+        'updateFailed': 'تعذر تسجيل التعبئة. حاول مرة أخرى.' if ar else 'Could not record the top-up. Try again.',
+        'loadFailed': 'تعذر تحديث الأرصدة.' if ar else 'Could not refresh the balances.'
+    }|tojson }};
+    const pageLang = {{ lang|default('en')|tojson }};
+    const cards = [...document.querySelectorAll('[data-operator-card]')];
+
+    function formatCents(value) {
+        return Number(value || 0).toLocaleString('en-US');
+    }
+    function formatDate(value) {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value || '';
+        return date.toLocaleString(pageLang === 'ar' ? 'ar-SY' : 'en-GB', {
+            dateStyle: 'short',
+            timeStyle: 'short'
+        });
+    }
+    function setFeedback(form, text, tone) {
+        const feedback = form.querySelector('.feedback');
+        feedback.textContent = text;
+        feedback.className = 'feedback min-h-[1.25rem] text-sm font-medium ' + (tone === 'error' ? 'text-red-700' : 'text-green-700');
+    }
+    function cardOf(form) {
+        return form.closest('[data-operator-card]');
+    }
+
+    // Locale-format the server-rendered last top-up timestamps.
+    cards.forEach((card) => {
+        const lastTopup = card.querySelector('[data-field="last-topup"]');
+        if (lastTopup && lastTopup.dataset.iso) lastTopup.textContent = formatDate(lastTopup.dataset.iso);
+    });
+
+    // Abortable balance refresh (stale responses are discarded); used after
+    // every successful top-up to keep every card in sync.
+    let refreshAbort = null;
+    async function refreshBalances() {
+        if (refreshAbort) refreshAbort.abort();
+        const controller = new AbortController();
+        refreshAbort = controller;
+        try {
+            const response = await fetch('/api/operators/balance', { cache: 'no-store', signal: controller.signal });
+            if (!response.ok) throw new Error('balance refresh failed');
+            const balances = await response.json();
+            if (refreshAbort !== controller) return;
+            balances.forEach((balance) => {
+                const card = cards.find((element) => element.dataset.operatorCard === balance.operator_code);
+                if (card) card.querySelector('[data-field="balance"]').textContent = formatCents(balance.balance_cents);
+            });
+        } catch (_) {
+            if (refreshAbort !== controller) return;
+        }
+    }
+
+    document.querySelectorAll('.topup-form').forEach((form) => {
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const amountInput = form.querySelector('input[name="amount"]');
+            const amount = Number(amountInput.value);
+            if (!amountInput.value.trim() || !Number.isInteger(amount) || amount <= 0) {
+                setFeedback(form, messages.invalidAmount, 'error');
+                amountInput.focus();
+                return;
+            }
+            try {
+                const response = await fetch('/api/operators/topup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ operator_code: form.dataset.operatorCode, amount_cents: amount })
+                });
+                if (!response.ok) {
+                    setFeedback(form, response.status === 422 ? messages.invalidAmount : messages.updateFailed, 'error');
+                    return;
+                }
+                const topup = await response.json();
+                const card = cardOf(form);
+                card.querySelector('[data-field="balance"]').textContent = formatCents(topup.new_balance_cents);
+                const lastTopup = card.querySelector('[data-field="last-topup"]');
+                lastTopup.textContent = formatDate(new Date().toISOString());
+                setFeedback(form, messages.topupRecorded + ' (' + topup.reference + ')', 'success');
+                amountInput.value = '';
+                refreshBalances();
+            } catch (_) {
+                setFeedback(form, messages.updateFailed, 'error');
+            }
+        });
+    });
+})();
+</script>
+{% endblock %}

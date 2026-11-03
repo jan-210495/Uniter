@@ -285,6 +285,40 @@ async def settings_page(request: Request, db: DbSession, lang: str = "en") -> HT
     )
 
 
+@app.get("/topup", response_class=HTMLResponse)
+async def topup_page(request: Request, db: DbSession, lang: str = "en") -> HTMLResponse:
+    """Balance topup page: per-operator remaining credit, last topup and form."""
+    language = lang if lang in {"en", "ar"} else "en"
+    rows = (
+        await db.execute(
+            select(
+                Operator.code,
+                Operator.name,
+                func.coalesce(OperatorBalance.balance_cents, 0).label("balance_cents"),
+                func.max(OperatorTopup.created_at).label("last_topup_at"),
+            )
+            .outerjoin(OperatorBalance, OperatorBalance.operator_id == Operator.id)
+            .outerjoin(OperatorTopup, OperatorTopup.operator_id == Operator.id)
+            .group_by(Operator.id)
+            .order_by(Operator.code)
+        )
+    ).all()
+    operators = [
+        {
+            "code": row.code,
+            "name": row.name,
+            "balance_cents": int(row.balance_cents or 0),
+            "last_topup_at": row.last_topup_at,
+        }
+        for row in rows
+    ]
+    return templates.TemplateResponse(
+        request=request,
+        name="topup.html",
+        context={"lang": language, "nav_page": "topup", "operators": operators},
+    )
+
+
 def _debt_totals_by_customer() -> Subquery:
     """Aggregate DebtLedger into (customer_id, charges - payments) per customer."""
     charges = func.sum(case((DebtLedger.type == "charge", DebtLedger.amount_cents), else_=0))
@@ -604,23 +638,26 @@ async def delete_customer_debt(customer_id: int, debt_id: int, db: DbSession) ->
 # --- Operator balance endpoints ---
 
 
-@app.get("/api/operators/balance", response_model=OperatorBalanceResponse)
-async def get_operator_balance(
-    db: DbSession,
-    operator_code: Annotated[str, Query(min_length=1, max_length=50)],
-) -> OperatorBalanceResponse:
-    """Return the prepaid credit held with one operator."""
-    operator = await db.scalar(select(Operator).where(Operator.code == operator_code))
-    if operator is None:
-        raise HTTPException(status_code=404, detail="Operator not found")
-    balance = await db.scalar(
-        select(OperatorBalance.balance_cents).where(OperatorBalance.operator_id == operator.id)
+@app.get("/api/operators/balance", response_model=list[OperatorBalanceResponse])
+async def list_operator_balances(db: DbSession) -> list[OperatorBalanceResponse]:
+    """Return the prepaid credit held with every operator (0 when no row exists)."""
+    rows = await db.execute(
+        select(
+            Operator.code,
+            Operator.name,
+            func.coalesce(OperatorBalance.balance_cents, 0).label("balance_cents"),
+        )
+        .outerjoin(OperatorBalance, OperatorBalance.operator_id == Operator.id)
+        .order_by(Operator.code)
     )
-    return OperatorBalanceResponse(
-        operator_code=operator.code,
-        operator_name=operator.name,
-        balance_cents=int(balance or 0),
-    )
+    return [
+        OperatorBalanceResponse(
+            operator_code=row.code,
+            operator_name=row.name,
+            balance_cents=int(row.balance_cents or 0),
+        )
+        for row in rows.all()
+    ]
 
 
 @app.post("/api/operators/topup", response_model=OperatorTopupResponse)
