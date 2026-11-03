@@ -271,3 +271,26 @@ def test_customer_search_limit(client: TestClient) -> None:
     response = client.get("/api/customers/search", params={"q": "0933"})
     assert response.status_code == 200
     assert len(response.json()) == 20
+
+
+def test_customer_search_returns_list_item_shape(client: TestClient) -> None:
+    """The suggestion dropdown relies on the exact CustomerListItem fields."""
+    created = client.post(
+        "/api/customers", json={"phone": "0933123456", "name": "Ahmad"}
+    ).json()
+    client.post(
+        f"/api/customers/{created['id']}/debt",
+        json={"amount_cents": 5000, "description": "charge", "type": "charge"},
+    )
+    client.post(
+        f"/api/customers/{created['id']}/debt",
+        json={"amount_cents": 2000, "description": "payment", "type": "payment"},
+    )
+
+    response = client.get("/api/customers/search", params={"q": "Ahmad"})
+    assert response.status_code == 200
+    results = response.json()
+    assert len(results) == 1
+    assert set(results[0]) == {"id", "phone", "name", "balance_cents", "debt_cents"}
+    assert results[0]["phone"] == "0933123456"
+    assert results[0]["debt_cents"] == 3000
