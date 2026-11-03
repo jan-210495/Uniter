@@ -20,7 +20,9 @@ def test_models_and_relationships(tmp_path, monkeypatch) -> None:
         try:
             await database.init_db()
             assert set(database.Base.metadata.tables) == {
-                "operators", "services", "customers", "transactions", "settings"
+                "operators", "services", "customers", "transactions", "settings",
+                "debt_ledger", "cash_register", "operator_balance",
+                "operator_topup", "currency_denomination",
             }
             sessions = async_sessionmaker(engine, expire_on_commit=False)
             async with sessions() as session:

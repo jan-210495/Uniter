@@ -71,6 +71,9 @@ def test_old_unique_constraint_requires_migration(tmp_path) -> None:
             async with engine.begin() as connection:
                 await connection.execute(text("CREATE TABLE services (id INTEGER PRIMARY KEY, code TEXT UNIQUE)"))
                 await connection.execute(text("INSERT INTO services (code) VALUES ('prepaid')"))
+                # create_all leaves the legacy services table untouched and adds
+                # every table the seed now expects on a migrated database.
+                await connection.run_sync(Base.metadata.create_all)
             async with async_sessionmaker(engine)() as session:
                 with pytest.raises(RuntimeError, match="Migrate it"):
                     await seed_data(session)
