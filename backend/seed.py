@@ -8,12 +8,41 @@ import asyncio
 from decimal import Decimal
 
 from sqlalchemy import inspect, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
-    from .database import Operator, OperatorBalance, Service, CurrencyDenomination, SessionLocal, init_db
+    from .database import (
+        Operator,
+        OperatorBalance,
+        Service,
+        CurrencyDenomination,
+        SessionLocal,
+        Setting,
+        get_setting,
+        init_db,
+        utc_now,
+    )
 else:
-    from database import Operator, OperatorBalance, Service, CurrencyDenomination, SessionLocal, init_db
+    from database import (
+        Operator,
+        OperatorBalance,
+        Service,
+        CurrencyDenomination,
+        SessionLocal,
+        Setting,
+        get_setting,
+        init_db,
+        utc_now,
+    )
+
+
+DEFAULT_MTN_DOMAIN = "65477"
+DEFAULT_SYRIATEL_DOMAIN = "67858"
+
+# USSD mode segments per service code: MTN uses 150/154, Syriatel 1/5.
+MTN_MODES = {"prepaid": "150", "postpaid": "154"}
+SYRIATEL_MODES = {"prepaid": "1", "postpaid": "5"}
 
 
 async def seed_data(session: AsyncSession) -> None:
@@ -85,6 +114,17 @@ async def seed_data(session: AsyncSession) -> None:
                     )
                 )
 
+    # Default USSD domain codes, inserted idempotently; stored values win.
+    for key, value in (
+        ("MTN_DOMAIN", DEFAULT_MTN_DOMAIN),
+        ("SYRIATEL_DOMAIN", DEFAULT_SYRIATEL_DOMAIN),
+    ):
+        await session.execute(
+            sqlite_insert(Setting)
+            .values(key=key, value=value, updated_at=utc_now())
+            .on_conflict_do_nothing(index_elements=[Setting.key])
+        )
+
     await session.commit()
 
 
@@ -95,7 +135,15 @@ async def generate_ussd(
     phone: str,
     amount_cents: int,
 ) -> str:
-    """Render an operator's configured USSD template for a service."""
+    """Render the operator's USSD transfer structure.
+
+    MTN:      *{mode}*{domain}*{phone}*{amount}#          (mode 150 prepaid / 154 postpaid)
+    Syriatel: *150*1*{domain}*{mode}*{amount}*{phone}*{phone}#  (mode 1 prepaid / 5 postpaid)
+
+    The domain segments come from the MTN_DOMAIN / SYRIATEL_DOMAIN settings and
+    fall back to the defaults when not stored. Amounts render in tens of cents
+    (5000 cents -> 500), keeping a single decimal digit when not divisible.
+    """
     operator = await session.scalar(select(Operator).where(Operator.code == operator_code))
     if operator is None:
         raise ValueError(f"Operator not found: {operator_code}")
@@ -108,11 +156,25 @@ async def generate_ussd(
     if service is None:
         raise ValueError(f"Service not found for operator {operator_code}: {service_code}")
 
-    amount = format(Decimal(amount_cents) / 100, "f")
-    # Seeded suffixes have adjacent placeholders; separate them as in the USSD example.
-    suffix = service.ussd_suffix.replace("amountphone", "amount*phone")
-    suffix = suffix.replace("amount", amount).replace("phone", phone)
-    return f"{operator.ussd_prefix}{suffix}"
+    amount = format(Decimal(amount_cents) / Decimal(10), "f")
+
+    if operator_code == "mtn":
+        mode = MTN_MODES.get(service_code)
+        if mode is None:
+            raise ValueError(f"Unsupported service code for USSD: {service_code}")
+        domain = await get_setting(session, "MTN_DOMAIN", DEFAULT_MTN_DOMAIN)
+        assert domain is not None
+        return f"*{mode}*{domain}*{phone}*{amount}#"
+
+    if operator_code == "syriatel":
+        mode = SYRIATEL_MODES.get(service_code)
+        if mode is None:
+            raise ValueError(f"Unsupported service code for USSD: {service_code}")
+        domain = await get_setting(session, "SYRIATEL_DOMAIN", DEFAULT_SYRIATEL_DOMAIN)
+        assert domain is not None
+        return f"*150*1*{domain}*{mode}*{amount}*{phone}*{phone}#"
+
+    raise ValueError(f"Unsupported operator for USSD: {operator_code}")
 
 
 async def main() -> None:

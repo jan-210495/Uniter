@@ -50,12 +50,16 @@ def test_customer_creation_lookup_and_duplicates(client: TestClient) -> None:
 
 
 def test_transaction_existing_and_new_customers(client: TestClient) -> None:
+    for operator_code in ("mtn", "syriatel"):
+        assert client.post(
+            "/api/operators/topup", json={"operator_code": operator_code, "amount_cents": 100000}
+        ).status_code == 200
     customer = client.post("/api/customers", json={"phone": "0933123456", "name": "Customer"}).json()
     payload = {"customer_phone": "0933123456", "operator_code": "mtn", "service_code": "prepaid", "amount_cents": 5000}
     response = client.post("/api/transactions", json=payload)
     assert response.status_code == 200
     result = response.json()
-    assert result["ussd_string"] == "10050*0933123456#"
+    assert result["ussd_string"] == "*150*65477*0933123456*500#"
     assert result["status"] == "pending" and result["amount_cents"] == 5000
     assert result["reference"].startswith("TXN-") and result["created_at"]
     assert client.get("/api/customers/lookup", params={"phone": "0933123456"}).json() == customer
@@ -63,7 +67,7 @@ def test_transaction_existing_and_new_customers(client: TestClient) -> None:
     payload.update(customer_phone="0944123456", operator_code="syriatel", service_code="postpaid", amount_cents=0)
     response2 = client.post("/api/transactions", json=payload)
     assert response2.status_code == 200
-    assert response2.json()["ussd_string"] == "5550*0944123456#"
+    assert response2.json()["ussd_string"] == "*150*1*67858*5*0*0944123456*0944123456#"
     assert response2.json()["reference"] != result["reference"]
     created = client.get("/api/customers/lookup", params={"phone": "0944123456"}).json()
     assert created["name"] == "0944123456" and created["balance_cents"] == 0
@@ -80,7 +84,7 @@ def test_transaction_existing_and_new_customers(client: TestClient) -> None:
                 ("0933123456", "mtn", "prepaid"), ("0944123456", "syriatel", "postpaid")
             ]
             assert [row.Transaction.ussd_string for row in rows] == [
-                "10050*0933123456#", "5550*0944123456#"
+                "*150*65477*0933123456*500#", "*150*1*67858*5*0*0944123456*0944123456#"
             ]
 
     asyncio.run(check_persisted())
@@ -121,6 +125,9 @@ def test_failed_transaction_does_not_leave_new_customer(client: TestClient, monk
     from uuid import UUID
 
     monkeypatch.setattr("backend.main.uuid4", lambda: UUID(int=1))
+    assert client.post(
+        "/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 25000}
+    ).status_code == 200
     payload = {"customer_phone": "0933123456", "operator_code": "mtn", "service_code": "prepaid", "amount_cents": 5000}
     assert client.post("/api/transactions", json=payload).status_code == 200
     payload["customer_phone"] = "0944123456"
@@ -131,6 +138,9 @@ def test_failed_transaction_does_not_leave_new_customer(client: TestClient, monk
 
 
 def test_normalized_customer_and_transaction_phones(client: TestClient) -> None:
+    assert client.post(
+        "/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 100000}
+    ).status_code == 200
     response = client.post("/api/customers", json={"phone": "+963 933-123-456", "name": "Customer"})
     assert response.status_code == 200
     customer = response.json()
@@ -146,13 +156,13 @@ def test_normalized_customer_and_transaction_phones(client: TestClient) -> None:
                "service_code": "prepaid", "amount_cents": 5000}
     transaction = client.post("/api/transactions", json=payload)
     assert transaction.status_code == 200
-    assert transaction.json()["ussd_string"] == "10050*0933123456#"
+    assert transaction.json()["ussd_string"] == "*150*65477*0933123456*500#"
     assert client.get("/api/customers/lookup", params={"phone": "0933123456"}).json() == customer
 
     payload["customer_phone"] = "00963 944-123-456"
     transaction = client.post("/api/transactions", json=payload)
     assert transaction.status_code == 200
-    assert transaction.json()["ussd_string"] == "10050*0944123456#"
+    assert transaction.json()["ussd_string"] == "*150*65477*0944123456*500#"
     created = client.get("/api/customers/lookup", params={"phone": "0944123456"})
     assert created.status_code == 200
     assert created.json()["phone"] == "0944123456"

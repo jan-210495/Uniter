@@ -139,6 +139,20 @@ class OperatorTopup(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class ProfitLedger(Base):
+    """Commission profit per transaction, tracked separately from operator balances."""
+
+    __tablename__ = "profit_ledger"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transaction_id: Mapped[int] = mapped_column(ForeignKey("transactions.id"), unique=True)
+    operator_code: Mapped[str] = mapped_column(String(50))
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    commission_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    profit_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class CashRegister(Base):
     __tablename__ = "cash_register"
     __table_args__ = (

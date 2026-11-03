@@ -17,12 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
     from .commission import get_commission_for_transaction
-    from .database import Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
+    from .database import Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
     from .seed import generate_ussd
     from .validation import validate_syrian_phone
 else:
     from commission import get_commission_for_transaction
-    from database import Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
+    from database import Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
     from seed import generate_ussd
     from validation import validate_syrian_phone
 
@@ -507,6 +507,10 @@ async def delete_customer(customer_id: int, db: DbSession) -> Response:
         raise HTTPException(status_code=404, detail="Customer not found")
     # Dependent rows are removed explicitly: SQLite enforces the foreign keys,
     # and the customer row owns this history once the customer is deleted.
+    customer_transactions = select(Transaction.id).where(Transaction.customer_id == customer_id)
+    await db.execute(
+        sql_delete(ProfitLedger).where(ProfitLedger.transaction_id.in_(customer_transactions))
+    )
     await db.execute(sql_delete(DebtLedger).where(DebtLedger.customer_id == customer_id))
     await db.execute(sql_delete(Transaction).where(Transaction.customer_id == customer_id))
     await db.delete(customer)
@@ -718,6 +722,21 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    # The shop must hold enough prepaid credit with the operator; rejecting
+    # before anything is written keeps the request atomic.
+    balance = await db.scalar(
+        select(OperatorBalance).where(OperatorBalance.operator_id == operator.id)
+    )
+    if balance is None or balance.balance_cents < data.amount_cents:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Insufficient operator balance")
+
+    try:
+        commission = await get_commission_for_transaction(db, data.amount_cents)
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail="Invalid stored commission rate") from exc
+    commission_cents = int(commission["commission_cents"])
+
     customer = await db.scalar(select(Customer).where(Customer.phone == data.customer_phone))
     is_new_customer = customer is None
     if customer is None:
@@ -734,7 +753,18 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
         reference=f"TXN-{uuid4().hex}",
     )
     db.add(transaction)
+    balance.balance_cents -= data.amount_cents
     try:
+        await db.flush()  # assigns transaction.id for the profit ledger row
+        db.add(
+            ProfitLedger(
+                transaction_id=transaction.id,
+                operator_code=operator.code,
+                amount_cents=data.amount_cents,
+                commission_cents=commission_cents,
+                profit_cents=data.amount_cents - commission_cents,
+            )
+        )
         await db.commit()
     except IntegrityError:
         await db.rollback()

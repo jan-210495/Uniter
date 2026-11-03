@@ -143,6 +143,9 @@ def test_edit_customer_name(client: TestClient) -> None:
 
 def test_remove_customer(client: TestClient) -> None:
     customer = create_customer(client, AHMAD_PHONE, "Ahmad")
+    assert client.post(
+        "/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 100000}
+    ).status_code == 200
     client.post(
         "/api/debt/charge",
         json={"customer_phone": AHMAD_PHONE, "amount_cents": 15000, "description": "Airtime"},

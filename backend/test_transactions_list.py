@@ -74,6 +74,10 @@ def transactions(client: TestClient) -> dict[str, dict]:
     Ahmad: mtn/prepaid pending x2, syriatel/postpaid completed.
     Rami: syriatel/prepaid pending, mtn/postpaid failed.
     """
+    for operator_code in ("mtn", "syriatel"):
+        assert client.post(
+            "/api/operators/topup", json={"operator_code": operator_code, "amount_cents": 1000000}
+        ).status_code == 200
     client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
     client.post("/api/customers", json={"phone": "0944123456", "name": "Rami"})
     created = {
@@ -116,7 +120,7 @@ def test_list_without_filters_returns_all_transactions(
         "service_code", "service_name",
     }
     assert item["reference"] == transactions["ahmad_mtn_a"]["reference"]
-    assert item["ussd_string"] == "10050*0933123456#"
+    assert item["ussd_string"] == "*150*65477*0933123456*500#"
     assert item["status"] == "pending" and item["amount_cents"] == 5000
     assert item["created_at"]
     assert item["customer_phone"] == "0933123456" and item["customer_name"] == "Ahmad"
