@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+{% set ar = lang|default('en') == 'ar' %}
+
+{% block title %}{{ 'الإعدادات' if ar else 'Settings' }} · Uniter{% endblock %}
+
+{% block head_extra %}
+    <meta name="theme-color" content="#f8fafc">
+{% endblock %}
+
+{% block content %}
+<section class="mx-auto max-w-6xl">
+    <header class="mb-8 flex flex-wrap items-end justify-between gap-4">
+        <div>
+            <p class="mb-2 text-xs font-bold uppercase tracking-widest text-blue-800">{{ 'إعدادات المتجر' if ar else 'Shop configuration' }}</p>
+            <h1 class="text-3xl font-bold tracking-tight text-blue-950 sm:text-4xl">{{ 'الإعدادات' if ar else 'Settings' }}</h1>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{{ 'نسبة العمولة وفئة العملة وهيكل رموز المشغّلين والخدمات.' if ar else 'Commission rate, currency denomination, and the operator/service code structure.' }}</p>
+        </div>
+        <span class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">{{ 'تكوين فقط' if ar else 'Configuration only' }}</span>
+    </header>
+
+    <div class="grid gap-6 lg:grid-cols-2">
+        <section id="commission-card" class="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="commission-title">
+            <div class="mb-5 border-b border-slate-100 pb-4">
+                <h2 id="commission-title" class="text-lg font-bold text-slate-900">{{ 'نسبة العمولة' if ar else 'Commission rate' }}</h2>
+                <p class="mt-1 text-sm text-slate-500">{{ 'النسبة المطبقة على كل معاملة شحن.' if ar else 'The rate applied to every charging transaction.' }}</p>
+            </div>
+            <p id="commission-current" role="status" aria-live="polite" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-semibold text-slate-700">…</p>
+            <form id="commission-form" class="mt-4 space-y-3" novalidate>
+                <div>
+                    <label for="commission-input" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'نسبة جديدة (من 0 إلى 1)' if ar else 'New rate (0 to 1)' }}</label>
+                    <input id="commission-input" name="rate" type="number" min="0" max="1" step="any" inputmode="decimal" dir="ltr" required placeholder="0.05" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                    <p class="mt-1.5 text-xs text-slate-500">{{ 'قيمة عشرية بين 0 و 1، مثل 0.05.' if ar else 'A decimal between 0 and 1, e.g. 0.05.' }}</p>
+                </div>
+                <button type="submit" class="w-full rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تحديث النسبة' if ar else 'Update rate' }}</button>
+                <p id="commission-feedback" role="status" aria-live="polite" class="min-h-[1.25rem] text-sm font-medium text-slate-600"></p>
+            </form>
+        </section>
+
+        <section id="denomination-card" class="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="denomination-title">
+            <div class="mb-5 border-b border-slate-100 pb-4">
+                <h2 id="denomination-title" class="text-lg font-bold text-slate-900">{{ 'فئة العملة' if ar else 'Currency denomination' }}</h2>
+                <p class="mt-1 text-sm text-slate-500">{{ 'الفئة المستخدمة لعرض المبالغ في المتجر.' if ar else 'The scale used to display amounts across the shop.' }}</p>
+            </div>
+            <dl class="grid gap-3 sm:grid-cols-2">
+                <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <dt class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'الفئة النشطة' if ar else 'Active denomination' }}</dt>
+                    <dd id="denom-active-name" class="mt-1 text-lg font-bold text-slate-900">{{ active_denomination.scale_name if active_denomination else ('—' if ar else 'None') }}</dd>
+                </div>
+                <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <dt class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'المضاعف' if ar else 'Multiplier' }}</dt>
+                    <dd id="denom-active-multiplier" dir="ltr" class="mt-1 text-lg font-bold tabular-nums text-slate-900">{{ '×' ~ active_denomination.multiplier if active_denomination else '—' }}</dd>
+                </div>
+            </dl>
+            {% if denominations %}
+            <form id="denomination-form" class="mt-4 space-y-3" novalidate>
+                <div>
+                    <label for="denom-select" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'تعيين فئة نشطة' if ar else 'Set active denomination' }}</label>
+                    <select id="denom-select" name="scale_name" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                        {% for denomination in denominations %}
+                        <option value="{{ denomination.scale_name }}"{% if active_denomination and denomination.id == active_denomination.id %} selected{% endif %}>{{ denomination.scale_name }} (×{{ denomination.multiplier }})</option>
+                        {% endfor %}
+                    </select>
+                    <p class="mt-1.5 text-xs text-slate-500">{{ 'تعطيل الفئة الحالية وتنشيط المختارة.' if ar else 'Deactivates the current scale and activates the chosen one.' }}</p>
+                </div>
+                <button type="submit" class="w-full rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تعيين كنشطة' if ar else 'Set active' }}</button>
+                <p id="denom-feedback" role="status" aria-live="polite" class="min-h-[1.25rem] text-sm font-medium text-slate-600"></p>
+            </form>
+            {% else %}
+            <p class="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-500">{{ 'لا توجد فئات مهيأة بعد.' if ar else 'No denominations configured yet.' }}</p>
+            {% endif %}
+        </section>
+
+        <section id="language-card" class="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="language-title">
+            <div class="mb-5 border-b border-slate-100 pb-4">
+                <h2 id="language-title" class="text-lg font-bold text-slate-900">{{ 'اللغة' if ar else 'Language' }}</h2>
+                <p class="mt-1 text-sm text-slate-500">{{ 'كيف تُختار لغة الواجهة.' if ar else 'How the interface language is chosen.' }}</p>
+            </div>
+            <p class="text-sm leading-6 text-slate-600">{{ 'تُحدَّد لغة الواجهة لكل صفحة عبر معلمة العنوان ?lang=en للإنجليزية أو ?lang=ar للعربية (مثال: /pos?lang=ar). لا يوجد إعداد دائم للغة؛ وتوفر كل صفحة أيضاً مبدّل اللغة في الترويسة.' if ar else 'The interface language is chosen per page with the ?lang=en (English) or ?lang=ar (Arabic) URL parameter (for example /pos?lang=ar). There is no persistent language preference; every page also offers the English | العربية switch in the header.' }}</p>
+            <div class="mt-4 flex flex-wrap items-center gap-3 text-sm font-semibold">
+                <a href="/settings?lang=en" lang="en" class="rounded-lg border border-slate-200 px-3 py-2 text-blue-800 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">English</a>
+                <a href="/settings?lang=ar" lang="ar" class="rounded-lg border border-slate-200 px-3 py-2 text-blue-800 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">العربية</a>
+            </div>
+        </section>
+
+        <section id="structure-card" class="min-w-0 rounded-2xl border border-slate-200 bg-white shadow-sm lg:col-span-2" aria-labelledby="structure-title">
+            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-6">
+                <div>
+                    <h2 id="structure-title" class="text-lg font-bold text-slate-900">{{ 'هيكل الرموز' if ar else 'Code structure' }}</h2>
+                    <p class="mt-1 text-sm text-slate-500">{{ 'المشغّلون وخدماتهم مع الرموز وبادئات USSD — للعرض فقط.' if ar else 'Operators and their services with codes and USSD prefixes — read-only.' }}</p>
+                </div>
+                <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-500">{{ 'قراءة فقط' if ar else 'Read-only' }}</span>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full min-w-[40rem] text-sm">
+                    <caption class="sr-only">{{ 'المشغّلون والخدمات مع الرموز وبادئات USSD' if ar else 'Operators and services with codes and USSD prefixes' }}</caption>
+                    <thead class="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
+                        <tr>
+                            <th scope="col" class="px-4 py-3 text-start">{{ 'المشغّل' if ar else 'Operator' }}</th>
+                            <th scope="col" class="px-4 py-3 text-start">USSD</th>
+                            <th scope="col" class="px-4 py-3 text-start">{{ 'الخدمة' if ar else 'Service' }}</th>
+                            <th scope="col" class="px-4 py-3 text-start">{{ 'رمز الخدمة' if ar else 'Service code' }}</th>
+                            <th scope="col" class="px-4 py-3 text-start">{{ 'الحالة' if ar else 'Status' }}</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        {% for operator in operators %}
+                        {% set operator_services = operator.services|sort(attribute='code') %}
+                        {% for service in operator_services %}
+                        <tr class="hover:bg-slate-50">
+                            {% if loop.first %}
+                            <td class="px-4 py-3 font-semibold text-slate-900" rowspan="{{ operator_services|length }}">{{ operator.name }} <span class="font-mono text-xs font-normal text-slate-500" dir="ltr">({{ operator.code }})</span></td>
+                            <td class="px-4 py-3 font-mono text-sm tabular-nums text-slate-700" dir="ltr" rowspan="{{ operator_services|length }}">{{ operator.ussd_prefix }}</td>
+                            {% endif %}
+                            <td class="px-4 py-3 text-slate-700">{{ service.name }}</td>
+                            <td class="px-4 py-3 font-mono text-sm text-slate-500" dir="ltr">{{ service.code }}</td>
+                            <td class="px-4 py-3">
+                                {% if service.is_active %}
+                                <span class="rounded-full bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-800">{{ 'نشطة' if ar else 'Active' }}</span>
+                                {% else %}
+                                <span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">{{ 'غير نشطة' if ar else 'Inactive' }}</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr class="hover:bg-slate-50">
+                            <td class="px-4 py-3 font-semibold text-slate-900">{{ operator.name }} <span class="font-mono text-xs font-normal text-slate-500" dir="ltr">({{ operator.code }})</span></td>
+                            <td class="px-4 py-3 font-mono text-sm tabular-nums text-slate-700" dir="ltr">{{ operator.ussd_prefix }}</td>
+                            <td colspan="3" class="px-4 py-3 text-sm text-slate-500">{{ 'لا توجد خدمات لهذا المشغّل.' if ar else 'No services for this operator.' }}</td>
+                        </tr>
+                        {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="5" class="px-4 py-10 text-center text-sm text-slate-500">{{ 'لا يوجد مشغّلون مهيأون.' if ar else 'No operators configured.' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    'use strict';
+    const messages = {{ {
+        'currentRate': 'النسبة الحالية' if ar else 'Current rate',
+        'rateUnavailable': 'تعذر تحميل النسبة الحالية.' if ar else 'Could not load the current rate.',
+        'updated': 'تم تحديث النسبة.' if ar else 'Rate updated.',
+        'updateFailed': 'تعذر تحديث النسبة. حاول مرة أخرى.' if ar else 'Could not update the rate. Try again.',
+        'invalidRate': 'أدخل نسبة صالحة بين 0 و 1.' if ar else 'Enter a valid rate between 0 and 1.',
+        'denomUpdated': 'تم تعيين الفئة النشطة.' if ar else 'Active denomination set.',
+        'denomUpdateFailed': 'تعذر تعيين الفئة. حاول مرة أخرى.' if ar else 'Could not set the denomination. Try again.'
+    }|tojson }};
+    const commissionForm = document.getElementById('commission-form');
+    const commissionInput = document.getElementById('commission-input');
+    const commissionCurrent = document.getElementById('commission-current');
+    const commissionFeedback = document.getElementById('commission-feedback');
+    const denominationForm = document.getElementById('denomination-form');
+
+    function setFeedback(element, text, tone) {
+        element.textContent = text;
+        element.className = 'min-h-[1.25rem] text-sm font-medium ' + (tone === 'error' ? 'text-red-700' : 'text-green-700');
+    }
+    function formatRatePercent(value) {
+        const rate = Number(value);
+        if (!Number.isFinite(rate)) return '';
+        return (rate * 100).toLocaleString('en-US', { maximumFractionDigits: 4 }) + '%';
+    }
+    function showRate(value) {
+        commissionCurrent.textContent = value === null
+            ? messages.rateUnavailable
+            : messages.currentRate + ': ' + value + ' (' + formatRatePercent(value) + ')';
+    }
+    async function loadRate() {
+        try {
+            const response = await fetch('/api/settings/commission', { cache: 'no-store' });
+            if (!response.ok) throw new Error('rate unavailable');
+            const data = await response.json();
+            showRate(data.commission_rate);
+        } catch (_) {
+            showRate(null);
+        }
+    }
+
+    commissionForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (commissionInput.validity.badInput || !commissionInput.value.trim()) {
+            setFeedback(commissionFeedback, messages.invalidRate, 'error');
+            return;
+        }
+        const rate = commissionInput.value.trim();
+        try {
+            const response = await fetch('/api/settings/commission', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rate })
+            });
+            if (!response.ok) {
+                setFeedback(commissionFeedback, response.status === 422 ? messages.invalidRate : messages.updateFailed, 'error');
+                return;
+            }
+            const data = await response.json();
+            showRate(data.commission_rate);
+            setFeedback(commissionFeedback, messages.updated, 'success');
+        } catch (_) {
+            setFeedback(commissionFeedback, messages.updateFailed, 'error');
+        }
+    });
+
+    if (denominationForm) {
+        const denominationSelect = document.getElementById('denom-select');
+        const activeName = document.getElementById('denom-active-name');
+        const activeMultiplier = document.getElementById('denom-active-multiplier');
+        const feedback = document.getElementById('denom-feedback');
+        denominationForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const scaleName = denominationSelect.value;
+            if (!scaleName) {
+                setFeedback(feedback, messages.denomUpdateFailed, 'error');
+                return;
+            }
+            try {
+                const response = await fetch('/api/currency/denomination', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scale_name: scaleName })
+                });
+                if (!response.ok) throw new Error('denomination update failed');
+                const denomination = await response.json();
+                activeName.textContent = denomination.scale_name;
+                activeMultiplier.textContent = '×' + denomination.multiplier;
+                setFeedback(feedback, messages.denomUpdated, 'success');
+            } catch (_) {
+                setFeedback(feedback, messages.denomUpdateFailed, 'error');
+            }
+        });
+    }
+
+    loadRate();
+})();
+</script>
+{% endblock %}

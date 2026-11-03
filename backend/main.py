@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import case, func, select
 from sqlalchemy import delete as sql_delete
+from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.selectable import Subquery
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -254,6 +255,33 @@ async def transactions_page(request: Request, lang: str = "en") -> HTMLResponse:
         request=request,
         name="transactions.html",
         context={"lang": language, "nav_page": "transactions"},
+    )
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request, db: DbSession, lang: str = "en") -> HTMLResponse:
+    """Settings page: commission rate, active currency denomination and the
+    read-only operator/service code structure, rendered server-side."""
+    language = lang if lang in {"en", "ar"} else "en"
+    operators = (
+        await db.scalars(
+            select(Operator).options(selectinload(Operator.services)).order_by(Operator.code)
+        )
+    ).all()
+    denominations = (
+        await db.scalars(select(CurrencyDenomination).order_by(CurrencyDenomination.id))
+    ).all()
+    active_denomination = next((d for d in denominations if d.is_active), None)
+    return templates.TemplateResponse(
+        request=request,
+        name="settings.html",
+        context={
+            "lang": language,
+            "nav_page": "settings",
+            "operators": operators,
+            "denominations": denominations,
+            "active_denomination": active_denomination,
+        },
     )
 
 
