@@ -218,18 +218,16 @@ def root() -> HTMLResponse:
 
 
 @app.get("/pos", response_class=HTMLResponse)
-async def pos_page(request: Request, lang: str = "en") -> HTMLResponse:
-    async with get_db() as db:
-        language = lang if lang in {"en", "ar"} else "en"
-        denom = await db.scalar(select(CurrencyDenomination).where(CurrencyDenomination.is_active == True))
-        return templates.TemplateResponse(request=request, name="pos.html", context={"lang": language, "currency_denomination": denom})
+async def pos_page(request: Request, db: DbSession, lang: str = "en") -> HTMLResponse:
+    language = lang if lang in {"en", "ar"} else "en"
+    denom = await db.scalar(select(CurrencyDenomination).where(CurrencyDenomination.is_active == True))
+    return templates.TemplateResponse(request=request, name="pos.html", context={"lang": language, "currency_denomination": denom})
 
 @app.get("/settlement", response_class=HTMLResponse)
-async def settlement_page(request: Request, lang: str = "en") -> HTMLResponse:
-    async with get_db() as db:
-        language = lang if lang in {"en", "ar"} else "en"
-        denom = await db.scalar(select(CurrencyDenomination).where(CurrencyDenomination.is_active == True))
-        return templates.TemplateResponse(request=request, name="settlement.html", context={"lang": language, "currency_denomination": denom})
+async def settlement_page(request: Request, db: DbSession, lang: str = "en") -> HTMLResponse:
+    language = lang if lang in {"en", "ar"} else "en"
+    denom = await db.scalar(select(CurrencyDenomination).where(CurrencyDenomination.is_active == True))
+    return templates.TemplateResponse(request=request, name="settlement.html", context={"lang": language, "currency_denomination": denom})
 
 
 def _debt_totals_by_customer() -> Subquery:
