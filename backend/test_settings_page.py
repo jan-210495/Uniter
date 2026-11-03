@@ -4,12 +4,12 @@ from contextlib import aclosing
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import URL, event
+from sqlalchemy import URL, delete, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from backend.database import Base, CurrencyDenomination, enable_sqlite_foreign_keys, get_db
+from backend.database import Base, CurrencyDenomination, Setting, enable_sqlite_foreign_keys, get_db
 from backend.main import app
-from backend.seed import seed_data
+from backend.seed import generate_ussd, seed_data
 
 
 @pytest.fixture
@@ -147,3 +147,112 @@ def test_denomination_put_switches_active(client: TestClient) -> None:
     # Unknown denominations fail cleanly without changing state.
     assert client.put("/api/currency/denomination", json={"scale_name": "nope"}).status_code == 404
     assert client.get("/api/currency/denomination").json()["scale_name"] == "pre-2026"
+
+
+def remove_setting(key: str) -> None:
+    async def remove() -> None:
+        async with aclosing(app.dependency_overrides[get_db]()) as dependency:
+            session = await anext(dependency)
+            await session.execute(delete(Setting).where(Setting.key == key))
+            await session.commit()
+
+    asyncio.run(remove())
+
+
+def test_mtn_domain_get_returns_seeded_default(client: TestClient) -> None:
+    assert client.get("/api/settings/mtn-domain").json() == {"mtn_domain": "65477"}
+
+
+def test_mtn_domain_get_falls_back_when_not_set(client: TestClient) -> None:
+    remove_setting("MTN_DOMAIN")
+    assert client.get("/api/settings/mtn-domain").json() == {"mtn_domain": "65477"}
+
+
+def test_mtn_domain_put_updates_and_persists(client: TestClient) -> None:
+    update = client.put("/api/settings/mtn-domain", json={"domain": "55501"})
+    assert update.status_code == 200
+    assert update.json() == {"mtn_domain": "55501"}
+    assert client.get("/api/settings/mtn-domain").json() == {"mtn_domain": "55501"}
+
+    # generate_ussd consumes the stored domain for new transactions.
+    async def check_ussd() -> None:
+        async with aclosing(app.dependency_overrides[get_db]()) as dependency:
+            session = await anext(dependency)
+            assert (
+                await generate_ussd(session, "mtn", "prepaid", "0968663410", 5000)
+                == "*150*55501*0968663410*500#"
+            )
+
+    asyncio.run(check_ussd())
+    # The page prefills the input with the stored value.
+    assert 'id="mtn-domain-input"' in client.get("/settings").text
+    assert 'value="55501"' in client.get("/settings").text
+
+
+@pytest.mark.parametrize("domain", ["12a45", "", "  ", "12 45", "+963", "abc", "#*150", "6547a"])
+def test_mtn_domain_put_rejects_invalid_domains(client: TestClient, domain: str) -> None:
+    assert client.put("/api/settings/mtn-domain", json={"domain": domain}).status_code == 422
+    assert client.get("/api/settings/mtn-domain").json() == {"mtn_domain": "65477"}
+
+
+def test_mtn_domain_put_length_boundaries(client: TestClient) -> None:
+    twenty = "1" * 20
+    assert client.put("/api/settings/mtn-domain", json={"domain": twenty}).status_code == 200
+    assert client.get("/api/settings/mtn-domain").json() == {"mtn_domain": twenty}
+    assert client.put("/api/settings/mtn-domain", json={"domain": "1" * 21}).status_code == 422
+    assert client.get("/api/settings/mtn-domain").json() == {"mtn_domain": twenty}
+
+
+def test_syriatel_domain_get_returns_seeded_default(client: TestClient) -> None:
+    assert client.get("/api/settings/syriatel-domain").json() == {"syriatel_domain": "67858"}
+
+
+def test_syriatel_domain_get_falls_back_when_not_set(client: TestClient) -> None:
+    remove_setting("SYRIATEL_DOMAIN")
+    assert client.get("/api/settings/syriatel-domain").json() == {"syriatel_domain": "67858"}
+
+
+def test_syriatel_domain_put_updates_and_persists(client: TestClient) -> None:
+    update = client.put("/api/settings/syriatel-domain", json={"domain": "24680"})
+    assert update.status_code == 200
+    assert update.json() == {"syriatel_domain": "24680"}
+    assert client.get("/api/settings/syriatel-domain").json() == {"syriatel_domain": "24680"}
+
+    async def check_ussd() -> None:
+        async with aclosing(app.dependency_overrides[get_db]()) as dependency:
+            session = await anext(dependency)
+            assert (
+                await generate_ussd(session, "syriatel", "postpaid", "0968663410", 5000)
+                == "*150*1*24680*5*500*0968663410*0968663410#"
+            )
+
+    asyncio.run(check_ussd())
+
+
+@pytest.mark.parametrize("domain", ["12a45", "", "  ", "12 45", "6785a"])
+def test_syriatel_domain_put_rejects_invalid_domains(client: TestClient, domain: str) -> None:
+    assert client.put("/api/settings/syriatel-domain", json={"domain": domain}).status_code == 422
+    assert client.get("/api/settings/syriatel-domain").json() == {"syriatel_domain": "67858"}
+
+
+def test_settings_page_shows_domain_inputs(client: TestClient) -> None:
+    english = client.get("/settings")
+    arabic = client.get("/settings", params={"lang": "ar"})
+    assert english.status_code == arabic.status_code == 200
+    # Both inputs prefilled with the current (default) values.
+    assert 'id="mtn-domain-input"' in english.text
+    assert 'value="65477"' in english.text
+    assert 'id="syriatel-domain-input"' in english.text
+    assert 'value="67858"' in english.text
+    assert "MTN domain" in english.text
+    assert "Syriatel domain" in english.text
+    assert 'value="65477"' in arabic.text
+    assert 'value="67858"' in arabic.text
+    assert "نطاق MTN" in arabic.text
+    assert "نطاق Syriatel" in arabic.text
+    # The forms submit to the new endpoints with live feedback regions.
+    assert "wireDomainForm(" in english.text
+    assert "'/api/settings/mtn-domain'" in english.text
+    assert "'/api/settings/syriatel-domain'" in english.text
+    assert 'id="mtn-domain-feedback"' in english.text
+    assert 'id="syriatel-domain-feedback"' in english.text

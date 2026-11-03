@@ -18,12 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 if __package__:
     from .commission import get_commission_for_transaction
     from .database import Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
-    from .seed import generate_ussd
+    from .seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from .validation import validate_syrian_phone
 else:
     from commission import get_commission_for_transaction
     from database import Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
-    from seed import generate_ussd
+    from seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from validation import validate_syrian_phone
 
 app = FastAPI(title="Uniter")
@@ -124,6 +124,12 @@ class TransactionCreate(BaseModel):
 
 class CommissionSettingUpdate(BaseModel):
     rate: Decimal = Field(ge=0, le=1, allow_inf_nan=False)
+
+
+class DomainSettingUpdate(BaseModel):
+    """USSD domain code: non-empty digits only, at most 20 characters."""
+
+    domain: str = Field(min_length=1, max_length=20, pattern=r"^\d+$")
 
 
 class TransactionResponse(BaseModel):
@@ -272,6 +278,9 @@ async def settings_page(request: Request, db: DbSession, lang: str = "en") -> HT
         await db.scalars(select(CurrencyDenomination).order_by(CurrencyDenomination.id))
     ).all()
     active_denomination = next((d for d in denominations if d.is_active), None)
+    mtn_domain = await get_setting(db, "MTN_DOMAIN", DEFAULT_MTN_DOMAIN)
+    syriatel_domain = await get_setting(db, "SYRIATEL_DOMAIN", DEFAULT_SYRIATEL_DOMAIN)
+    assert mtn_domain is not None and syriatel_domain is not None
     return templates.TemplateResponse(
         request=request,
         name="settings.html",
@@ -281,6 +290,8 @@ async def settings_page(request: Request, db: DbSession, lang: str = "en") -> HT
             "operators": operators,
             "denominations": denominations,
             "active_denomination": active_denomination,
+            "mtn_domain": mtn_domain,
+            "syriatel_domain": syriatel_domain,
         },
     )
 
@@ -394,6 +405,40 @@ async def update_commission_setting(data: CommissionSettingUpdate, db: DbSession
     value = setting.value
     await db.commit()
     return {"commission_rate": value}
+
+
+@app.get("/api/settings/mtn-domain")
+async def read_mtn_domain_setting(db: DbSession) -> dict[str, str]:
+    """Current MTN USSD domain code (default 65477 when not stored)."""
+    domain = await get_setting(db, "MTN_DOMAIN", DEFAULT_MTN_DOMAIN)
+    assert domain is not None
+    return {"mtn_domain": domain}
+
+
+@app.put("/api/settings/mtn-domain")
+async def update_mtn_domain_setting(data: DomainSettingUpdate, db: DbSession) -> dict[str, str]:
+    """Store the MTN USSD domain code consumed by generate_ussd."""
+    setting = await set_setting(db, "MTN_DOMAIN", data.domain)
+    value = setting.value
+    await db.commit()
+    return {"mtn_domain": value}
+
+
+@app.get("/api/settings/syriatel-domain")
+async def read_syriatel_domain_setting(db: DbSession) -> dict[str, str]:
+    """Current Syriatel USSD domain code (default 67858 when not stored)."""
+    domain = await get_setting(db, "SYRIATEL_DOMAIN", DEFAULT_SYRIATEL_DOMAIN)
+    assert domain is not None
+    return {"syriatel_domain": domain}
+
+
+@app.put("/api/settings/syriatel-domain")
+async def update_syriatel_domain_setting(data: DomainSettingUpdate, db: DbSession) -> dict[str, str]:
+    """Store the Syriatel USSD domain code consumed by generate_ussd."""
+    setting = await set_setting(db, "SYRIATEL_DOMAIN", data.domain)
+    value = setting.value
+    await db.commit()
+    return {"syriatel_domain": value}
 
 
 @app.get("/api/commission/calculate")

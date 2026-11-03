@@ -82,6 +82,29 @@
             </div>
         </section>
 
+        <section id="domains-card" class="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="domains-title">
+            <div class="mb-5 border-b border-slate-100 pb-4">
+                <h2 id="domains-title" class="text-lg font-bold text-slate-900">{{ 'نطاقات USSD' if ar else 'USSD domains' }}</h2>
+                <p class="mt-1 text-sm text-slate-500">{{ 'رموز النطاق المستخدمة في بنية رموز USSD؛ تُطبَّق على المعاملات الجديدة.' if ar else 'Domain codes used in the operators\' USSD structures; applied to new transactions.' }}</p>
+            </div>
+            <form id="mtn-domain-form" class="space-y-3" novalidate>
+                <label for="mtn-domain-input" class="block text-sm font-semibold text-slate-700">{{ 'نطاق MTN' if ar else 'MTN domain' }}</label>
+                <div class="flex flex-wrap items-stretch gap-2">
+                    <input id="mtn-domain-input" type="number" inputmode="numeric" dir="ltr" min="0" step="1" required placeholder="65477" value="{{ mtn_domain }}" class="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                    <button type="submit" class="rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تحديث' if ar else 'Update' }}</button>
+                </div>
+                <p id="mtn-domain-feedback" role="status" aria-live="polite" class="min-h-[1.25rem] text-sm font-medium text-slate-600"></p>
+            </form>
+            <form id="syriatel-domain-form" class="mt-5 space-y-3" novalidate>
+                <label for="syriatel-domain-input" class="block text-sm font-semibold text-slate-700">{{ 'نطاق Syriatel' if ar else 'Syriatel domain' }}</label>
+                <div class="flex flex-wrap items-stretch gap-2">
+                    <input id="syriatel-domain-input" type="number" inputmode="numeric" dir="ltr" min="0" step="1" required placeholder="67858" value="{{ syriatel_domain }}" class="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                    <button type="submit" class="rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تحديث' if ar else 'Update' }}</button>
+                </div>
+                <p id="syriatel-domain-feedback" role="status" aria-live="polite" class="min-h-[1.25rem] text-sm font-medium text-slate-600"></p>
+            </form>
+        </section>
+
         <section id="structure-card" class="min-w-0 rounded-2xl border border-slate-200 bg-white shadow-sm lg:col-span-2" aria-labelledby="structure-title">
             <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-6">
                 <div>
@@ -152,7 +175,11 @@
         'updateFailed': 'تعذر تحديث النسبة. حاول مرة أخرى.' if ar else 'Could not update the rate. Try again.',
         'invalidRate': 'أدخل نسبة صالحة بين 0 و 1.' if ar else 'Enter a valid rate between 0 and 1.',
         'denomUpdated': 'تم تعيين الفئة النشطة.' if ar else 'Active denomination set.',
-        'denomUpdateFailed': 'تعذر تعيين الفئة. حاول مرة أخرى.' if ar else 'Could not set the denomination. Try again.'
+        'denomUpdateFailed': 'تعذر تعيين الفئة. حاول مرة أخرى.' if ar else 'Could not set the denomination. Try again.',
+        'mtnDomainUpdated': 'تم تحديث نطاق MTN.' if ar else 'MTN domain updated.',
+        'syriatelDomainUpdated': 'تم تحديث نطاق Syriatel.' if ar else 'Syriatel domain updated.',
+        'invalidDomain': 'أدخل رمز نطاق صالحاً (أرقام فقط، حتى 20 رقماً).' if ar else 'Enter a valid domain code (digits only, up to 20 digits).',
+        'domainUpdateFailed': 'تعذر تحديث النطاق. حاول مرة أخرى.' if ar else 'Could not update the domain. Try again.'
     }|tojson }};
     const commissionForm = document.getElementById('commission-form');
     const commissionInput = document.getElementById('commission-input');
@@ -238,6 +265,40 @@
             }
         });
     }
+
+    // --- USSD domain settings (MTN_DOMAIN / SYRIATEL_DOMAIN) ---
+    const DOMAIN_PATTERN = /^\d{1,20}$/;
+    function wireDomainForm(formId, inputId, feedbackId, endpoint, successMessage) {
+        const form = document.getElementById(formId);
+        if (!form) return;
+        const input = document.getElementById(inputId);
+        const feedback = document.getElementById(feedbackId);
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const domain = input.value.trim();
+            if (input.validity.badInput || !DOMAIN_PATTERN.test(domain)) {
+                setFeedback(feedback, messages.invalidDomain, 'error');
+                input.focus();
+                return;
+            }
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ domain })
+                });
+                if (!response.ok) {
+                    setFeedback(feedback, response.status === 422 ? messages.invalidDomain : messages.domainUpdateFailed, 'error');
+                    return;
+                }
+                setFeedback(feedback, successMessage, 'success');
+            } catch (_) {
+                setFeedback(feedback, messages.domainUpdateFailed, 'error');
+            }
+        });
+    }
+    wireDomainForm('mtn-domain-form', 'mtn-domain-input', 'mtn-domain-feedback', '/api/settings/mtn-domain', messages.mtnDomainUpdated);
+    wireDomainForm('syriatel-domain-form', 'syriatel-domain-input', 'syriatel-domain-feedback', '/api/settings/syriatel-domain', messages.syriatelDomainUpdated);
 
     loadRate();
 })();
