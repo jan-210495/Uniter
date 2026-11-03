@@ -112,6 +112,7 @@
             </section>
         </aside>
     </form>
+    <p id="register-status" role="status" aria-live="polite" class="mt-4 min-h-[1.25rem] rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-600 shadow-sm"></p>
 </section>
 {% endblock %}
 
@@ -126,6 +127,10 @@
         'noResults': 'لا يوجد عملاء مطابقون.' if ar else 'No matching customers.',
         'searchError': 'تعذر البحث عن العملاء. حاول مرة أخرى.' if ar else 'Could not search customers. Try again.',
         'customerSelected': 'تم اختيار العميل.' if ar else 'Customer selected.',
+        'customerFound': 'تم العثور على العميل:' if ar else 'Customer found:',
+        'customerRegistered': 'تم تسجيل العميل:' if ar else 'Customer registered:',
+        'duplicatePhone': 'رقم الهاتف مسجل مسبقاً لعميل آخر.' if ar else 'That phone number is already registered to another customer.',
+        'registerError': 'تعذر تسجيل العميل. حاول مرة أخرى.' if ar else 'Could not register the customer. Try again.',
         'balance': 'الرصيد' if ar else 'Balance',
         'debt': 'الدين' if ar else 'Debt',
         'currency': 'ل.س' if ar else 'SYP',
@@ -146,6 +151,7 @@
     const infoPhone = document.getElementById('customer-info-phone');
     const infoBalance = document.getElementById('customer-info-balance');
     const infoDebt = document.getElementById('customer-info-debt');
+    const registerStatus = document.getElementById('register-status');
     const amount = document.getElementById('amount');
     const operator = document.getElementById('operator');
     const service = document.getElementById('service');
@@ -400,11 +406,29 @@
         { input: phone, anchor: phoneAnchor },
         { input: nameInput, anchor: nameAnchor }
     ];
+
+    // --- Auto-operator selection from the phone prefix ---
+    const AUTO_OPERATORS = {
+        '093': 'mtn', '098': 'mtn', '099': 'mtn',
+        '094': 'syriatel', '095': 'syriatel', '096': 'syriatel'
+    };
+    function operatorForPhonePrefix(value) {
+        let digits = value.replace(/\D/g, '');
+        if (digits.startsWith('00963')) digits = '0' + digits.slice(5);
+        else if (digits.startsWith('963')) digits = '0' + digits.slice(3);
+        return AUTO_OPERATORS[digits.slice(0, 3)] || null;
+    }
+
     searchFields.forEach(({ input, anchor }) => {
         input.addEventListener('input', () => {
             input.setCustomValidity('');
             hideCustomerInfo();
-            if (input === phone) clearResult();
+            if (input === phone) {
+                clearResult();
+                // While typing: a known operator prefix selects the operator.
+                const operatorCode = operatorForPhonePrefix(phone.value);
+                if (operatorCode) operator.value = operatorCode;
+            }
             queueSearch(input, anchor);
         });
         input.addEventListener('keydown', (event) => handleKeydown(event, input, anchor));
@@ -458,8 +482,53 @@
     operator.addEventListener('change', clearResult);
     service.addEventListener('change', clearResult);
     document.getElementById('refresh-rate').addEventListener('click', loadRate);
-    form.addEventListener('submit', (event) => {
+    // --- Auto-register on Generate USSD ---
+    // With a name filled: an exact name match reuses that customer's phone;
+    // otherwise the customer is registered with the typed phone, operator and
+    // service before the preview is generated.
+    async function ensureCustomer() {
+        const name = nameInput.value.trim();
+        if (!name) return;
+        try {
+            const response = await fetch(
+                '/api/customers/lookup-by-name?name=' + encodeURIComponent(name),
+                { cache: 'no-store' }
+            );
+            if (response.ok) {
+                const customer = await response.json();
+                phone.value = customer.phone;
+                phone.setCustomValidity('');
+                registerStatus.textContent = messages.customerFound + ' ' + customer.name;
+                return;
+            }
+            if (response.status !== 404) throw new Error('lookup failed');
+            const normalized = normalizePhone(phone.value);
+            if (!normalized) return; // the regular validation reports the invalid phone
+            const payload = { phone: normalized, name };
+            if (operator.value) payload.operator_code = operator.value;
+            if (service.value) payload.service_code = service.value;
+            const create = await fetch('/api/customers', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (create.ok) {
+                phone.value = normalized;
+                registerStatus.textContent = messages.customerRegistered + ' ' + name;
+            } else if (create.status === 409) {
+                // Phone already belongs to another customer; keep the typed phone.
+                registerStatus.textContent = messages.duplicatePhone;
+            } else {
+                throw new Error('register failed');
+            }
+        } catch (_) {
+            registerStatus.textContent = messages.registerError;
+        }
+    }
+    form.addEventListener('submit', async (event) => {
         event.preventDefault();
+        registerStatus.textContent = '';
+        await ensureCustomer();
         const normalized = normalizePhone(phone.value);
         const cents = parseAmount(amount.value);
         phone.setCustomValidity(normalized ? '' : messages.invalidPhone);

@@ -36,6 +36,8 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 class CustomerCreate(BaseModel):
     phone: str
     name: str = Field(min_length=1, max_length=255)
+    operator_code: str | None = Field(default=None, min_length=1, max_length=50)
+    service_code: str | None = Field(default=None, min_length=1, max_length=50)
 
     @field_validator("phone")
     @classmethod
@@ -477,9 +479,44 @@ async def lookup_customer(
     return customer
 
 
+@app.get("/api/customers/lookup-by-name", response_model=CustomerResponse)
+async def lookup_customer_by_name(
+    db: DbSession,
+    name: Annotated[str, Query(min_length=1, max_length=255)],
+) -> Customer:
+    """Exact (case-insensitive) name match for POS auto-recognition."""
+    customer = await db.scalar(
+        select(Customer)
+        .where(func.lower(Customer.name) == name.strip().lower())
+        .order_by(Customer.id)
+        .limit(1)
+    )
+    if customer is None:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return customer
+
+
 @app.post("/api/customers", response_model=CustomerResponse)
 async def create_customer(data: CustomerCreate, db: DbSession) -> Customer:
-    customer = Customer(phone=data.phone, name=data.name)
+    operator = None
+    if data.operator_code is not None:
+        operator = await db.scalar(select(Operator).where(Operator.code == data.operator_code))
+        if operator is None:
+            raise HTTPException(status_code=422, detail="Unknown operator code")
+    if data.service_code is not None:
+        service_statement = select(Service).where(Service.code == data.service_code)
+        if operator is not None:
+            # The service must belong to the given operator when both are provided.
+            service_statement = service_statement.where(Service.operator_id == operator.id)
+        service = await db.scalar(service_statement.limit(1))
+        if service is None:
+            raise HTTPException(status_code=422, detail="Unknown service code")
+    customer = Customer(
+        phone=data.phone,
+        name=data.name,
+        operator_code=data.operator_code,
+        service_code=data.service_code,
+    )
     db.add(customer)
     try:
         await db.commit()

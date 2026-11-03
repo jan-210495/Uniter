@@ -46,6 +46,24 @@
                     <label for="new-name" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'اسم العميل' if ar else 'Customer name' }}</label>
                     <input id="new-name" name="name" type="text" required maxlength="255" autocomplete="name" placeholder="{{ 'مثال: أحمد' if ar else 'e.g. Ahmad' }}" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
                 </div>
+                <div class="grid gap-4 sm:grid-cols-2">
+                    <div>
+                        <label for="new-operator" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'المشغّل (اختياري)' if ar else 'Operator (optional)' }}</label>
+                        <select id="new-operator" name="operator" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                            <option value="">{{ 'بدون' if ar else 'None' }}</option>
+                            <option value="mtn">MTN</option>
+                            <option value="syriatel">Syriatel</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="new-service" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'نوع الخدمة (اختياري)' if ar else 'Service type (optional)' }}</label>
+                        <select id="new-service" name="service" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                            <option value="">{{ 'بدون' if ar else 'None' }}</option>
+                            <option value="prepaid">{{ 'مسبق الدفع' if ar else 'Pre-Paid' }}</option>
+                            <option value="postpaid">{{ 'لاحق الدفع' if ar else 'Post-Paid' }}</option>
+                        </select>
+                    </div>
+                </div>
                 <button type="submit" class="w-full rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'إضافة عميل' if ar else 'Add customer' }}</button>
                 <p id="customer-status" role="status" aria-live="polite" class="min-h-[1.25rem] text-sm font-medium text-slate-600"></p>
             </form>
@@ -239,6 +257,8 @@
     const form = document.getElementById('customer-form');
     const phoneInput = document.getElementById('new-phone');
     const nameInput = document.getElementById('new-name');
+    const operatorInput = document.getElementById('new-operator');
+    const serviceInput = document.getElementById('new-service');
     const statusEl = document.getElementById('customer-status');
     const totalCustomersEl = document.getElementById('total-customers');
     const totalBalanceEl = document.getElementById('total-balance');
@@ -676,11 +696,15 @@
             nameInput.focus();
             return;
         }
+        // Operator and service type are optional preferences stored on the record.
+        const payload = { phone, name };
+        if (operatorInput.value) payload.operator_code = operatorInput.value;
+        if (serviceInput.value) payload.service_code = serviceInput.value;
         try {
             const response = await fetch(`${apiBase}/api/customers`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone, name }),
+                body: JSON.stringify(payload),
             });
             if (response.status === 409) {
                 setStatus(statusEl, messages.duplicate, 'error');

@@ -69,6 +69,9 @@ class Customer(Base):
     phone: Mapped[str] = mapped_column(String(32), unique=True)
     name: Mapped[str] = mapped_column(String(255))
     balance_cents: Mapped[int] = mapped_column(Integer, default=0)
+    # Optional POS auto-recognition preferences (free-form codes, not FKs).
+    operator_code: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)
+    service_code: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
