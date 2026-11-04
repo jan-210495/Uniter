@@ -120,7 +120,7 @@ def test_list_without_filters_returns_all_transactions(
         "service_code", "service_name",
     }
     assert item["reference"] == transactions["ahmad_mtn_a"]["reference"]
-    assert item["ussd_string"] == "*150*65477*0933123456*500#"
+    assert item["ussd_string"] == "*150*65477*0933123456*50#"
     assert item["status"] == "pending" and item["amount_cents"] == 5000
     assert item["created_at"]
     assert item["customer_phone"] == "0933123456" and item["customer_name"] == "Ahmad"

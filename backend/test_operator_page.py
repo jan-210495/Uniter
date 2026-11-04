@@ -136,7 +136,7 @@ def test_operator_page_shows_only_that_operators_transactions(client: TestClient
     positions = [html.index(transaction["reference"]) for transaction in mtn_transactions]
     assert positions == sorted(positions, reverse=True)
     # Balance card reflects deductions from this operator only.
-    assert "9,940" in html  # 1,000,000 - 6,000 cents = 9,940 SYP
+    assert "9,937" in html  # 1,000,000 - (6,000 + 300 commission) = 9,937 SYP
 
 
 def test_operator_page_empty_state(client: TestClient) -> None:

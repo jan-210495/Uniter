@@ -1220,7 +1220,7 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
         reference=f"TXN-{uuid4().hex}",
     )
     db.add(transaction)
-    balance.balance_cents -= data.amount_cents
+    balance.balance_cents -= data.amount_cents + commission_cents
     try:
         await db.flush()  # assigns transaction.id for the profit ledger row
         db.add(
@@ -1229,7 +1229,7 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
                 operator_code=operator.code,
                 amount_cents=data.amount_cents,
                 commission_cents=commission_cents,
-                profit_cents=data.amount_cents - commission_cents,
+                profit_cents=commission_cents,
             )
         )
         await db.commit()

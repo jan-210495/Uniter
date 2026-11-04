@@ -59,7 +59,7 @@ def test_transaction_existing_and_new_customers(client: TestClient) -> None:
     response = client.post("/api/transactions", json=payload)
     assert response.status_code == 200
     result = response.json()
-    assert result["ussd_string"] == "*150*65477*0933123456*500#"
+    assert result["ussd_string"] == "*150*65477*0933123456*50#"
     assert result["status"] == "pending" and result["amount_cents"] == 5000
     assert result["reference"].startswith("TXN-") and result["created_at"]
     assert client.get("/api/customers/lookup", params={"phone": "0933123456"}).json() == customer
@@ -84,7 +84,7 @@ def test_transaction_existing_and_new_customers(client: TestClient) -> None:
                 ("0933123456", "mtn", "prepaid"), ("0944123456", "syriatel", "postpaid")
             ]
             assert [row.Transaction.ussd_string for row in rows] == [
-                "*150*65477*0933123456*500#", "*150*1*67858*5*0*0944123456*0944123456#"
+                "*150*65477*0933123456*50#", "*150*1*67858*5*0*0944123456*0944123456#"
             ]
 
     asyncio.run(check_persisted())
@@ -156,13 +156,13 @@ def test_normalized_customer_and_transaction_phones(client: TestClient) -> None:
                "service_code": "prepaid", "amount_cents": 5000}
     transaction = client.post("/api/transactions", json=payload)
     assert transaction.status_code == 200
-    assert transaction.json()["ussd_string"] == "*150*65477*0933123456*500#"
+    assert transaction.json()["ussd_string"] == "*150*65477*0933123456*50#"
     assert client.get("/api/customers/lookup", params={"phone": "0933123456"}).json() == customer
 
     payload["customer_phone"] = "00963 944-123-456"
     transaction = client.post("/api/transactions", json=payload)
     assert transaction.status_code == 200
-    assert transaction.json()["ussd_string"] == "*150*65477*0944123456*500#"
+    assert transaction.json()["ussd_string"] == "*150*65477*0944123456*50#"
     created = client.get("/api/customers/lookup", params={"phone": "0944123456"})
     assert created.status_code == 200
     assert created.json()["phone"] == "0944123456"

@@ -151,7 +151,7 @@
                         <p id="debt-form-title" class="text-sm font-bold text-slate-900">{{ 'إضافة قيد' if ar else 'Add entry' }}</p>
                         <div class="grid gap-3 sm:grid-cols-2">
                             <div>
-                                <label for="debt-amount" class="mb-1 block text-xs font-semibold text-slate-700">{{ 'المبلغ (سنت)' if ar else 'Amount (cents)' }}</label>
+                                <label for="debt-amount" class="mb-1 block text-xs font-semibold text-slate-700">{{ 'المبلغ (س.ل)' if ar else 'Amount (SYP)' }}</label>
                                 <input id="debt-amount" type="number" min="0" step="1" required class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
                             </div>
                             <div>
@@ -241,7 +241,7 @@
         'debtAdded': 'تمت إضافة القيد.' if ar else 'Debt entry added.',
         'debtUpdated': 'تم تحديث القيد.' if ar else 'Debt entry updated.',
         'debtRemoved': 'تم حذف القيد.' if ar else 'Debt entry removed.',
-        'debtInvalidAmount': 'أدخل مبلغاً صحيحاً بالـسنت.' if ar else 'Enter a valid amount in cents.',
+        'debtInvalidAmount': 'أدخل مبلغاً صحيحاً بالـس.ل.' if ar else 'Enter a valid amount in SYP.',
         'debtLoadFailed': 'تعذر تحميل قيود الديون.' if ar else 'Could not load the debt entries.',
         'debtSaveFailed': 'تعذر حفظ القيد. حاول مرة أخرى.' if ar else 'Could not save the debt entry. Try again.',
         'debtRemoveFailed': 'تعذر حذف القيد. حاول مرة أخرى.' if ar else 'Could not remove the debt entry. Try again.',

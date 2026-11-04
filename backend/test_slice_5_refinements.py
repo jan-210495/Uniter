@@ -104,19 +104,19 @@ def test_generate_ussd_exact_structures_with_domains_and_fallback(client) -> Non
             # Exact operator structures with the stored domains.
             assert (
                 await generate_ussd(session, "mtn", "prepaid", "0933123456", 5000)
-                == "*150*11111*0933123456*500#"
+                == "*150*11111*0933123456*50#"
             )
             assert (
                 await generate_ussd(session, "mtn", "postpaid", "0933123456", 5000)
-                == "*154*11111*0933123456*500#"
+                == "*154*11111*0933123456*50#"
             )
             assert (
                 await generate_ussd(session, "syriatel", "prepaid", "0944123456", 5000)
-                == "*150*1*22222*1*500*0944123456*0944123456#"
+                == "*150*1*22222*1*50*0944123456*0944123456#"
             )
             assert (
                 await generate_ussd(session, "syriatel", "postpaid", "0944123456", 5000)
-                == "*150*1*22222*5*500*0944123456*0944123456#"
+                == "*150*1*22222*5*50*0944123456*0944123456#"
             )
 
             # Without stored settings the default domains apply again.
@@ -126,19 +126,19 @@ def test_generate_ussd_exact_structures_with_domains_and_fallback(client) -> Non
             await session.commit()
             assert (
                 await generate_ussd(session, "mtn", "prepaid", "0933123456", 5000)
-                == "*150*65477*0933123456*500#"
+                == "*150*65477*0933123456*50#"
             )
             assert (
                 await generate_ussd(session, "mtn", "postpaid", "0933123456", 5000)
-                == "*154*65477*0933123456*500#"
+                == "*154*65477*0933123456*50#"
             )
             assert (
                 await generate_ussd(session, "syriatel", "prepaid", "0944123456", 5000)
-                == "*150*1*67858*1*500*0944123456*0944123456#"
+                == "*150*1*67858*1*50*0944123456*0944123456#"
             )
             assert (
                 await generate_ussd(session, "syriatel", "postpaid", "0944123456", 5000)
-                == "*150*1*67858*5*500*0944123456*0944123456#"
+                == "*150*1*67858*5*50*0944123456*0944123456#"
             )
 
     asyncio.run(check())
@@ -163,12 +163,12 @@ def test_pos_flow_creates_transaction_deducts_balance_and_records_profit(client)
     )
     assert response.status_code == 200
     transaction = response.json()
-    assert transaction["ussd_string"] == "*150*65477*0933123456*500#"
+    assert transaction["ussd_string"] == "*150*65477*0933123456*50#"
     assert transaction["status"] == "pending"
 
     # The operator balance was deducted.
     balances = {row["operator_code"]: row for row in test_client.get("/api/operators/balance").json()}
-    assert balances["mtn"]["balance_cents"] == 15000
+    assert balances["mtn"]["balance_cents"] == 20000 - 5000 - 250
 
     # The transaction is stored and appears in the transaction list.
     listed = test_client.get("/api/transactions").json()
@@ -188,7 +188,7 @@ def test_pos_flow_creates_transaction_deducts_balance_and_records_profit(client)
             ).scalar_one()
             assert profit.operator_code == "mtn"
             assert profit.commission_cents == 250  # 5% of 5000
-            assert profit.profit_cents == 4750
+            assert profit.profit_cents == 250
 
     asyncio.run(check_ledger())
 

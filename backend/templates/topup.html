@@ -41,9 +41,9 @@
             </dl>
             <form class="topup-form mt-4 space-y-3" data-operator-code="{{ operator.code }}" novalidate>
                 <div>
-                    <label for="topup-amount-{{ operator.code }}" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'المبلغ (سنت)' if ar else 'Amount (cents)' }}</label>
-                    <input id="topup-amount-{{ operator.code }}" name="amount" type="number" min="1" step="1" inputmode="numeric" dir="ltr" required placeholder="50000" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
-                    <p class="mt-1.5 text-xs text-slate-500">{{ 'مبلغ صحيح بالسنت أكبر من صفر.' if ar else 'A whole number of cents, greater than zero.' }}</p>
+                    <label for="topup-amount-{{ operator.code }}" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'المبلغ (س.ل)' if ar else 'Amount (SYP)' }}</label>
+                    <input id="topup-amount-{{ operator.code }}" name="amount" type="number" min="1" step="1" inputmode="numeric" dir="ltr" required placeholder="500" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                    <p class="mt-1.5 text-xs text-slate-500">{{ 'مبلغ صحيح بالـس.ل أكبر من صفر.' if ar else 'A whole amount in SYP, greater than zero.' }}</p>
                 </div>
                 <button type="submit" class="w-full rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تعبئة' if ar else 'Top up' }}</button>
                 <p class="feedback min-h-[1.25rem] text-sm font-medium text-slate-600" role="status" aria-live="polite"></p>

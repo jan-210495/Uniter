@@ -156,7 +156,7 @@ async def generate_ussd(
     if service is None:
         raise ValueError(f"Service not found for operator {operator_code}: {service_code}")
 
-    amount = format(Decimal(amount_cents) / Decimal(10), "f")
+    amount = format(Decimal(amount_cents) / Decimal(100), "f")
 
     if operator_code == "mtn":
         mode = MTN_MODES.get(service_code)

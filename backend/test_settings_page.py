@@ -180,7 +180,7 @@ def test_mtn_domain_put_updates_and_persists(client: TestClient) -> None:
             session = await anext(dependency)
             assert (
                 await generate_ussd(session, "mtn", "prepaid", "0968663410", 5000)
-                == "*150*55501*0968663410*500#"
+                == "*150*55501*0968663410*50#"
             )
 
     asyncio.run(check_ussd())
@@ -223,7 +223,7 @@ def test_syriatel_domain_put_updates_and_persists(client: TestClient) -> None:
             session = await anext(dependency)
             assert (
                 await generate_ussd(session, "syriatel", "postpaid", "0968663410", 5000)
-                == "*150*1*24680*5*500*0968663410*0968663410#"
+                == "*150*1*24680*5*50*0968663410*0968663410#"
             )
 
     asyncio.run(check_ussd())

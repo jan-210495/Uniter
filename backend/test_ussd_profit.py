@@ -86,19 +86,19 @@ def test_generate_ussd_exact_structures(client: TestClient) -> None:
             session = await anext(dependency)
             assert (
                 await generate_ussd(session, "mtn", "prepaid", "0968663410", 5000)
-                == "*150*65477*0968663410*500#"
+                == "*150*65477*0968663410*50#"
             )
             assert (
                 await generate_ussd(session, "mtn", "postpaid", "0968663410", 5000)
-                == "*154*65477*0968663410*500#"
+                == "*154*65477*0968663410*50#"
             )
             assert (
                 await generate_ussd(session, "syriatel", "prepaid", "0968663410", 5000)
-                == "*150*1*67858*1*500*0968663410*0968663410#"
+                == "*150*1*67858*1*50*0968663410*0968663410#"
             )
             assert (
                 await generate_ussd(session, "syriatel", "postpaid", "0968663410", 5000)
-                == "*150*1*67858*5*500*0968663410*0968663410#"
+                == "*150*1*67858*5*50*0968663410*0968663410#"
             )
 
     asyncio.run(check())
@@ -113,11 +113,11 @@ def test_generate_ussd_uses_stored_domain_settings(client: TestClient) -> None:
             session = await anext(dependency)
             assert (
                 await generate_ussd(session, "mtn", "prepaid", "0968663410", 5000)
-                == "*150*11111*0968663410*500#"
+                == "*150*11111*0968663410*50#"
             )
             assert (
                 await generate_ussd(session, "syriatel", "postpaid", "0968663410", 5000)
-                == "*150*1*22222*5*500*0968663410*0968663410#"
+                == "*150*1*22222*5*50*0968663410*0968663410#"
             )
 
     asyncio.run(check())
@@ -131,11 +131,11 @@ def test_generate_ussd_falls_back_without_stored_domains(client: TestClient) -> 
             session = await anext(dependency)
             assert (
                 await generate_ussd(session, "mtn", "prepaid", "0968663410", 5000)
-                == "*150*65477*0968663410*500#"
+                == "*150*65477*0968663410*50#"
             )
             assert (
                 await generate_ussd(session, "syriatel", "prepaid", "0968663410", 5000)
-                == "*150*1*67858*1*500*0968663410*0968663410#"
+                == "*150*1*67858*1*50*0968663410*0968663410#"
             )
 
     asyncio.run(check())
@@ -164,10 +164,10 @@ def test_transaction_deducts_balance_and_records_profit(client: TestClient) -> N
     response = post_transaction(client, "0933123456", "mtn", "prepaid", 5000)
     assert response.status_code == 200
     transaction = response.json()
-    assert transaction["ussd_string"] == "*150*65477*0933123456*500#"
+    assert transaction["ussd_string"] == "*150*65477*0933123456*50#"
 
     balances = {item["operator_code"]: item for item in client.get("/api/operators/balance").json()}
-    assert balances["mtn"]["balance_cents"] == 15000
+    assert balances["mtn"]["balance_cents"] == 20000 - 5000 - 250
     assert balances["syriatel"]["balance_cents"] == 0
 
     async def check_profit() -> None:
@@ -180,7 +180,7 @@ def test_transaction_deducts_balance_and_records_profit(client: TestClient) -> N
             assert entry.operator_code == "mtn"
             assert entry.amount_cents == 5000
             assert entry.commission_cents == 250  # 5% of 5000
-            assert entry.profit_cents == 4750
+            assert entry.profit_cents == 250
             assert entry.created_at
 
     asyncio.run(check_profit())
@@ -214,7 +214,7 @@ def test_insufficient_balance_rejects_transaction(client: TestClient) -> None:
     topup(client, "mtn", 1)
     assert post_transaction(client, "0933123456", "mtn", "prepaid", 5000).status_code == 200
     balances = {item["operator_code"]: item for item in client.get("/api/operators/balance").json()}
-    assert balances["mtn"]["balance_cents"] == 0
+    assert balances["mtn"]["balance_cents"] == 5000 - 5000 - 250
 
 
 def test_profit_ledger_accumulates_across_transactions(client: TestClient) -> None:
@@ -228,8 +228,8 @@ def test_profit_ledger_accumulates_across_transactions(client: TestClient) -> No
     assert post_transaction(client, "0933123456", "syriatel", "postpaid", 10000).status_code == 200
 
     balances = {item["operator_code"]: item for item in client.get("/api/operators/balance").json()}
-    assert balances["mtn"]["balance_cents"] == 30000 - 7500
-    assert balances["syriatel"]["balance_cents"] == 20000 - 10000
+    assert balances["mtn"]["balance_cents"] == 30000 - 5000 - 250 - 2500 - 125
+    assert balances["syriatel"]["balance_cents"] == 20000 - 10000 - 1000
 
     async def check_ledger() -> None:
         async with aclosing(app.dependency_overrides[get_db]()) as dependency:
@@ -241,12 +241,12 @@ def test_profit_ledger_accumulates_across_transactions(client: TestClient) -> No
             ).scalars().all()
             assert len(entries) == 3
             assert [(e.operator_code, e.amount_cents, e.commission_cents, e.profit_cents) for e in entries] == [
-                ("mtn", 5000, 250, 4750),
-                ("mtn", 2500, 125, 2375),
-                ("syriatel", 10000, 1000, 9000),
+                ("mtn", 5000, 250, 250),
+                ("mtn", 2500, 125, 125),
+                ("syriatel", 10000, 1000, 1000),
             ]
             assert sum(e.commission_cents for e in entries) == 1375
-            assert sum(e.profit_cents for e in entries) == 16125
+            assert sum(e.profit_cents for e in entries) == 1375
 
     asyncio.run(check_ledger())
 
