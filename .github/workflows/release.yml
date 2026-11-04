@@ -32,14 +32,14 @@ jobs:
       - name: Build Windows executable
         if: matrix.os == 'windows-latest'
         run: |
-          pyinstaller --onefile --name uniter --noconsole backend/main.py
+          pyinstaller --onefile --name uniter --noconsole --add-data "backend/templates;backend/templates" backend/main.py
           mv dist/uniter.exe uniter-windows.exe
 
       - name: Build Linux .deb
         if: matrix.os == 'ubuntu-latest'
         run: |
           set -e
-          pyinstaller --onefile --name uniter --noconsole backend/main.py
+          pyinstaller --onefile --name uniter --noconsole --add-data "backend/templates:backend/templates" backend/main.py
           DEB_ROOT="$HOME/debroot"
           rm -rf "$DEB_ROOT"
           mkdir -p "$DEB_ROOT/DEBIAN" "$DEB_ROOT/opt/uniter" "$DEB_ROOT/usr/bin" "$DEB_ROOT/lib/systemd/system"
