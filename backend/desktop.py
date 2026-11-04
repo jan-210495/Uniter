@@ -2,6 +2,7 @@
 """Desktop launcher and PyInstaller frozen runtime entrypoint for Uniter."""
 
 import argparse
+import io
 import os
 import secrets
 import sys
@@ -16,6 +17,13 @@ if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
     _template_dir = _bundle_templates if _bundle_templates.is_dir() else Path(sys._MEIPASS) / "templates"
 else:
     _template_dir = Path(__file__).resolve().parent / "templates"
+
+# PyInstaller windowed builds set sys.stdout/sys.stderr to None; uvicorn's
+# logging config calls .isatty() on them, crashing on launch. Stub them out.
+if sys.stdout is None:
+    sys.stdout = io.StringIO()
+if sys.stderr is None:
+    sys.stderr = io.StringIO()
 
 import uvicorn
 from backend.main import app
