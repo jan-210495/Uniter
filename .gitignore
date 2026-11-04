@@ -3,3 +3,9 @@ pycache/
 *.pyc
 *.db
 .env
+*.deb
+*.exe
+build/
+dist/
+*.spec
+uniter-linux.deb

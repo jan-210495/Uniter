@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: uniter-windows.exe
+          - os: ubuntu-latest
+            artifact: uniter-linux.deb
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Windows executable
+        if: matrix.os == 'windows-latest'
+        run: |
+          pyinstaller --onefile --name uniter --noconsole backend/main.py
+          mv dist/uniter.exe uniter-windows.exe
+
+      - name: Build Linux .deb
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -e
+          pyinstaller --onefile --name uniter --noconsole backend/main.py
+          DEB_ROOT="$HOME/debroot"
+          rm -rf "$DEB_ROOT"
+          mkdir -p "$DEB_ROOT/DEBIAN" "$DEB_ROOT/opt/uniter" "$DEB_ROOT/usr/bin" "$DEB_ROOT/lib/systemd/system"
+          cp dist/uniter "$DEB_ROOT/opt/uniter/uniter"
+          printf 'Package: uniter\nVersion: 1.0.0\nSection: utils\nPriority: optional\nArchitecture: amd64\nMaintainer: Uniter <uniter@local>\nDescription: Uniter - Mobile Shop Charging & Units Management\n Bilingual MTN/Syriatel prepaid & postpaid management web app.\n Runs on http://localhost:56123\n' > "$DEB_ROOT/DEBIAN/control"
+          printf '#!/bin/sh\nexec /opt/uniter/uniter\n' > "$DEB_ROOT/usr/bin/uniter"
+          chmod +x "$DEB_ROOT/usr/bin/uniter"
+          printf '[Unit]\nDescription=Uniter mobile shop charging web app\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=/opt/uniter/uniter\nRestart=on-failure\nUser=root\n\n[Install]\nWantedBy=multi-user.target\n' > "$DEB_ROOT/lib/systemd/system/uniter.service"
+          dpkg-deb --build "$DEB_ROOT" uniter-linux.deb
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Uniter v1.0.0
+          body: |
+            Uniter v1.0.0 — Mobile Shop Charging & Units Management
+
+            Downloads:
+            - `uniter-windows.exe` — standalone Windows executable
+            - `uniter-linux.deb` — Debian/Ubuntu package (installs to /opt/uniter, runs on port 56123)
+
+            Run `uniter` (or `sudo dpkg -i uniter-linux.deb` then `systemctl start uniter`) and open http://localhost:56123
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

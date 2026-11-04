@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Annotated, Any, Dict
 from uuid import uuid4
 
+import sys
+
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
@@ -27,7 +29,14 @@ else:
     from validation import validate_syrian_phone
 
 app = FastAPI(title="Uniter")
-templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
+
+# PyInstaller --onefile extracts templates to sys._MEIPASS at runtime.
+_template_dir = Path(__file__).resolve().parent / "templates"
+if getattr(sys, "_MEIPASS", None):
+    _meipass_templates = Path(sys._MEIPASS) / "backend" / "templates"
+    if _meipass_templates.is_dir():
+        _template_dir = _meipass_templates
+templates = Jinja2Templates(directory=str(_template_dir))
 
 Code = Annotated[str, Field(min_length=1, max_length=50)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
@@ -1611,4 +1620,4 @@ async def get_register_summary(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=56123)
