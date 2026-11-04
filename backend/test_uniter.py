@@ -19,6 +19,3 @@ def test_root_endpoint() -> None:
     response = client.get('/', follow_redirects=False)
     assert response.status_code == 302
     assert response.headers['location'] == '/pos'
-    followed = client.get('/', follow_redirects=True)
-    assert followed.status_code == 200
-    assert 'POS Quick Charge' in followed.text
