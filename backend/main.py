@@ -32,6 +32,19 @@ templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "tem
 Code = Annotated[str, Field(min_length=1, max_length=50)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
+# Display timezone: the stored default and the options offered on /settings.
+DEFAULT_TIMEZONE = "Asia/Damascus"
+TIMEZONE_OPTIONS = (
+    "UTC",
+    "Asia/Damascus",
+    "Europe/Damascus",
+    "Europe/Zurich",
+    "Europe/London",
+    "America/New_York",
+    "Asia/Dubai",
+    "Asia/Riyadh",
+)
+
 
 class CustomerCreate(BaseModel):
     phone: str
@@ -132,6 +145,12 @@ class DomainSettingUpdate(BaseModel):
     """USSD domain code: non-empty digits only, at most 20 characters."""
 
     domain: str = Field(min_length=1, max_length=20, pattern=r"^\d+$")
+
+
+class TimezoneSettingUpdate(BaseModel):
+    """Display timezone: a non-empty zone name, at most 64 characters."""
+
+    timezone: str = Field(min_length=1, max_length=64)
 
 
 class TransactionResponse(BaseModel):
@@ -282,7 +301,8 @@ async def settings_page(request: Request, db: DbSession, lang: str = "en") -> HT
     active_denomination = next((d for d in denominations if d.is_active), None)
     mtn_domain = await get_setting(db, "MTN_DOMAIN", DEFAULT_MTN_DOMAIN)
     syriatel_domain = await get_setting(db, "SYRIATEL_DOMAIN", DEFAULT_SYRIATEL_DOMAIN)
-    assert mtn_domain is not None and syriatel_domain is not None
+    timezone = await get_setting(db, "timezone", DEFAULT_TIMEZONE)
+    assert mtn_domain is not None and syriatel_domain is not None and timezone is not None
     return templates.TemplateResponse(
         request=request,
         name="settings.html",
@@ -294,6 +314,8 @@ async def settings_page(request: Request, db: DbSession, lang: str = "en") -> HT
             "active_denomination": active_denomination,
             "mtn_domain": mtn_domain,
             "syriatel_domain": syriatel_domain,
+            "timezones": TIMEZONE_OPTIONS,
+            "timezone": timezone,
         },
     )
 
@@ -441,6 +463,23 @@ async def update_syriatel_domain_setting(data: DomainSettingUpdate, db: DbSessio
     value = setting.value
     await db.commit()
     return {"syriatel_domain": value}
+
+
+@app.get("/api/settings/timezone")
+async def read_timezone_setting(db: DbSession) -> dict[str, str]:
+    """Current display timezone (default Asia/Damascus when not stored)."""
+    timezone = await get_setting(db, "timezone", DEFAULT_TIMEZONE)
+    assert timezone is not None
+    return {"timezone": timezone}
+
+
+@app.put("/api/settings/timezone")
+async def update_timezone_setting(data: TimezoneSettingUpdate, db: DbSession) -> dict[str, str]:
+    """Store the display timezone shown in the header and used for times."""
+    setting = await set_setting(db, "timezone", data.timezone)
+    value = setting.value
+    await db.commit()
+    return {"timezone": value}
 
 
 @app.get("/api/commission/calculate")

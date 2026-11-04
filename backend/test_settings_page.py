@@ -256,3 +256,78 @@ def test_settings_page_shows_domain_inputs(client: TestClient) -> None:
     assert "'/api/settings/syriatel-domain'" in english.text
     assert 'id="mtn-domain-feedback"' in english.text
     assert 'id="syriatel-domain-feedback"' in english.text
+
+
+def test_timezone_get_returns_default(client: TestClient) -> None:
+    assert client.get("/api/settings/timezone").json() == {"timezone": "Asia/Damascus"}
+
+
+def test_timezone_put_updates_and_persists(client: TestClient) -> None:
+    update = client.put("/api/settings/timezone", json={"timezone": "Europe/Zurich"})
+    assert update.status_code == 200
+    assert update.json() == {"timezone": "Europe/Zurich"}
+    assert client.get("/api/settings/timezone").json() == {"timezone": "Europe/Zurich"}
+    # The page select reflects the stored value.
+    assert '<option value="Europe/Zurich" selected>' in client.get("/settings").text
+
+
+@pytest.mark.parametrize("timezone", ["", "x" * 65])
+def test_timezone_put_rejects_invalid_values(client: TestClient, timezone: str) -> None:
+    assert client.put("/api/settings/timezone", json={"timezone": timezone}).status_code == 422
+    assert client.get("/api/settings/timezone").json() == {"timezone": "Asia/Damascus"}
+
+
+def test_timezone_put_requires_field(client: TestClient) -> None:
+    assert client.put("/api/settings/timezone", json={}).status_code == 422
+    assert client.get("/api/settings/timezone").json() == {"timezone": "Asia/Damascus"}
+
+
+def test_settings_page_shows_timezone_select(client: TestClient) -> None:
+    english = client.get("/settings")
+    arabic = client.get("/settings", params={"lang": "ar"})
+    assert english.status_code == arabic.status_code == 200
+    for rendered in (english.text, arabic.text):
+        assert 'id="timezone-select"' in rendered
+        assert 'id="timezone-form"' in rendered
+        assert 'id="timezone-feedback"' in rendered
+        # Common options with the default selected.
+        for zone in ("UTC", "Asia/Damascus", "Europe/Damascus", "America/New_York"):
+            assert f'<option value="{zone}"' in rendered
+        assert '<option value="Asia/Damascus" selected>' in rendered
+        assert "fetch('/api/settings/timezone'" in rendered
+    assert "Timezone" in english.text
+    assert "المنطقة الزمنية" in arabic.text
+
+
+def test_base_template_renders_burger_menu_and_drawer(client: TestClient) -> None:
+    for path in ("/pos", "/settings", "/customers"):
+        english = client.get(path)
+        arabic = client.get(path, params={"lang": "ar"})
+        assert english.status_code == arabic.status_code == 200
+        for rendered in (english.text, arabic.text):
+            # Burger button: small screens only, wired to the drawer.
+            assert 'id="nav-toggle"' in rendered
+            assert "sm:hidden" in rendered
+            assert 'aria-expanded="false"' in rendered
+            assert 'aria-controls="app-drawer"' in rendered
+            # Off-canvas drawer with navigation semantics.
+            assert 'id="app-drawer"' in rendered
+            assert 'role="navigation"' in rendered
+            assert 'aria-modal="true"' in rendered
+            assert 'id="app-drawer-backdrop"' in rendered
+            assert 'id="app-drawer-close"' in rendered
+            # Every page link plus the language switcher inside the drawer.
+            for href in ("/pos", "/settlement", "/transactions", "/customers", "/settings", "/topup"):
+                assert f'href="{href}"' in rendered
+            assert "?lang=en" in rendered and "?lang=ar" in rendered
+            # Escape closes; the drawer slides from the start edge.
+            assert "Escape" in rendered
+            assert "drawer-closed" in rendered
+            assert "translateX(-100%)" in rendered
+            assert "translateX(100%)" in rendered
+            # Header timezone slot filled by the shared script.
+            assert 'id="header-timezone"' in rendered
+            assert "fetch('/api/settings/timezone'" in rendered
+    # The drawer labels follow the page language.
+    assert "Navigation menu" in client.get("/pos").text
+    assert "قائمة التنقل" in client.get("/pos", params={"lang": "ar"}).text

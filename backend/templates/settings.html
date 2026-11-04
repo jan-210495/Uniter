@@ -82,6 +82,28 @@
             </div>
         </section>
 
+        <section id="timezone-card" class="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="timezone-title">
+            <div class="mb-5 border-b border-slate-100 pb-4">
+                <h2 id="timezone-title" class="text-lg font-bold text-slate-900">{{ 'المنطقة الزمنية' if ar else 'Timezone' }}</h2>
+                <p class="mt-1 text-sm text-slate-500">{{ 'المنطقة الزمنية المستخدمة لعرض الوقت في الترويسة.' if ar else 'The timezone used for time display in the header.' }}</p>
+            </div>
+            <form id="timezone-form" class="space-y-3" novalidate>
+                <label for="timezone-select" class="block text-sm font-semibold text-slate-700">{{ 'المنطقة الزمنية' if ar else 'Timezone' }}</label>
+                <div class="flex flex-wrap items-stretch gap-2">
+                    <select id="timezone-select" name="timezone" class="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                        {% for zone in timezones %}
+                        <option value="{{ zone }}"{% if zone == timezone %} selected{% endif %}>{{ zone }}</option>
+                        {% endfor %}
+                        {% if timezone not in timezones %}
+                        <option value="{{ timezone }}" selected>{{ timezone }}</option>
+                        {% endif %}
+                    </select>
+                    <button type="submit" class="rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تحديث' if ar else 'Update' }}</button>
+                </div>
+                <p id="timezone-feedback" role="status" aria-live="polite" class="min-h-[1.25rem] text-sm font-medium text-slate-600"></p>
+            </form>
+        </section>
+
         <section id="domains-card" class="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="domains-title">
             <div class="mb-5 border-b border-slate-100 pb-4">
                 <h2 id="domains-title" class="text-lg font-bold text-slate-900">{{ 'نطاقات USSD' if ar else 'USSD domains' }}</h2>
@@ -179,7 +201,10 @@
         'mtnDomainUpdated': 'تم تحديث نطاق MTN.' if ar else 'MTN domain updated.',
         'syriatelDomainUpdated': 'تم تحديث نطاق Syriatel.' if ar else 'Syriatel domain updated.',
         'invalidDomain': 'أدخل رمز نطاق صالحاً (أرقام فقط، حتى 20 رقماً).' if ar else 'Enter a valid domain code (digits only, up to 20 digits).',
-        'domainUpdateFailed': 'تعذر تحديث النطاق. حاول مرة أخرى.' if ar else 'Could not update the domain. Try again.'
+        'domainUpdateFailed': 'تعذر تحديث النطاق. حاول مرة أخرى.' if ar else 'Could not update the domain. Try again.',
+        'timezoneUpdated': 'تم تحديث المنطقة الزمنية.' if ar else 'Timezone updated.',
+        'invalidTimezone': 'اختر منطقة زمنية صالحة.' if ar else 'Choose a valid timezone.',
+        'timezoneUpdateFailed': 'تعذر تحديث المنطقة الزمنية. حاول مرة أخرى.' if ar else 'Could not update the timezone. Try again.'
     }|tojson }};
     const commissionForm = document.getElementById('commission-form');
     const commissionInput = document.getElementById('commission-input');
@@ -299,6 +324,37 @@
     }
     wireDomainForm('mtn-domain-form', 'mtn-domain-input', 'mtn-domain-feedback', '/api/settings/mtn-domain', messages.mtnDomainUpdated);
     wireDomainForm('syriatel-domain-form', 'syriatel-domain-input', 'syriatel-domain-feedback', '/api/settings/syriatel-domain', messages.syriatelDomainUpdated);
+
+    // --- Timezone setting ---
+    const timezoneForm = document.getElementById('timezone-form');
+    if (timezoneForm) {
+        const timezoneSelect = document.getElementById('timezone-select');
+        const timezoneFeedback = document.getElementById('timezone-feedback');
+        timezoneForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const timezone = timezoneSelect.value;
+            if (!timezone) {
+                setFeedback(timezoneFeedback, messages.invalidTimezone, 'error');
+                return;
+            }
+            try {
+                const response = await fetch('/api/settings/timezone', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ timezone })
+                });
+                if (!response.ok) {
+                    setFeedback(timezoneFeedback, response.status === 422 ? messages.invalidTimezone : messages.timezoneUpdateFailed, 'error');
+                    return;
+                }
+                setFeedback(timezoneFeedback, messages.timezoneUpdated, 'success');
+                // The header label refreshes itself on this event.
+                document.dispatchEvent(new CustomEvent('timezone:changed'));
+            } catch (_) {
+                setFeedback(timezoneFeedback, messages.timezoneUpdateFailed, 'error');
+            }
+        });
+    }
 
     loadRate();
 })();
