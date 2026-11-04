@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any, Dict
@@ -210,6 +210,54 @@ class SearchResults(BaseModel):
     operators: list[SearchOperatorItem]
 
 
+class StatsTotals(BaseModel):
+    """Window-wide profit and transaction-volume totals."""
+
+    profit_cents: int
+    commission_cents: int
+    volume_cents: int
+    transaction_count: int
+
+
+class StatsOperatorRow(BaseModel):
+    """Per-operator profit and transaction volume inside the stats window."""
+
+    operator_code: str
+    operator_name: str
+    profit_cents: int
+    commission_cents: int
+    volume_cents: int
+    transaction_count: int
+
+
+class StatsStatusRow(BaseModel):
+    """Transaction count and volume for one status value."""
+
+    status: str
+    count: int
+    volume_cents: int
+
+
+class StatsDailyRow(BaseModel):
+    """One calendar day of the daily series (zero-filled)."""
+
+    date: str
+    profit_cents: int
+    volume_cents: int
+    transaction_count: int
+
+
+class StatsSummary(BaseModel):
+    """Response of GET /api/stats/summary."""
+
+    period_days: int
+    operator_code: str | None
+    totals: StatsTotals
+    by_operator: list[StatsOperatorRow]
+    by_status: list[StatsStatusRow]
+    daily: list[StatsDailyRow]
+
+
 class DebtLedgerCreate(BaseModel):
     customer_phone: str
     amount_cents: int = Field(ge=0)
@@ -383,6 +431,17 @@ async def topup_page(request: Request, db: DbSession, lang: str = "en") -> HTMLR
     )
 
 
+@app.get("/stats", response_class=HTMLResponse)
+async def stats_page(request: Request, lang: str = "en") -> HTMLResponse:
+    """Stats dashboard: profit and transaction volume over time."""
+    language = lang if lang in {"en", "ar"} else "en"
+    return templates.TemplateResponse(
+        request=request,
+        name="stats.html",
+        context={"lang": language, "nav_page": "stats"},
+    )
+
+
 @app.get("/operators/{operator_code}", response_class=HTMLResponse)
 async def operator_page(
     request: Request, db: DbSession, operator_code: str, lang: str = "en"
@@ -480,6 +539,158 @@ async def global_search(
     operators = [SearchOperatorItem(**row._mapping) for row in operator_rows.all()]
 
     return SearchResults(customers=customers, transactions=transactions, operators=operators)
+
+
+@app.get("/api/stats/summary", response_model=StatsSummary)
+async def stats_summary(
+    db: DbSession,
+    period: Annotated[int, Query(ge=1, le=90)] = 7,
+    operator_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
+) -> StatsSummary:
+    """Profit and transaction-volume statistics over the last ``period`` days.
+
+    Profit and commission come from the ProfitLedger, volume and counts from
+    Transaction; both cover the same UTC window and are optionally restricted
+    to one operator. The daily series is zero-filled so every calendar day in
+    the window has a row, oldest first.
+    """
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(days=period)
+
+    profit_conditions = [ProfitLedger.created_at >= window_start]
+    transaction_conditions = [Transaction.created_at >= window_start]
+    if operator_code is not None:
+        profit_conditions.append(ProfitLedger.operator_code == operator_code)
+        transaction_conditions.append(Operator.code == operator_code)
+
+    # Profit per operator (the ledger carries the operator code directly).
+    profit_rows = await db.execute(
+        select(
+            ProfitLedger.operator_code,
+            func.coalesce(func.sum(ProfitLedger.profit_cents), 0).label("profit_cents"),
+            func.coalesce(func.sum(ProfitLedger.commission_cents), 0).label("commission_cents"),
+        )
+        .where(*profit_conditions)
+        .group_by(ProfitLedger.operator_code)
+    )
+    profit_by_operator = {
+        row.operator_code: (int(row.profit_cents), int(row.commission_cents))
+        for row in profit_rows.all()
+    }
+
+    # Volume and count per operator; transactions reach the operator via services.
+    volume_rows = await db.execute(
+        select(
+            Operator.code,
+            func.count(Transaction.id).label("transaction_count"),
+            func.coalesce(func.sum(Transaction.amount_cents), 0).label("volume_cents"),
+        )
+        .select_from(Transaction)
+        .join(Service, Transaction.service_id == Service.id)
+        .join(Operator, Service.operator_id == Operator.id)
+        .where(*transaction_conditions)
+        .group_by(Operator.code)
+    )
+    volume_by_operator = {
+        row.code: (int(row.transaction_count), int(row.volume_cents)) for row in volume_rows.all()
+    }
+
+    status_rows = await db.execute(
+        select(
+            Transaction.status,
+            func.count(Transaction.id).label("count"),
+            func.coalesce(func.sum(Transaction.amount_cents), 0).label("volume_cents"),
+        )
+        .select_from(Transaction)
+        .join(Service, Transaction.service_id == Service.id)
+        .join(Operator, Service.operator_id == Operator.id)
+        .where(*transaction_conditions)
+        .group_by(Transaction.status)
+    )
+    status_counts = {row.status: (int(row.count), int(row.volume_cents)) for row in status_rows.all()}
+
+    profit_day_rows = await db.execute(
+        select(
+            func.date(ProfitLedger.created_at).label("day"),
+            func.coalesce(func.sum(ProfitLedger.profit_cents), 0).label("profit_cents"),
+        )
+        .where(*profit_conditions)
+        .group_by(func.date(ProfitLedger.created_at))
+    )
+    profit_by_day = {str(row.day): int(row.profit_cents) for row in profit_day_rows.all()}
+
+    volume_day_rows = await db.execute(
+        select(
+            func.date(Transaction.created_at).label("day"),
+            func.count(Transaction.id).label("transaction_count"),
+            func.coalesce(func.sum(Transaction.amount_cents), 0).label("volume_cents"),
+        )
+        .select_from(Transaction)
+        .join(Service, Transaction.service_id == Service.id)
+        .join(Operator, Service.operator_id == Operator.id)
+        .where(*transaction_conditions)
+        .group_by(func.date(Transaction.created_at))
+    )
+    volume_by_day = {
+        str(row.day): (int(row.transaction_count), int(row.volume_cents))
+        for row in volume_day_rows.all()
+    }
+
+    # Every operator appears in the breakdown, zeroed when idle inside the window.
+    operator_statement = select(Operator.code, Operator.name).order_by(Operator.code)
+    if operator_code is not None:
+        operator_statement = operator_statement.where(Operator.code == operator_code)
+    operator_rows = await db.execute(operator_statement)
+    by_operator = [
+        StatsOperatorRow(
+            operator_code=row.code,
+            operator_name=row.name,
+            profit_cents=profit_by_operator.get(row.code, (0, 0))[0],
+            commission_cents=profit_by_operator.get(row.code, (0, 0))[1],
+            volume_cents=volume_by_operator.get(row.code, (0, 0))[1],
+            transaction_count=volume_by_operator.get(row.code, (0, 0))[0],
+        )
+        for row in operator_rows.all()
+    ]
+    by_operator.sort(key=lambda item: (-item.profit_cents, item.operator_code))
+
+    totals = StatsTotals(
+        profit_cents=sum(profit for profit, _ in profit_by_operator.values()),
+        commission_cents=sum(commission for _, commission in profit_by_operator.values()),
+        volume_cents=sum(volume for _, volume in volume_by_operator.values()),
+        transaction_count=sum(count for count, _ in volume_by_operator.values()),
+    )
+    by_status = [
+        StatsStatusRow(
+            status=status,
+            count=status_counts.get(status, (0, 0))[0],
+            volume_cents=status_counts.get(status, (0, 0))[1],
+        )
+        for status in ("pending", "completed", "failed")
+    ]
+
+    today = now.date()
+    daily: list[StatsDailyRow] = []
+    for offset in range(period - 1, -1, -1):
+        day = (today - timedelta(days=offset)).isoformat()
+        count, volume = volume_by_day.get(day, (0, 0))
+        daily.append(
+            StatsDailyRow(
+                date=day,
+                profit_cents=profit_by_day.get(day, 0),
+                volume_cents=volume,
+                transaction_count=count,
+            )
+        )
+
+    return StatsSummary(
+        period_days=period,
+        operator_code=operator_code,
+        totals=totals,
+        by_operator=by_operator,
+        by_status=by_status,
+        daily=daily,
+    )
 
 
 def _debt_totals_by_customer() -> Subquery:

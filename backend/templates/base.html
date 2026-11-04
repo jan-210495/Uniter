@@ -43,6 +43,7 @@
                     <a href="/customers" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'customers' %} aria-current="page"{% endif %}>{{ 'العملاء' if lang|default('en') == 'ar' else 'Customers' }}</a>
                     <a href="/settings" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'settings' %} aria-current="page"{% endif %}>{{ 'الإعدادات' if lang|default('en') == 'ar' else 'Settings' }}</a>
                     <a href="/topup" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'topup' %} aria-current="page"{% endif %}>{{ 'تعبئة الرصيد' if lang|default('en') == 'ar' else 'Top-up' }}</a>
+                    <a href="/stats" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'stats' %} aria-current="page"{% endif %}>{{ 'الإحصائيات' if lang|default('en') == 'ar' else 'Stats' }}</a>
                 </div>
                 <div class="flex flex-wrap items-center gap-3" aria-label="Language">
                     <a href="?lang=en" lang="en" class="hover:text-blue-800"{% if lang|default('en') == 'en' %} aria-current="true"{% endif %}>English</a>
@@ -71,6 +72,7 @@
             <a href="/customers" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'customers' %} aria-current="page"{% endif %}>{{ 'العملاء' if lang|default('en') == 'ar' else 'Customers' }}</a>
             <a href="/settings" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'settings' %} aria-current="page"{% endif %}>{{ 'الإعدادات' if lang|default('en') == 'ar' else 'Settings' }}</a>
             <a href="/topup" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'topup' %} aria-current="page"{% endif %}>{{ 'تعبئة الرصيد' if lang|default('en') == 'ar' else 'Top-up' }}</a>
+            <a href="/stats" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'stats' %} aria-current="page"{% endif %}>{{ 'الإحصائيات' if lang|default('en') == 'ar' else 'Stats' }}</a>
         </div>
         <div class="mt-auto flex flex-wrap items-center gap-3 border-t border-slate-100 px-4 py-4 text-sm font-semibold text-slate-600">
             <span class="text-xs font-bold uppercase tracking-widest text-slate-400">{{ 'اللغة' if lang|default('en') == 'ar' else 'Language' }}</span>
