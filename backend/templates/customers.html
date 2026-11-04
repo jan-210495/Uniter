@@ -22,11 +22,11 @@
         </div>
         <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <p class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'إجمالي الأرصدة' if ar else 'Total balance' }}</p>
-            <p class="mt-2 text-2xl font-bold tabular-nums text-blue-950"><span id="total-balance" dir="ltr">{{ "{:,}".format(total_balance_cents) }}</span> <span class="text-sm font-semibold text-slate-500">{{ currency }}</span></p>
+            <p class="mt-2 text-2xl font-bold tabular-nums text-blue-950"><span id="total-balance" dir="ltr">{{ "{:,.2f}".format(total_balance_cents / 100).rstrip('0').rstrip('.') }}</span> <span class="text-sm font-semibold text-slate-500">{{ currency }}</span></p>
         </div>
         <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <p class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'إجمالي الديون' if ar else 'Total debt' }}</p>
-            <p class="mt-2 text-2xl font-bold tabular-nums text-amber-800"><span id="total-debt" dir="ltr">{{ "{:,}".format(total_debt_cents) }}</span> <span class="text-sm font-semibold text-amber-700">{{ currency }}</span></p>
+            <p class="mt-2 text-2xl font-bold tabular-nums text-amber-800"><span id="total-debt" dir="ltr">{{ "{:,.2f}".format(total_debt_cents / 100).rstrip('0').rstrip('.') }}</span> <span class="text-sm font-semibold text-amber-700">{{ currency }}</span></p>
         </div>
     </div>
 
@@ -94,9 +94,9 @@
                         <tr class="hover:bg-slate-50" data-customer-id="{{ customer.id }}" data-name="{{ customer.name }}" data-phone="{{ customer.phone }}">
                             <td class="px-4 py-3 font-semibold text-slate-900" data-field="name">{{ customer.name }}</td>
                             <td class="px-4 py-3 font-mono text-sm tabular-nums text-slate-700" dir="ltr" data-field="phone">{{ customer.phone }}</td>
-                            <td class="px-4 py-3 tabular-nums text-slate-700" data-field="balance"><span dir="ltr">{{ "{:,}".format(customer.balance_cents) }}</span> <span class="text-xs font-semibold text-slate-500">{{ currency }}</span></td>
+                            <td class="px-4 py-3 tabular-nums text-slate-700" data-field="balance"><span dir="ltr">{{ "{:,.2f}".format(customer.balance_cents / 100).rstrip('0').rstrip('.') }}</span> <span class="text-xs font-semibold text-slate-500">{{ currency }}</span></td>
                             {% if customer.debt_cents > 0 %}
-                            <td class="px-4 py-3 tabular-nums" data-field="debt"><span dir="ltr" class="rounded-full bg-amber-50 px-2.5 py-1 text-sm font-semibold text-amber-800">{{ "{:,}".format(customer.debt_cents) }}</span> <span class="text-xs font-semibold text-amber-700">{{ currency }}</span></td>
+                            <td class="px-4 py-3 tabular-nums" data-field="debt"><span dir="ltr" class="rounded-full bg-amber-50 px-2.5 py-1 text-sm font-semibold text-amber-800">{{ "{:,.2f}".format(customer.debt_cents / 100).rstrip('0').rstrip('.') }}</span> <span class="text-xs font-semibold text-amber-700">{{ currency }}</span></td>
                             {% else %}
                             <td class="px-4 py-3 tabular-nums text-slate-500" data-field="debt"><span dir="ltr">0</span> <span class="text-xs font-semibold text-slate-400">{{ currency }}</span></td>
                             {% endif %}
@@ -278,8 +278,8 @@
         return /^09[34569][0-9]{7}$/.test(cleaned) ? cleaned : null;
     }
 
-    function formatCents(value) {
-        return Number(value || 0).toLocaleString('en-US');
+    function formatAmount(cents) {
+        return (Number(cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
     }
 
     function formatDate(value) {
@@ -302,7 +302,7 @@
         const number = document.createElement('span');
         number.dir = 'ltr';
         number.className = numberClass;
-        number.textContent = formatCents(value);
+        number.textContent = formatAmount(value);
         const unit = document.createElement('span');
         unit.className = unitClass;
         unit.textContent = messages.currency;
@@ -382,8 +382,8 @@
             const balance = customers.reduce((sum, c) => sum + (Number(c.balance_cents) || 0), 0);
             const debt = customers.reduce((sum, c) => sum + (Number(c.debt_cents) || 0), 0);
             totalCustomersEl.textContent = String(customers.length);
-            totalBalanceEl.textContent = formatCents(balance);
-            totalDebtEl.textContent = formatCents(debt);
+            totalBalanceEl.textContent = formatAmount(balance);
+            totalDebtEl.textContent = formatAmount(debt);
             return true;
         } catch (_) {
             if (showError) setStatus(statusEl, messages.loadFailed, 'error');
@@ -534,7 +534,7 @@
         const amount = makeCell('px-3 py-2 font-semibold tabular-nums text-slate-900');
         amount.dataset.field = 'amount';
         amount.dir = 'ltr';
-        amount.textContent = formatCents(entry.amount_cents);
+        amount.textContent = formatAmount(entry.amount_cents);
 
         const description = makeCell('px-3 py-2 text-slate-700');
         description.dataset.field = 'description';
@@ -573,9 +573,9 @@
             if (!balanceResponse.ok || !ledgerResponse.ok) throw new Error('debt load failed');
             const balance = await balanceResponse.json();
             const entries = await ledgerResponse.json();
-            debtChargesEl.textContent = formatCents(balance.total_charges_cents);
-            debtPaymentsEl.textContent = formatCents(balance.total_payments_cents);
-            debtBalanceEl.textContent = formatCents(balance.total_debt_cents);
+            debtChargesEl.textContent = formatAmount(balance.total_charges_cents);
+            debtPaymentsEl.textContent = formatAmount(balance.total_payments_cents);
+            debtBalanceEl.textContent = formatAmount(balance.total_debt_cents);
             debtEntries.replaceChildren(...(entries.length ? entries.map(renderDebtEntry) : [renderDebtEmpty()]));
         } catch (_) {
             setStatus(debtStatus, messages.debtLoadFailed, 'error');

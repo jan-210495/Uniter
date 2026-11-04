@@ -300,8 +300,8 @@ def test_customer_rows_show_balance_and_debt_balances(client: TestClient) -> Non
     page = client.get("/customers").text
     assert 'data-name="Ahmad"' in page
     assert 'data-name="Rami"' in page
-    assert "20,000" in page  # Ahmad's aggregated debt inside his row
-    assert 'id="total-debt" dir="ltr">20,000</span>' in page
+    assert 'text-amber-800">200</span>' in page  # Ahmad's aggregated debt (20000 cents = 200 SYP)
+    assert 'id="total-debt" dir="ltr">200</span>' in page
 
     listing = {item["name"]: item for item in client.get("/api/customers").json()}
     assert listing["Ahmad"]["debt_cents"] == 20000

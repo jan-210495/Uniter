@@ -64,6 +64,10 @@
         return /^09[34569][0-9]{7}$/.test(cleaned) ? cleaned : null;
     }
 
+    function formatAmount(cents) {
+        return (Number(cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    }
+
     async function lookupDebt(phone) {
         const summaryDiv = document.getElementById('debt-summary');
         const summaryCentsEl = document.getElementById('total-debt-cents');
@@ -75,9 +79,9 @@
             const response = await fetch(`${apiBase}/api/debt/summary?customer_phone=${encodeURIComponent(phone)}`);
             if (!response.ok) throw new Error(await response.text());
             const data = await response.json();
-            summaryCentsEl.textContent = data.total_debt_cents;
-            totalPaymentsCentsEl.textContent = data.total_payments_cents;
-            totalChargesCentsEl.textContent = data.total_charges_cents;
+            summaryCentsEl.textContent = formatAmount(data.total_debt_cents);
+            totalPaymentsCentsEl.textContent = formatAmount(data.total_payments_cents);
+            totalChargesCentsEl.textContent = formatAmount(data.total_charges_cents);
             summaryDiv.classList.remove('hidden');
         } catch (e) {
             alert('{{ 'خطأ في جلب معلومات الديون.' if ar else 'Error fetching debt info.' }}');
@@ -104,7 +108,7 @@
                 tr.innerHTML = `
                     <td class="px-4 py-3 text-slate-900">${date}</td>
                     <td class="px-4 py-3 text-slate-900 capitalize">${entry.type}</td>
-                    <td class="px-4 py-3 text-slate-900">${entry.amount_cents}</td>
+                    <td class="px-4 py-3 text-slate-900">${formatAmount(entry.amount_cents)}</td>
                     <td class="px-4 py-3 text-slate-900">${entry.description || ''}</td>
                 `;
                 tbody.appendChild(tr);

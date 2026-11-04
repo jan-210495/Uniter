@@ -139,7 +139,10 @@
         failed: document.getElementById('stats-failed-volume')
     };
 
-    function formatCents(value) {
+    function formatAmount(cents) {
+        return (Number(cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    }
+    function formatCount(value) {
         return Number(value || 0).toLocaleString('en-US');
     }
 
@@ -154,7 +157,7 @@
         const cell = makeCell('', 'px-4 py-3 tabular-nums text-slate-700');
         const number = document.createElement('span');
         number.setAttribute('dir', 'ltr');
-        number.textContent = formatCents(value);
+        number.textContent = formatAmount(value);
         cell.appendChild(number);
         const unit = document.createElement('span');
         unit.className = 'ms-1 text-xs font-semibold text-slate-500';
@@ -173,10 +176,10 @@
 
     function renderStats(data) {
         const totals = data.totals || {};
-        profitEl.textContent = formatCents(totals.profit_cents);
-        commissionEl.textContent = formatCents(totals.commission_cents);
-        volumeEl.textContent = formatCents(totals.volume_cents);
-        countEl.textContent = formatCents(totals.transaction_count);
+        profitEl.textContent = formatAmount(totals.profit_cents);
+        commissionEl.textContent = formatAmount(totals.commission_cents);
+        volumeEl.textContent = formatAmount(totals.volume_cents);
+        countEl.textContent = formatCount(totals.transaction_count);
         const isEmpty = !totals.profit_cents && !totals.commission_cents
             && !totals.volume_cents && !totals.transaction_count;
         emptyEl.classList.toggle('hidden', !isEmpty);
@@ -203,14 +206,14 @@
                 tr.appendChild(makeAmountCell(row.profit_cents));
                 tr.appendChild(makeAmountCell(row.commission_cents));
                 tr.appendChild(makeAmountCell(row.volume_cents));
-                tr.appendChild(makeCell(formatCents(row.transaction_count), 'px-4 py-3 tabular-nums text-slate-700'));
+                tr.appendChild(makeCell(formatCount(row.transaction_count), 'px-4 py-3 tabular-nums text-slate-700'));
                 operatorRowsEl.appendChild(tr);
             });
         }
 
         (data.by_status || []).forEach((row) => {
-            if (statusCountEls[row.status]) statusCountEls[row.status].textContent = formatCents(row.count);
-            if (statusVolumeEls[row.status]) statusVolumeEls[row.status].textContent = formatCents(row.volume_cents);
+            if (statusCountEls[row.status]) statusCountEls[row.status].textContent = formatCount(row.count);
+            if (statusVolumeEls[row.status]) statusVolumeEls[row.status].textContent = formatAmount(row.volume_cents);
         });
 
         dailyRowsEl.innerHTML = '';
@@ -226,7 +229,7 @@
                 tr.appendChild(dateCell);
                 tr.appendChild(makeAmountCell(day.profit_cents));
                 tr.appendChild(makeAmountCell(day.volume_cents));
-                tr.appendChild(makeCell(formatCents(day.transaction_count), 'px-4 py-3 tabular-nums text-slate-700'));
+                tr.appendChild(makeCell(formatCount(day.transaction_count), 'px-4 py-3 tabular-nums text-slate-700'));
                 dailyRowsEl.appendChild(tr);
             });
         }

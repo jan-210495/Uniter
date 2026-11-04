@@ -191,7 +191,7 @@ def test_topup_page_shows_balance_and_last_topup(client: TestClient) -> None:
     ).json()
     html = client.get("/topup").text
     # The refreshed balance is rendered server-side.
-    assert "75,000" in html
+    assert 'data-field="balance" dir="ltr">750</span>' in html  # 75000 cents = 750 SYP
     # The last top-up timestamp is exposed for locale formatting.
     assert 'data-field="last-topup"' in html
     assert 'data-iso=' in html
