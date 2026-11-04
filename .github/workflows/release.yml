@@ -5,87 +5,57 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
-  build:
+  build-windows-installer:
+    runs-on: windows-latest
     permissions:
       contents: write
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            artifact: uniter-windows.exe
-          - os: ubuntu-latest
-            artifact: uniter-linux.deb
-    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
+        shell: pwsh
 
-      - name: Build Windows executable
-        if: matrix.os == 'windows-latest'
+      - name: Build PyInstaller bundle
         run: |
-          pyinstaller --onefile --name uniter --noconsole --add-data "backend/templates;backend/templates" backend/main.py
-          mv dist/uniter.exe uniter-windows.exe
+          python scripts/build_exe.py
+        shell: pwsh
 
-      - name: Build Linux .deb
-        if: matrix.os == 'ubuntu-latest'
+      - name: Install Inno Setup 6
         run: |
-          set -e
-          pyinstaller --onefile --name uniter --noconsole --add-data "backend/templates:backend/templates" backend/main.py
-          DEB_ROOT="$HOME/debroot"
-          rm -rf "$DEB_ROOT"
-          mkdir -p "$DEB_ROOT/DEBIAN" "$DEB_ROOT/opt/uniter" "$DEB_ROOT/usr/bin" "$DEB_ROOT/lib/systemd/system"
-          cp dist/uniter "$DEB_ROOT/opt/uniter/uniter"
-          printf 'Package: uniter\nVersion: 1.0.0\nSection: utils\nPriority: optional\nArchitecture: amd64\nMaintainer: Uniter <uniter@local>\nDescription: Uniter - Mobile Shop Charging & Units Management\n Bilingual MTN/Syriatel prepaid & postpaid management web app.\n Runs on http://localhost:56123\n' > "$DEB_ROOT/DEBIAN/control"
-          printf '#!/bin/sh\nexec /opt/uniter/uniter\n' > "$DEB_ROOT/usr/bin/uniter"
-          chmod +x "$DEB_ROOT/usr/bin/uniter"
-          printf '[Unit]\nDescription=Uniter mobile shop charging web app\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=/opt/uniter/uniter\nRestart=on-failure\nUser=root\n\n[Install]\nWantedBy=multi-user.target\n' > "$DEB_ROOT/lib/systemd/system/uniter.service"
-          dpkg-deb --build "$DEB_ROOT" uniter-linux.deb
+          choco install innosetup --no-progress -y
+        shell: pwsh
 
-      - name: Upload release artifacts
+      - name: Compile installer with Inno Setup
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\uniter.iss
+          if (Test-Path "dist\UniterSetup.exe") {
+            New-Item -ItemType Directory -Force -Path "installer\Output" | Out-Null
+            Copy-Item "dist\UniterSetup.exe" "installer\Output\UniterSetup.exe" -Force
+          }
+        shell: pwsh
+
+      - name: Upload UniterSetup.exe as GitHub Release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/Output/UniterSetup.exe
+
+      - name: Upload UniterSetup.exe as workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: Uniter v1.0.0
-          body: |
-            Uniter v1.0.0 — Mobile Shop Charging & Units Management
-
-            Downloads:
-            - `uniter-windows.exe` — standalone Windows executable
-            - `uniter-linux.deb` — Debian/Ubuntu package (installs to /opt/uniter, runs on port 56123)
-
-            Run `uniter` (or `sudo dpkg -i uniter-linux.deb` then `systemctl start uniter`) and open http://localhost:56123
-          files: artifacts/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: UniterSetup
+          path: installer/Output/UniterSetup.exe
