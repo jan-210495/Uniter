@@ -39,6 +39,10 @@ hiddenimports = [
     "sqlalchemy.ext.asyncio",
     "sqlalchemy.dialects.sqlite",
     "python_multipart",
+    "pystray",
+    "PIL",
+    "PIL.Image",
+    "PIL.ImageDraw",
 ]
 
 a = Analysis(
