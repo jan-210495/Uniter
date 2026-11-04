@@ -69,7 +69,7 @@ Name: "startupentry"; Description: "Start {#AppName} when you sign in to Windows
 
 [Registry]
 ; Launch on sign-in (current user only; toggled by the "startupentry" task).
-Root: HKCU; Subkey: "Software\\Microsoft\\Windows\\CurrentVersion\\Run"; ValueType: string; ValueName: "{#StartupRunValueName}"; ValueData: """"{app}\\{#AppExeName}"""; Flags: uninsdeletevalue; Tasks: startupentry
+Root: HKCU; Subkey: "Software\\Microsoft\\Windows\\CurrentVersion\\Run"; ValueType: string; ValueName: "{#StartupRunValueName}"; ValueData: """{app}\\{#AppExeName}"""; Flags: uninsdeletevalue; Tasks: startupentry
 
 [Run]
 ; Offer to start the app right after installation (as the signed-in user,
