@@ -63,6 +63,7 @@ All slices complete:
 | 7.3 | Global search bar + operator transaction subpage | Frontend + subpage | ✅ Done (`0477b6f`) |
 | 7.4 | Stats page (profit, transaction volume over time) | Capstone | ✅ Done (`6e946bc`) |
 | 7.5 | POS & header refinements (USSD generation, transaction flow, prefix swap, mobile header, homepage redirect) | ✅ Done (`c36bdef`) |
+| 7.6 | Amounts displayed in SYP units (cents ÷ 100) across all templates | ✅ Done (`2c17e14`) |
 
 ## Phase 6 Summary
 
@@ -74,7 +75,7 @@ All five slices complete and merged into `main`:
 - Slice 4: Settings page UI — `b8f7442`
 - Slice 5: Balance topup page at /topup — `22a647c`
 
-Test suite: **213 passed** (after slice 7.5), no regressions.
+Test suite: **232 passed** (after slice 7.6), no regressions.
 
 ## Open Questions
 - Arena prompt files for slices 2–5 recreated in the repo (one per slice).
