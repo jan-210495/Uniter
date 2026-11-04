@@ -4,7 +4,7 @@ from pathlib import Path
 
 block_cipher = None
 
-ROOT = Path("/home/jabboud/projects/Uniter")
+ROOT = Path.cwd()
 
 datas = [
     (str(ROOT / "backend" / "templates"), "backend/templates"),
