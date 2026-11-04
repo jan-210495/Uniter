@@ -201,14 +201,13 @@ def test_debt_balance_comes_from_the_ledger(client: TestClient) -> None:
     english = client.get("/customers").text
     arabic = client.get("/customers", params={"lang": "ar"}).text
     for page, currency in ((english, "SYP"), (arabic, "ل.س")):
-        assert "18,000" in page
-        assert 'id="total-debt"' in page
+        assert 'id="total-debt" dir="ltr">180</span>' in page  # 18000 cents = 180 SYP
         assert page.count('data-field="debt"') == 2
         assert currency in page
 
     # The debt cell of the customer without ledger entries stays at zero.
     assert 'data-field="debt"><span dir="ltr">0</span>' in english
-    assert 'id="total-debt" dir="ltr">18,000</span>' in english
+    assert 'id="total-debt" dir="ltr">180</span>' in english
 
 
 def test_balance_cents_is_listed(client: TestClient) -> None:
@@ -226,8 +225,8 @@ def test_balance_cents_is_listed(client: TestClient) -> None:
 
     assert client.get("/api/customers").json()[0]["balance_cents"] == 2500
     page = client.get("/customers").text
-    assert 'data-field="balance"><span dir="ltr">2,500</span>' in page
-    assert 'id="total-balance" dir="ltr">2,500</span>' in page
+    assert 'data-field="balance"><span dir="ltr">25</span>' in page
+    assert 'id="total-balance" dir="ltr">25</span>' in page
 
 
 def test_customers_page_uses_shared_navigation(client: TestClient) -> None:

@@ -154,8 +154,8 @@
         postpaid: messages.servicePostpaid
     };
 
-    function formatCents(value) {
-        return Number(value || 0).toLocaleString('en-US');
+    function formatAmount(cents) {
+        return (Number(cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
     }
     function formatDate(value) {
         const date = new Date(value);
@@ -325,7 +325,7 @@
         const fragment = document.createDocumentFragment();
         const number = document.createElement('span');
         number.dir = 'ltr';
-        number.textContent = formatCents(value);
+        number.textContent = formatAmount(value);
         const unit = document.createElement('span');
         unit.className = 'ms-1 text-xs font-semibold text-slate-500';
         unit.textContent = messages.currency;
@@ -392,7 +392,7 @@
         const total = transactions.reduce((sum, transaction) => sum + (Number(transaction.amount_cents) || 0), 0);
         countEl.textContent = transactions.length + ' ' + messages.countLabel;
         statusEl.textContent = transactions.length
-            ? messages.total + ': ' + formatCents(total) + ' ' + messages.currency
+            ? messages.total + ': ' + formatAmount(total) + ' ' + messages.currency
             : messages.empty;
     }
     async function fetchTransactions() {

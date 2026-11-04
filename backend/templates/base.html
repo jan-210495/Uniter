@@ -179,8 +179,8 @@
             }
         }
 
-        function formatSearchMoney(value) {
-            return Number(value || 0).toLocaleString('en-US');
+        function formatSearchMoney(cents) {
+            return (Number(cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
         }
 
         function searchUrlFor(kind, item) {

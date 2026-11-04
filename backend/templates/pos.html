@@ -197,7 +197,10 @@
         return { numerator, denominator };
     }
     function formatCents(cents) {
-        return (cents / 100n).toLocaleString('en-US') + '.' + (cents % 100n).toString().padStart(2, '0');
+        // SYP units with no trailing ".00"; up to two decimals when needed.
+        const whole = cents / 100n;
+        const fraction = (cents % 100n).toString().padStart(2, '0');
+        return whole.toLocaleString('en-US') + (fraction === '00' ? '' : '.' + (fraction.endsWith('0') ? fraction[0] : fraction));
     }
     function formatRate(value) {
         const scaled = value.numerator * 100n;
@@ -253,8 +256,8 @@
         return /^09[345689][0-9]{7}$/.test(cleaned) ? cleaned : null;
     }
 
-    function formatMoney(value) {
-        return Number(value || 0).toLocaleString('en-US');
+    function formatAmount(cents) {
+        return (Number(cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
     }
     function showStatus(text) {
         searchStatus.textContent = text;
@@ -269,9 +272,9 @@
     function showCustomerInfo(customer) {
         infoName.textContent = customer.name;
         infoPhone.textContent = customer.phone;
-        infoBalance.textContent = messages.balance + ': ' + formatMoney(customer.balance_cents) + ' ' + messages.currency;
+        infoBalance.textContent = messages.balance + ': ' + formatAmount(customer.balance_cents) + ' ' + messages.currency;
         const debt = Number(customer.debt_cents) || 0;
-        infoDebt.textContent = debt > 0 ? messages.debt + ': ' + formatMoney(debt) + ' ' + messages.currency : '';
+        infoDebt.textContent = debt > 0 ? messages.debt + ': ' + formatAmount(debt) + ' ' + messages.currency : '';
         customerInfo.classList.remove('hidden');
     }
     function closeSuggestions() {

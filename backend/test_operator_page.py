@@ -63,7 +63,7 @@ def test_operator_page_renders_mtn(client: TestClient) -> None:
     html = client.get("/operators/mtn")
     assert html.status_code == 200
     assert "MTN" in html.text
-    assert "150,000" in html.text
+    assert "1,500" in html.text
     # Code badge, top-up link and the eight-column transactions table.
     assert 'dir="ltr">mtn<' in html.text
     assert 'href="/topup"' in html.text
@@ -136,7 +136,7 @@ def test_operator_page_shows_only_that_operators_transactions(client: TestClient
     positions = [html.index(transaction["reference"]) for transaction in mtn_transactions]
     assert positions == sorted(positions, reverse=True)
     # Balance card reflects deductions from this operator only.
-    assert "994,000" in html  # 1,000,000 - 6,000
+    assert "9,940" in html  # 1,000,000 - 6,000 cents = 9,940 SYP
 
 
 def test_operator_page_empty_state(client: TestClient) -> None:

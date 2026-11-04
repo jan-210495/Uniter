@@ -32,7 +32,7 @@
             <dl class="grid gap-3 sm:grid-cols-2">
                 <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <dt class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'الرصيد المتبقي' if ar else 'Remaining balance' }}</dt>
-                    <dd class="mt-1 text-2xl font-bold tabular-nums text-blue-950"><span data-field="balance" dir="ltr">{{ "{:,}".format(operator.balance_cents) }}</span> <span class="text-sm font-semibold text-slate-500">{{ currency }}</span></dd>
+                    <dd class="mt-1 text-2xl font-bold tabular-nums text-blue-950"><span data-field="balance" dir="ltr">{{ "{:,.2f}".format(operator.balance_cents / 100).rstrip('0').rstrip('.') }}</span> <span class="text-sm font-semibold text-slate-500">{{ currency }}</span></dd>
                 </div>
                 <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <dt class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'آخر تعبئة' if ar else 'Last top-up' }}</dt>
@@ -71,8 +71,8 @@
     const pageLang = {{ lang|default('en')|tojson }};
     const cards = [...document.querySelectorAll('[data-operator-card]')];
 
-    function formatCents(value) {
-        return Number(value || 0).toLocaleString('en-US');
+    function formatAmount(cents) {
+        return (Number(cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
     }
     function formatDate(value) {
         const date = new Date(value);
@@ -111,7 +111,7 @@
             if (refreshAbort !== controller) return;
             balances.forEach((balance) => {
                 const card = cards.find((element) => element.dataset.operatorCard === balance.operator_code);
-                if (card) card.querySelector('[data-field="balance"]').textContent = formatCents(balance.balance_cents);
+                if (card) card.querySelector('[data-field="balance"]').textContent = formatAmount(balance.balance_cents);
             });
         } catch (_) {
             if (refreshAbort !== controller) return;
@@ -140,7 +140,7 @@
                 }
                 const topup = await response.json();
                 const card = cardOf(form);
-                card.querySelector('[data-field="balance"]').textContent = formatCents(topup.new_balance_cents);
+                card.querySelector('[data-field="balance"]').textContent = formatAmount(topup.new_balance_cents);
                 const lastTopup = card.querySelector('[data-field="last-topup"]');
                 lastTopup.textContent = formatDate(new Date().toISOString());
                 setFeedback(form, messages.topupRecorded + ' (' + topup.reference + ')', 'success');
