@@ -5,7 +5,7 @@ from typing import Annotated, Any, Dict
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import case, func, or_, select
@@ -331,12 +331,10 @@ class SetDenomination(BaseModel):
 
 
 
-@app.get("/", response_class=HTMLResponse)
-def root() -> HTMLResponse:
-    return HTMLResponse(
-        "<h1>Uniter — Mobile Shop Charging</h1>"
-        "<p>Bilingual MTN/Syriatel prepaid & postpaid management.</p>"
-    )
+@app.get("/")
+def root() -> RedirectResponse:
+    """The homepage always redirects to the point of sale."""
+    return RedirectResponse(url="/pos", status_code=302)
 
 
 @app.get("/pos", response_class=HTMLResponse)

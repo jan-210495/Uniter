@@ -211,12 +211,14 @@ def test_pos_page_has_auto_operator_and_auto_register(client: TestClient) -> Non
     assert english.status_code == arabic.status_code == 200
     for rendered in (english.text, arabic.text):
         # Auto-operator prefix map, applied while typing.
-        assert "'093': 'mtn'" in rendered
-        assert "'098': 'mtn'" in rendered
-        assert "'099': 'mtn'" in rendered
-        assert "'094': 'syriatel'" in rendered
-        assert "'095': 'syriatel'" in rendered
-        assert "'096': 'syriatel'" in rendered
+        assert "'093': 'syriatel'" in rendered
+        assert "'098': 'syriatel'" in rendered
+        assert "'099': 'syriatel'" in rendered
+        assert "'094': 'mtn'" in rendered
+        assert "'095': 'mtn'" in rendered
+        assert "'096': 'mtn'" in rendered
+        # A manual operator choice is never overridden by later typing.
+        assert "operatorTouched" in rendered
         # Auto-register flow: lookup by name, then create with preferences.
         assert "'/api/customers/lookup-by-name?name=' + encodeURIComponent(name)" in rendered
         assert "fetch('/api/customers'" in rendered

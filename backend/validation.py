@@ -1,10 +1,10 @@
 import re
 
 
-_ALLOWED_PREFIXES = ("093", "094", "095", "096", "099")
+_ALLOWED_PREFIXES = ("093", "094", "095", "096", "098", "099")
 _ERROR = (
     "Invalid Syrian mobile number: expected 10 digits starting with "
-    "093, 094, 095, 096, or 099"
+    "093, 094, 095, 096, 098, or 099"
 )
 
 

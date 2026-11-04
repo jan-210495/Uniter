@@ -11,9 +11,9 @@
         <div>
             <p class="mb-2 text-xs font-bold uppercase tracking-widest text-blue-800">{{ 'نقطة البيع' if ar else 'Point of sale' }}</p>
             <h1 class="text-3xl font-bold tracking-tight text-blue-950 sm:text-4xl">{{ 'الشحن السريع' if ar else 'POS Quick Charge' }}</h1>
-            <p class="mt-2 max-w-xl text-sm leading-6 text-slate-600">{{ 'أدخل رقم العميل أو اسمه واختر الخدمة والمبلغ لمعاينة رمز الشحن.' if ar else 'Enter a customer phone or name, choose a service and amount, then preview the charging code.' }}</p>
+            <p class="mt-2 max-w-xl text-sm leading-6 text-slate-600">{{ 'أدخل رقم العميل أو اسمه واختر الخدمة والمبلغ لإنشاء رمز الشحن.' if ar else 'Enter a customer phone or name, choose a service and amount, then generate the charging code.' }}</p>
         </div>
-        <span class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">{{ 'معاينة فقط' if ar else 'Preview only' }}</span>
+        <span class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">{{ 'معاملة مباشرة' if ar else 'Live transaction' }}</span>
     </div>
 
     <form id="charge-form" class="grid gap-6 md:grid-cols-2" novalidate>
@@ -30,7 +30,7 @@
                             <input id="phone" name="phone" type="tel" dir="ltr" autocomplete="off" autofocus required pattern="(?:[0-9]|\\+|\\s|\\x2D)+" placeholder="09XXXXXXXX" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="customer-suggestions" aria-autocomplete="list" aria-describedby="phone-help" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
                             <ul id="customer-suggestions" role="listbox" aria-label="{{ 'العملاء المقترحون' if ar else 'Suggested customers' }}" class="absolute inset-x-0 top-full z-20 mt-1 hidden max-h-72 min-w-[16rem] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg"></ul>
                         </div>
-                        <p id="phone-help" class="mt-1.5 text-xs text-slate-500">{{ 'رقم سوري يبدأ بـ 093 أو 094 أو 095 أو 096 أو 099.' if ar else 'Syrian mobile number starting with 093, 094, 095, 096 or 099.' }}</p>
+                        <p id="phone-help" class="mt-1.5 text-xs text-slate-500">{{ 'رقم سوري يبدأ بـ 093 أو 094 أو 095 أو 096 أو 098 أو 099.' if ar else 'Syrian mobile number starting with 093, 094, 095, 096, 098 or 099.' }}</p>
                     </div>
                     <div>
                         <label for="customer-name" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'اسم العميل' if ar else 'Customer name' }}</label>
@@ -102,8 +102,8 @@
                 <button type="submit" class="mt-5 w-full rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'إنشاء رمز USSD' if ar else 'Generate USSD' }}</button>
             </section>
             <section id="result" hidden class="rounded-2xl border border-blue-200 bg-blue-50 p-5 sm:p-6" aria-labelledby="result-title" aria-live="polite">
-                <h2 id="result-title" class="text-sm font-bold text-blue-950">{{ 'معاينة رمز USSD' if ar else 'USSD preview' }}</h2>
-                <p class="mt-1 text-xs leading-5 text-slate-600">{{ 'استخدم الإعدادات الافتراضية للمعاينة فقط. قد تختلف إعدادات المشغّل المحفوظة؛ لا يتم إنشاء معاملة أو إرسال شحن.' if ar else 'Preview uses default operator templates. Saved operator settings may differ; no transaction is created or charge sent.' }}</p>
+                <h2 id="result-title" class="text-sm font-bold text-blue-950">{{ 'رمز USSD' if ar else 'USSD code' }}</h2>
+                <p class="mt-1 text-xs leading-5 text-slate-600">{{ 'تم إنشاء معاملة قيد الانتظار وخصمها من رصيد المشغّل. استخدم الرمز لإتمام الشحن عبر هاتف المتجر.' if ar else 'A pending transaction was created and deducted from the operator balance. Use the code to complete the charge from the shop phone.' }}</p>
                 <div class="mt-4 flex flex-wrap items-stretch gap-2">
                     <input id="ussd-output" type="text" dir="ltr" readonly aria-label="{{ 'رمز USSD' if ar else 'USSD code' }}" class="min-w-0 flex-1 rounded-lg border border-blue-200 bg-white px-3 py-3 font-mono text-sm font-semibold text-blue-950">
                     <button id="copy-ussd" type="button" class="rounded-lg border border-blue-800 bg-white px-4 py-3 text-sm font-bold text-blue-900 hover:bg-blue-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'نسخ' if ar else 'Copy' }}</button>
@@ -137,7 +137,9 @@
         'rateLoaded': 'نسبة العمولة الحالية. اضغط تحديث للحصول على أحدث نسبة.' if ar else 'Current commission rate. Refresh to get the latest rate.',
         'rateError': 'تعذر تحميل نسبة العمولة. حاول التحديث.' if ar else 'Could not load the commission rate. Try refreshing.',
         'copied': 'تم نسخ الرمز.' if ar else 'Code copied.',
-        'copyError': 'تعذر النسخ تلقائياً. حدد الرمز وانسخه يدوياً.' if ar else 'Could not copy automatically. Select the code and copy it manually.'
+        'copyError': 'تعذر النسخ تلقائياً. حدد الرمز وانسخه يدوياً.' if ar else 'Could not copy automatically. Select the code and copy it manually.',
+        'transactionError': 'تعذر إنشاء المعاملة. حاول مرة أخرى.' if ar else 'Could not create the transaction. Try again.',
+        'insufficientBalance': 'رصيد المشغّل غير كافٍ.' if ar else 'Insufficient operator balance.'
     }|tojson }};
     const form = document.getElementById('charge-form');
     const phone = document.getElementById('phone');
@@ -248,7 +250,7 @@
         let cleaned = value.replace(/[\\s-]+/g, '');
         if (cleaned.startsWith('+963')) cleaned = '0' + cleaned.slice(4);
         else if (cleaned.startsWith('00963')) cleaned = '0' + cleaned.slice(5);
-        return /^09[34569][0-9]{7}$/.test(cleaned) ? cleaned : null;
+        return /^09[345689][0-9]{7}$/.test(cleaned) ? cleaned : null;
     }
 
     function formatMoney(value) {
@@ -408,10 +410,13 @@
     ];
 
     // --- Auto-operator selection from the phone prefix ---
+    // MTN: 094/095/096 · Syriatel: 093/098/099. A manual operator choice is
+    // never overridden by later typing.
     const AUTO_OPERATORS = {
-        '093': 'mtn', '098': 'mtn', '099': 'mtn',
-        '094': 'syriatel', '095': 'syriatel', '096': 'syriatel'
+        '093': 'syriatel', '098': 'syriatel', '099': 'syriatel',
+        '094': 'mtn', '095': 'mtn', '096': 'mtn'
     };
+    let operatorTouched = false;
     function operatorForPhonePrefix(value) {
         let digits = value.replace(/\D/g, '');
         if (digits.startsWith('00963')) digits = '0' + digits.slice(5);
@@ -425,9 +430,10 @@
             hideCustomerInfo();
             if (input === phone) {
                 clearResult();
-                // While typing: a known operator prefix selects the operator.
+                // While typing: a known operator prefix selects the operator,
+                // unless the user picked one manually.
                 const operatorCode = operatorForPhonePrefix(phone.value);
-                if (operatorCode) operator.value = operatorCode;
+                if (operatorCode && !operatorTouched) operator.value = operatorCode;
             }
             queueSearch(input, anchor);
         });
@@ -479,7 +485,7 @@
         updateSummary();
         clearResult();
     });
-    operator.addEventListener('change', clearResult);
+    operator.addEventListener('change', () => { operatorTouched = true; clearResult(); });
     service.addEventListener('change', clearResult);
     document.getElementById('refresh-rate').addEventListener('click', loadRate);
     // --- Auto-register on Generate USSD ---
@@ -534,13 +540,35 @@
         phone.setCustomValidity(normalized ? '' : messages.invalidPhone);
         amount.setCustomValidity(cents === null ? messages.invalidAmount : '');
         if (!form.reportValidity()) { clearResult(); return; }
-        const whole = cents / 100n;
-        const fraction = cents % 100n;
-        const renderedAmount = whole.toString() + (fraction ? '.' + fraction.toString().padStart(2, '0').replace(/0$/, '') : '');
-        const prefix = operator.value === 'mtn' ? '100' : '555';
-        output.value = prefix + renderedAmount + '*' + normalized + '#';
-        copyStatus.textContent = '';
-        result.hidden = false;
+        // Create the real transaction server-side: the row is stored, the
+        // operator balance is deducted and the profit ledger is recorded.
+        try {
+            const response = await fetch('/api/transactions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    customer_phone: normalized,
+                    operator_code: operator.value,
+                    service_code: service.value,
+                    amount_cents: Number(cents)
+                })
+            });
+            const data = await response.json().catch(() => null);
+            if (!response.ok) {
+                const detail = data && data.detail;
+                throw new Error(
+                    detail === 'Insufficient operator balance'
+                        ? messages.insufficientBalance
+                        : (detail || messages.transactionError)
+                );
+            }
+            output.value = data.ussd_string;
+            copyStatus.textContent = '';
+            result.hidden = false;
+        } catch (error) {
+            clearResult();
+            registerStatus.textContent = String(error.message || messages.transactionError);
+        }
     });
     document.getElementById('copy-ussd').addEventListener('click', async () => {
         try {
