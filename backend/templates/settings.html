@@ -153,7 +153,7 @@
                         {% for service in operator_services %}
                         <tr class="hover:bg-slate-50">
                             {% if loop.first %}
-                            <td class="px-4 py-3 font-semibold text-slate-900" rowspan="{{ operator_services|length }}">{{ operator.name }} <span class="font-mono text-xs font-normal text-slate-500" dir="ltr">({{ operator.code }})</span></td>
+                            <td class="px-4 py-3 font-semibold text-slate-900" rowspan="{{ operator_services|length }}"><a href="/operators/{{ operator.code }}" class="text-blue-950 transition hover:text-blue-800 hover:underline">{{ operator.name }}</a> <span class="font-mono text-xs font-normal text-slate-500" dir="ltr">({{ operator.code }})</span></td>
                             <td class="px-4 py-3 font-mono text-sm tabular-nums text-slate-700" dir="ltr" rowspan="{{ operator_services|length }}">{{ operator.ussd_prefix }}</td>
                             {% endif %}
                             <td class="px-4 py-3 text-slate-700">{{ service.name }}</td>

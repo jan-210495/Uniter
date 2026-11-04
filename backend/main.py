@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy import delete as sql_delete
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.selectable import Subquery
@@ -179,6 +179,35 @@ class TransactionListItem(BaseModel):
     operator_name: str
     service_code: str
     service_name: str
+
+
+class SearchTransactionItem(BaseModel):
+    """Transaction fields shown in global search results."""
+
+    id: int
+    reference: str
+    amount_cents: int
+    status: str
+    customer_phone: str
+    customer_name: str
+    operator_code: str
+    operator_name: str
+
+
+class SearchOperatorItem(BaseModel):
+    """Operator fields shown in global search results."""
+
+    code: str
+    name: str
+    balance_cents: int
+
+
+class SearchResults(BaseModel):
+    """Global search response: customers, transactions and operators."""
+
+    customers: list[CustomerListItem]
+    transactions: list[SearchTransactionItem]
+    operators: list[SearchOperatorItem]
 
 
 class DebtLedgerCreate(BaseModel):
@@ -352,6 +381,105 @@ async def topup_page(request: Request, db: DbSession, lang: str = "en") -> HTMLR
         name="topup.html",
         context={"lang": language, "nav_page": "topup", "operators": operators},
     )
+
+
+@app.get("/operators/{operator_code}", response_class=HTMLResponse)
+async def operator_page(
+    request: Request, db: DbSession, operator_code: str, lang: str = "en"
+) -> HTMLResponse:
+    """Operator subpage: balance, latest transactions and a top-up link."""
+    language = lang if lang in {"en", "ar"} else "en"
+    operator = await db.scalar(select(Operator).where(Operator.code == operator_code))
+    if operator is None or not operator.is_active:
+        raise HTTPException(status_code=404, detail="Operator not found")
+    balance = await db.scalar(
+        select(OperatorBalance.balance_cents).where(OperatorBalance.operator_id == operator.id)
+    )
+    rows = await db.execute(
+        _transaction_list_statement()
+        .where(Operator.code == operator_code)
+        .order_by(Transaction.created_at.desc(), Transaction.id.desc())
+        .limit(20)
+    )
+    transactions = [TransactionListItem(**row._mapping) for row in rows.all()]
+    return templates.TemplateResponse(
+        request=request,
+        name="operator.html",
+        context={
+            "lang": language,
+            "operator": operator,
+            "balance_cents": int(balance or 0),
+            "transactions": transactions,
+        },
+    )
+
+
+@app.get("/api/search", response_model=SearchResults)
+async def global_search(
+    db: DbSession,
+    q: Annotated[str | None, Query(max_length=255)] = None,
+) -> SearchResults:
+    """Global search across customers, transactions and operators.
+
+    Matches customers by name or phone fragment, transactions by reference or
+    customer phone fragment, and operators by code or name fragment. Each
+    section is limited to 10 results; an empty query returns empty sections.
+    """
+    query = (q or "").strip()
+    if not query:
+        return SearchResults(customers=[], transactions=[], operators=[])
+    like = f"%{query}%"
+
+    debt = _debt_totals_by_customer()
+    customer_rows = await db.execute(
+        select(
+            Customer.id,
+            Customer.phone,
+            Customer.name,
+            Customer.balance_cents,
+            func.coalesce(debt.c.debt_cents, 0).label("debt_cents"),
+        )
+        .outerjoin(debt, debt.c.customer_id == Customer.id)
+        .where(or_(Customer.phone.ilike(like), Customer.name.ilike(like)))
+        .order_by(Customer.name, Customer.id)
+        .limit(10)
+    )
+    customers = [CustomerListItem(**row._mapping) for row in customer_rows.all()]
+
+    transaction_rows = await db.execute(
+        select(
+            Transaction.id,
+            Transaction.reference,
+            Transaction.amount_cents,
+            Transaction.status,
+            Customer.phone.label("customer_phone"),
+            Customer.name.label("customer_name"),
+            Operator.code.label("operator_code"),
+            Operator.name.label("operator_name"),
+        )
+        .join(Customer, Transaction.customer_id == Customer.id)
+        .join(Service, Transaction.service_id == Service.id)
+        .join(Operator, Service.operator_id == Operator.id)
+        .where(or_(Transaction.reference.ilike(like), Customer.phone.ilike(like)))
+        .order_by(Transaction.created_at.desc(), Transaction.id.desc())
+        .limit(10)
+    )
+    transactions = [SearchTransactionItem(**row._mapping) for row in transaction_rows.all()]
+
+    operator_rows = await db.execute(
+        select(
+            Operator.code,
+            Operator.name,
+            func.coalesce(OperatorBalance.balance_cents, 0).label("balance_cents"),
+        )
+        .outerjoin(OperatorBalance, OperatorBalance.operator_id == Operator.id)
+        .where(or_(Operator.code.ilike(like), Operator.name.ilike(like)))
+        .order_by(Operator.code)
+        .limit(10)
+    )
+    operators = [SearchOperatorItem(**row._mapping) for row in operator_rows.all()]
+
+    return SearchResults(customers=customers, transactions=transactions, operators=operators)
 
 
 def _debt_totals_by_customer() -> Subquery:
@@ -898,18 +1026,9 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
     return transaction
 
 
-@app.get("/api/transactions", response_model=list[TransactionListItem])
-async def list_transactions(
-    db: DbSession,
-    operator_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
-    service_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
-    status: Annotated[str | None, Query(pattern="^(pending|completed|failed)$")] = None,
-    customer_phone: Annotated[str | None, Query(min_length=1, max_length=32)] = None,
-) -> list[TransactionListItem]:
-    """List transactions newest-first, optionally filtered by operator code,
-    service code, status, or a case-insensitive customer phone fragment.
-    Filters that match nothing return an empty list."""
-    statement = (
+def _transaction_list_statement():
+    """Base select of transactions joined with customer/operator/service labels."""
+    return (
         select(
             Transaction.id,
             Transaction.reference,
@@ -928,6 +1047,20 @@ async def list_transactions(
         .join(Service, Transaction.service_id == Service.id)
         .join(Operator, Service.operator_id == Operator.id)
     )
+
+
+@app.get("/api/transactions", response_model=list[TransactionListItem])
+async def list_transactions(
+    db: DbSession,
+    operator_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
+    service_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
+    status: Annotated[str | None, Query(pattern="^(pending|completed|failed)$")] = None,
+    customer_phone: Annotated[str | None, Query(min_length=1, max_length=32)] = None,
+) -> list[TransactionListItem]:
+    """List transactions newest-first, optionally filtered by operator code,
+    service code, status, or a case-insensitive customer phone fragment.
+    Filters that match nothing return an empty list."""
+    statement = _transaction_list_statement()
     if operator_code is not None:
         statement = statement.where(Operator.code == operator_code)
     if service_code is not None:

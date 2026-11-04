@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% set ar = lang|default('en') == 'ar' %}
+{% set currency = 'ل.س' if ar else 'SYP' %}
+
+{% block title %}{{ operator.name }} · Uniter{% endblock %}
+
+{% block head_extra %}
+    <meta name="theme-color" content="#f8fafc">
+{% endblock %}
+
+{% block content %}
+<section class="mx-auto max-w-6xl">
+    <header class="mb-8 flex flex-wrap items-end justify-between gap-4">
+        <div>
+            <p class="mb-2 text-xs font-bold uppercase tracking-widest text-blue-800">{{ 'المشغّلون' if ar else 'Operators' }}</p>
+            <h1 class="flex flex-wrap items-center gap-3 text-3xl font-bold tracking-tight text-blue-950 sm:text-4xl">
+                <span>{{ operator.name }}</span>
+                <span class="rounded-full border border-slate-200 bg-white px-3 py-1 font-mono text-sm font-semibold text-slate-600" dir="ltr">{{ operator.code }}</span>
+            </h1>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{{ 'رصيد المتجر المسبق الدفع لدى هذا المشغّل وأحدث معاملاته.' if ar else "The shop's prepaid credit with this operator and its latest transactions." }}</p>
+        </div>
+        <a href="/topup" class="rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تعبئة الرصيد' if ar else 'Top up' }}</a>
+    </header>
+
+    <div class="mb-6 grid gap-4 sm:grid-cols-2">
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'الرصيد المتبقي' if ar else 'Remaining balance' }}</p>
+            <p class="mt-2 text-2xl font-bold tabular-nums text-blue-950"><span id="operator-balance" dir="ltr">{{ "{:,}".format(balance_cents) }}</span> <span class="text-sm font-semibold text-slate-500">{{ currency }}</span></p>
+        </div>
+        <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'عدد المعاملات المعروضة' if ar else 'Transactions shown' }}</p>
+            <p class="mt-2 text-2xl font-bold tabular-nums text-blue-950"><span id="operator-tx-count" dir="ltr">{{ transactions|length }}</span> <span class="text-sm font-semibold text-slate-500">{{ 'من آخر 20' if ar else 'of latest 20' }}</span></p>
+        </div>
+    </div>
+
+    <section class="rounded-2xl border border-slate-200 bg-white shadow-sm" aria-labelledby="operator-tx-title">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-6">
+            <div>
+                <h2 id="operator-tx-title" class="text-lg font-bold text-slate-900">{{ 'معاملات المشغّل' if ar else 'Operator transactions' }}</h2>
+                <p class="mt-1 text-sm text-slate-500">{{ 'أحدث معاملات هذا المشغّل أولاً.' if ar else 'This operator\'s transactions, newest first.' }}</p>
+            </div>
+            <a href="/transactions?operator_code={{ operator.code }}" class="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'كل المعاملات المصفّاة' if ar else 'View in transactions' }}</a>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full min-w-[64rem] text-sm">
+                <caption class="sr-only">{{ 'معاملات المشغّل مع تفاصيل العميل والخدمة' if ar else 'Operator transactions with customer and service details' }}</caption>
+                <thead class="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
+                    <tr>
+                        <th scope="col" class="px-4 py-3 text-start">{{ 'المرجع' if ar else 'Reference' }}</th>
+                        <th scope="col" class="px-4 py-3 text-start">{{ 'التاريخ والوقت' if ar else 'Date/time' }}</th>
+                        <th scope="col" class="px-4 py-3 text-start">{{ 'العميل' if ar else 'Customer' }}</th>
+                        <th scope="col" class="px-4 py-3 text-start">{{ 'المشغّل' if ar else 'Operator' }}</th>
+                        <th scope="col" class="px-4 py-3 text-start">{{ 'الخدمة' if ar else 'Service' }}</th>
+                        <th scope="col" class="px-4 py-3 text-start">{{ 'المبلغ' if ar else 'Amount' }}</th>
+                        <th scope="col" class="px-4 py-3 text-start">{{ 'الحالة' if ar else 'Status' }}</th>
+                        <th scope="col" class="px-4 py-3 text-start">USSD</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    {% for transaction in transactions %}
+                    <tr class="hover:bg-slate-50">
+                        <td class="px-4 py-3 font-mono text-xs text-slate-500" dir="ltr">{{ transaction.reference }}</td>
+                        <td class="px-4 py-3 text-xs text-slate-600" dir="ltr">{{ transaction.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                        <td class="px-4 py-3">
+                            <span class="block font-semibold text-slate-900">{{ transaction.customer_name }}</span>
+                            <span class="block font-mono text-xs text-slate-500" dir="ltr">{{ transaction.customer_phone }}</span>
+                        </td>
+                        <td class="px-4 py-3 text-slate-700">{{ transaction.operator_name }}</td>
+                        <td class="px-4 py-3 text-slate-700">{{ ('مسبق الدفع' if ar else 'Pre-Paid') if transaction.service_code == 'prepaid' else ('لاحق الدفع' if ar else 'Post-Paid') }}</td>
+                        <td class="px-4 py-3 tabular-nums text-slate-700"><span dir="ltr">{{ "{:,}".format(transaction.amount_cents) }}</span> <span class="text-xs font-semibold text-slate-500">{{ currency }}</span></td>
+                        <td class="px-4 py-3">
+                            {% if transaction.status == 'pending' %}
+                            <span class="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">{{ 'قيد الانتظار' if ar else 'Pending' }}</span>
+                            {% elif transaction.status == 'completed' %}
+                            <span class="rounded-full bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-800">{{ 'مكتملة' if ar else 'Completed' }}</span>
+                            {% else %}
+                            <span class="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">{{ 'فاشلة' if ar else 'Failed' }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 font-mono text-xs text-slate-700" dir="ltr">{{ transaction.ussd_string }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="8" class="px-4 py-10 text-center text-sm text-slate-500">{{ 'لا توجد معاملات لهذا المشغّل بعد.' if ar else 'No transactions for this operator yet.' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</section>
+{% endblock %}

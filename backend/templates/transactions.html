@@ -354,7 +354,11 @@
         customer.append(customerName, customerPhone);
 
         const operator = makeCell('px-4 py-3 text-slate-700');
-        operator.textContent = transaction.operator_name;
+        const operatorLink = document.createElement('a');
+        operatorLink.href = '/operators/' + encodeURIComponent(transaction.operator_code);
+        operatorLink.className = 'font-semibold text-blue-900 transition hover:text-blue-800 hover:underline';
+        operatorLink.textContent = transaction.operator_name;
+        operator.appendChild(operatorLink);
 
         const service = makeCell('px-4 py-3 text-slate-700');
         service.textContent = SERVICE_LABELS[transaction.service_code] || transaction.service_name;

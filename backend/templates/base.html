@@ -32,6 +32,10 @@
                 </button>
             </div>
             <div class="hidden flex-wrap items-center gap-4 text-sm font-semibold text-slate-600 sm:flex sm:gap-5">
+                <div id="global-search-anchor" class="relative">
+                    <input id="global-search" type="search" dir="auto" autocomplete="off" maxlength="255" placeholder="{{ 'البحث عن العملاء والمعاملات والمشغّلين' if lang|default('en') == 'ar' else 'Search customers, transactions, operators' }}" aria-label="{{ 'بحث عام' if lang|default('en') == 'ar' else 'Global search' }}" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="global-search-results" aria-autocomplete="list" class="w-44 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100 lg:w-56">
+                    <ul id="global-search-results" role="listbox" aria-label="{{ 'نتائج البحث' if lang|default('en') == 'ar' else 'Search results' }}" class="absolute inset-x-0 top-full z-30 mt-1 hidden max-h-80 min-w-[16rem] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg"></ul>
+                </div>
                 <div class="flex flex-wrap items-center gap-4" aria-label="Pages">
                     <a href="/pos" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'pos' %} aria-current="page"{% endif %}>{{ 'نقطة البيع' if lang|default('en') == 'ar' else 'POS' }}</a>
                     <a href="/settlement" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'settlement' %} aria-current="page"{% endif %}>{{ 'تسوية الديون' if lang|default('en') == 'ar' else 'Settlement' }}</a>
@@ -54,6 +58,11 @@
         <div class="flex items-center justify-between border-b border-slate-100 px-4 py-4">
             <span class="text-sm font-bold text-blue-950">Uniter</span>
             <button id="app-drawer-close" type="button" aria-label="{{ 'إغلاق' if lang|default('en') == 'ar' else 'Close' }}" class="rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">✕</button>
+        </div>
+        <div class="border-b border-slate-100 px-3 py-3">
+            <div id="drawer-search-anchor" class="relative">
+                <input id="drawer-global-search" type="search" dir="auto" autocomplete="off" maxlength="255" placeholder="{{ 'البحث عن العملاء والمعاملات والمشغّلين' if lang|default('en') == 'ar' else 'Search customers, transactions, operators' }}" aria-label="{{ 'بحث عام' if lang|default('en') == 'ar' else 'Global search' }}" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="global-search-results" aria-autocomplete="list" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+            </div>
         </div>
         <div class="flex flex-col gap-1 px-3 py-4">
             <a href="/pos" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'pos' %} aria-current="page"{% endif %}>{{ 'نقطة البيع' if lang|default('en') == 'ar' else 'POS' }}</a>
@@ -91,9 +100,12 @@
             if (open) {
                 lastFocused = document.activeElement;
                 if (drawerClose) drawerClose.focus();
-            } else if (lastFocused && typeof lastFocused.focus === 'function') {
-                lastFocused.focus();
-                lastFocused = null;
+            } else {
+                if (typeof closeGlobalSearch === 'function') closeGlobalSearch();
+                if (lastFocused && typeof lastFocused.focus === 'function') {
+                    lastFocused.focus();
+                    lastFocused = null;
+                }
             }
         }
 
@@ -111,6 +123,227 @@
                 if (event.key === 'Escape' && navToggle.getAttribute('aria-expanded') === 'true') {
                     event.preventDefault();
                     setDrawer(false);
+                }
+            });
+        }
+
+        // --- Global search (customers, transactions, operators) ---
+        const searchMessages = {{ {
+            'customers': 'العملاء' if lang|default('en') == 'ar' else 'Customers',
+            'transactions': 'المعاملات' if lang|default('en') == 'ar' else 'Transactions',
+            'operators': 'المشغّلون' if lang|default('en') == 'ar' else 'Operators',
+            'balance': 'الرصيد' if lang|default('en') == 'ar' else 'Balance',
+            'currency': 'ل.س' if lang|default('en') == 'ar' else 'SYP'
+        }|tojson }};
+        const SEARCH_DEBOUNCE_MS = 220;
+        const searchResults = document.getElementById('global-search-results');
+        const searchFields = [
+            {
+                input: document.getElementById('global-search'),
+                anchor: document.getElementById('global-search-anchor')
+            },
+            {
+                input: document.getElementById('drawer-global-search'),
+                anchor: document.getElementById('drawer-search-anchor')
+            }
+        ].filter((field) => field.input && field.anchor);
+        let searchTimer = null;
+        let searchAbort = null;
+        let searchOptions = []; // [{ element, url }]
+        let searchHighlight = -1;
+        let searchActiveInput = null;
+
+        function closeGlobalSearch() {
+            if (searchAbort) {
+                searchAbort.abort();
+                searchAbort = null;
+            }
+            searchOptions = [];
+            searchHighlight = -1;
+            if (searchResults) {
+                searchResults.innerHTML = '';
+                searchResults.classList.add('hidden');
+            }
+            if (searchActiveInput) {
+                searchActiveInput.setAttribute('aria-expanded', 'false');
+                searchActiveInput.removeAttribute('aria-activedescendant');
+                searchActiveInput = null;
+            }
+        }
+
+        function formatSearchMoney(value) {
+            return Number(value || 0).toLocaleString('en-US');
+        }
+
+        function searchUrlFor(kind, item) {
+            if (kind === 'customer') return '/customers';
+            if (kind === 'transaction') {
+                return '/transactions?customer_phone=' + encodeURIComponent(item.customer_phone);
+            }
+            return '/operators/' + encodeURIComponent(item.code);
+        }
+
+        function appendSearchGroup(title) {
+            const group = document.createElement('li');
+            group.setAttribute('role', 'presentation');
+            group.className = 'px-3 pt-2 pb-1 text-xs font-bold uppercase tracking-widest text-slate-400';
+            group.textContent = title;
+            searchResults.appendChild(group);
+        }
+
+        function appendSearchOption(kind, item, primary, secondary) {
+            const option = document.createElement('li');
+            option.id = 'global-search-option-' + searchOptions.length;
+            option.setAttribute('role', 'option');
+            option.setAttribute('aria-selected', 'false');
+            option.dataset.index = String(searchOptions.length);
+            option.className = 'flex cursor-pointer items-baseline gap-2 px-3 py-2 text-sm';
+            const label = document.createElement('span');
+            label.className = 'min-w-0 truncate font-semibold text-slate-900';
+            label.textContent = primary;
+            const detail = document.createElement('span');
+            detail.dir = 'ltr';
+            detail.className = 'ms-auto shrink-0 font-mono text-xs text-slate-500';
+            detail.textContent = secondary;
+            option.appendChild(label);
+            option.appendChild(detail);
+            searchResults.appendChild(option);
+            searchOptions.push({ element: option, url: searchUrlFor(kind, item) });
+        }
+
+        function renderSearchResults(data) {
+            searchResults.innerHTML = '';
+            searchOptions = [];
+            if (data.customers.length) {
+                appendSearchGroup(searchMessages.customers);
+                data.customers.forEach((customer) => {
+                    appendSearchOption('customer', customer, customer.name, customer.phone);
+                });
+            }
+            if (data.transactions.length) {
+                appendSearchGroup(searchMessages.transactions);
+                data.transactions.forEach((transaction) => {
+                    appendSearchOption(
+                        'transaction', transaction, transaction.reference,
+                        transaction.customer_name + ' · ' + formatSearchMoney(transaction.amount_cents)
+                    );
+                });
+            }
+            if (data.operators.length) {
+                appendSearchGroup(searchMessages.operators);
+                data.operators.forEach((operator) => {
+                    appendSearchOption(
+                        'operator', operator, operator.name,
+                        searchMessages.balance + ': ' + formatSearchMoney(operator.balance_cents)
+                    );
+                });
+            }
+            searchHighlight = -1;
+            if (searchOptions.length) searchResults.classList.remove('hidden');
+            else closeGlobalSearch();
+        }
+
+        function setSearchHighlight(index) {
+            searchHighlight = index;
+            searchOptions.forEach((option, i) => {
+                option.element.classList.toggle('bg-blue-50', i === index);
+                option.element.classList.toggle('text-blue-950', i === index);
+                option.element.setAttribute('aria-selected', String(i === index));
+            });
+            const active = index >= 0 ? searchOptions[index].element : null;
+            if (searchActiveInput) {
+                if (active) searchActiveInput.setAttribute('aria-activedescendant', active.id);
+                else searchActiveInput.removeAttribute('aria-activedescendant');
+            }
+            if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest' });
+        }
+
+        function selectSearchOption(index) {
+            const option = searchOptions[index];
+            if (!option) return;
+            const url = option.url;
+            closeGlobalSearch();
+            setDrawer(false);
+            location.assign(url);
+        }
+
+        async function fetchGlobalSearch(query, input, anchor) {
+            if (searchAbort) searchAbort.abort();
+            const controller = new AbortController();
+            searchAbort = controller;
+            try {
+                const response = await fetch(
+                    '/api/search?q=' + encodeURIComponent(query),
+                    { cache: 'no-store', signal: controller.signal }
+                );
+                if (!response.ok) throw new Error('search failed');
+                const data = await response.json();
+                if (searchAbort !== controller || searchActiveInput !== input) return;
+                if (searchResults.parentNode !== anchor) anchor.appendChild(searchResults);
+                renderSearchResults(data);
+                input.setAttribute('aria-expanded', 'true');
+            } catch (_) {
+                if (searchAbort !== controller) return;
+                closeGlobalSearch();
+            }
+        }
+
+        function queueGlobalSearch(input, anchor) {
+            clearTimeout(searchTimer);
+            const query = input.value.trim();
+            if (!query) {
+                closeGlobalSearch();
+                return;
+            }
+            if (searchActiveInput !== input) {
+                if (searchActiveInput) searchActiveInput.setAttribute('aria-expanded', 'false');
+                searchActiveInput = input;
+            }
+            searchTimer = setTimeout(() => { fetchGlobalSearch(query, input, anchor); }, SEARCH_DEBOUNCE_MS);
+        }
+
+        function handleSearchKeydown(event) {
+            const open = searchResults && !searchResults.classList.contains('hidden');
+            if (event.key === 'ArrowDown') {
+                if (!open) return;
+                event.preventDefault();
+                if (searchOptions.length) setSearchHighlight((searchHighlight + 1) % searchOptions.length);
+            } else if (event.key === 'ArrowUp') {
+                if (!open) return;
+                event.preventDefault();
+                if (searchOptions.length) {
+                    setSearchHighlight((searchHighlight - 1 + searchOptions.length) % searchOptions.length);
+                }
+            } else if (event.key === 'Enter') {
+                if (open && searchHighlight >= 0 && searchOptions[searchHighlight]) {
+                    event.preventDefault();
+                    selectSearchOption(searchHighlight);
+                }
+            } else if (event.key === 'Escape') {
+                if (open) {
+                    event.preventDefault();
+                    closeGlobalSearch();
+                }
+            }
+        }
+
+        if (searchResults) {
+            searchFields.forEach(({ input, anchor }) => {
+                input.addEventListener('input', () => queueGlobalSearch(input, anchor));
+                input.addEventListener('keydown', handleSearchKeydown);
+            });
+            searchResults.addEventListener('mousedown', (event) => event.preventDefault());
+            searchResults.addEventListener('click', (event) => {
+                const option = event.target.closest('li');
+                if (option && option.dataset.index !== undefined) {
+                    selectSearchOption(Number(option.dataset.index));
+                }
+            });
+            document.addEventListener('click', (event) => {
+                if (searchActiveInput
+                    && event.target !== searchActiveInput
+                    && !searchResults.contains(event.target)) {
+                    closeGlobalSearch();
                 }
             });
         }
