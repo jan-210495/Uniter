@@ -62,15 +62,6 @@ from backend.main import app, templates
 from backend.database import Base, engine, SessionLocal
 from backend.seed import seed_data
 
-# Apply the discovered template dir so Jinja2 can find pages when frozen.
-if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-    _bundle_templates = Path(sys._MEIPASS) / "backend" / "templates"
-    _template_dir = _bundle_templates if _bundle_templates.is_dir() else Path(sys._MEIPASS) / "templates"
-else:
-    _template_dir = Path(__file__).resolve().parent / "templates"
-
-templates.environment.loader.searchpath = [str(_template_dir)]  # type: ignore[attr-defined]
-
 
 # ---------------------------------------------------------------------------
 # Database seeding (runs once on first launch; safe to re-run)
