@@ -10,7 +10,7 @@
 #define AppName       "Uniter"
 #define AppPublisher  "Uniter"
 ; Keep in sync with the tag/version used for releases.
-#define AppVersion    "1.0.0"
+#define AppVersion    "1.0.1"
 #define AppExeName    "uniter-server.exe"
 #define StartupRunValueName "Uniter"
 #define AppDataSubDir "uniter\\data"
