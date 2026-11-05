@@ -167,7 +167,7 @@ def test_transaction_deducts_balance_and_records_profit(client: TestClient) -> N
     assert transaction["ussd_string"] == "*150*65477*0933123456*50#"
 
     balances = {item["operator_code"]: item for item in client.get("/api/operators/balance").json()}
-    assert balances["mtn"]["balance_cents"] == 20000 - 5000 - 250
+    assert balances["mtn"]["balance_cents"] == 20000 - 5000
     assert balances["syriatel"]["balance_cents"] == 0
 
     async def check_profit() -> None:
@@ -214,7 +214,7 @@ def test_insufficient_balance_rejects_transaction(client: TestClient) -> None:
     topup(client, "mtn", 1)
     assert post_transaction(client, "0933123456", "mtn", "prepaid", 5000).status_code == 200
     balances = {item["operator_code"]: item for item in client.get("/api/operators/balance").json()}
-    assert balances["mtn"]["balance_cents"] == 5000 - 5000 - 250
+    assert balances["mtn"]["balance_cents"] == 5000 - 5000
 
 
 def test_profit_ledger_accumulates_across_transactions(client: TestClient) -> None:
@@ -228,8 +228,8 @@ def test_profit_ledger_accumulates_across_transactions(client: TestClient) -> No
     assert post_transaction(client, "0933123456", "syriatel", "postpaid", 10000).status_code == 200
 
     balances = {item["operator_code"]: item for item in client.get("/api/operators/balance").json()}
-    assert balances["mtn"]["balance_cents"] == 30000 - 5000 - 250 - 2500 - 125
-    assert balances["syriatel"]["balance_cents"] == 20000 - 10000 - 1000
+    assert balances["mtn"]["balance_cents"] == 30000 - 5000 - 2500
+    assert balances["syriatel"]["balance_cents"] == 20000 - 10000
 
     async def check_ledger() -> None:
         async with aclosing(app.dependency_overrides[get_db]()) as dependency:

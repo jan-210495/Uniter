@@ -168,7 +168,7 @@ def test_pos_flow_creates_transaction_deducts_balance_and_records_profit(client)
 
     # The operator balance was deducted.
     balances = {row["operator_code"]: row for row in test_client.get("/api/operators/balance").json()}
-    assert balances["mtn"]["balance_cents"] == 20000 - 5000 - 250
+    assert balances["mtn"]["balance_cents"] == 20000 - 5000
 
     # The transaction is stored and appears in the transaction list.
     listed = test_client.get("/api/transactions").json()

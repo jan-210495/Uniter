@@ -18,7 +18,7 @@
                 <div>
                     <label for="customer-phone" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'رقم الهاتف' if ar else 'Customer phone' }}</label>
                     <input type="tel" id="customer-phone" name="customer-phone" required pattern="(?:[0-9]|\+|\s|\x2D)+" placeholder="09XXXXXXXX" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
-                    <p class="mt-1.5 text-xs text-slate-500">{{ 'رقم سوري يبدأ بـ 093 أو 094 أو 095 أو 096 أو 099.' if ar else 'Syrian mobile number starting with 093, 094, 095, 096 or 099.' }}</p>
+                    <p class="mt-1.5 text-xs text-slate-500">{{ 'رقم سوري يبدأ بـ 093 أو 094 أو 095 أو 096 أو 098 أو 099.' if ar else 'Syrian mobile number starting with 093, 094, 095, 096, 098 or 099.' }}</p>
                 </div>
                 <div>
                     <label for="payment-amount" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'المبلغ (ل.س)' if ar else 'Amount (SYP)' }}</label>
@@ -48,6 +48,25 @@
             </div>
         </section>
     </div>
+
+    <section id="ledger-container" class="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <h2 class="px-5 py-4 text-lg font-bold text-slate-900 sm:px-6">{{ 'سجل الديون' if ar else 'Debt Ledger' }}</h2>
+        <div class="overflow-x-auto">
+            <table class="w-full text-start text-sm">
+                <thead class="bg-slate-50 text-start text-slate-600">
+                    <tr>
+                        <th scope="col" class="px-4 py-3 text-start">{{ 'التاريخ' if ar else 'Date' }}</th>
+                        <th scope="col" class="px-4 py-3 text-start">{{ 'النوع' if ar else 'Type' }}</th>
+                        <th scope="col" class="px-4 py-3 text-start">{{ 'المبلغ (ل.س)' if ar else 'Amount (SYP)' }}</th>
+                        <th scope="col" class="px-4 py-3 text-start">{{ 'الوصف' if ar else 'Description' }}</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                    <tr><td colspan="4" class="px-4 py-6 text-center text-slate-500">{{ 'اختر عميلًا لعرض سجل الديون.' if ar else 'Look up a customer to view their ledger.' }}</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
 </section>
 {% endblock %}
 
@@ -141,8 +160,8 @@
             alert('{{ 'أدخل رقم هاتف سوري صحيح.' if ar else 'Enter a valid Syrian phone number.' }}');
             return;
         }
-        const amount = parseInt(amountInput.value, 10);
-        if (isNaN(amount) || amount < 0) {
+        const amount = Number(amountInput.value);
+        if (!/^\d+$/.test(amountInput.value.trim()) || !Number.isSafeInteger(amount * 100) || amount < 0) {
             alert('{{ 'أدخل مبلغًا صحيحًا.' if ar else 'Enter a valid amount.' }}');
             return;
         }
@@ -153,7 +172,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     customer_phone: phone,
-                    amount_cents: amount,
+                    amount_cents: amount * 100,
                     description: descInput.value || undefined,
                 }),
             });

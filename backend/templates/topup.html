@@ -63,7 +63,7 @@
 (() => {
     'use strict';
     const messages = {{ {
-        'invalidAmount': 'أدخل مبلغاً صحيحاً بالسنت أكبر من صفر.' if ar else 'Enter a whole amount in cents, greater than zero.',
+        'invalidAmount': 'أدخل مبلغاً صحيحاً بالليرة السورية أكبر من صفر.' if ar else 'Enter a whole amount in SYP, greater than zero.',
         'topupRecorded': 'تم تسجيل التعبئة.' if ar else 'Top-up recorded.',
         'updateFailed': 'تعذر تسجيل التعبئة. حاول مرة أخرى.' if ar else 'Could not record the top-up. Try again.',
         'loadFailed': 'تعذر تحديث الأرصدة.' if ar else 'Could not refresh the balances.'
@@ -123,7 +123,7 @@
             event.preventDefault();
             const amountInput = form.querySelector('input[name="amount"]');
             const amount = Number(amountInput.value);
-            if (!amountInput.value.trim() || !Number.isInteger(amount) || amount <= 0) {
+            if (!amountInput.value.trim() || !Number.isSafeInteger(amount * 100) || !/^\d+$/.test(amountInput.value.trim()) || amount <= 0) {
                 setFeedback(form, messages.invalidAmount, 'error');
                 amountInput.focus();
                 return;
@@ -132,7 +132,7 @@
                 const response = await fetch('/api/operators/topup', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ operator_code: form.dataset.operatorCode, amount_cents: amount })
+                    body: JSON.stringify({ operator_code: form.dataset.operatorCode, amount_cents: amount * 100 })
                 });
                 if (!response.ok) {
                     setFeedback(form, response.status === 422 ? messages.invalidAmount : messages.updateFailed, 'error');
