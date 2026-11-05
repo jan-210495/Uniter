@@ -15,6 +15,7 @@ class CommissionResult(TypedDict):
     amount_cents: int
     commission_cents: int
     net_cents: int
+    total_cents: int
     rate: str
 
 
@@ -30,7 +31,9 @@ def calculate_commission(amount_cents: int, rate: Decimal) -> CommissionResult:
     return {
         "amount_cents": amount_cents,
         "commission_cents": commission_cents,
+        # Retain the legacy net field for existing API clients.
         "net_cents": amount_cents - commission_cents,
+        "total_cents": amount_cents + commission_cents,
         "rate": str(rate),
     }
 

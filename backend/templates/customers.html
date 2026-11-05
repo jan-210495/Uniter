@@ -600,7 +600,7 @@
 
     function beginDebtEdit(tr) {
         editingDebtId = Number(tr.dataset.debtId);
-        debtAmount.value = tr.dataset.amount;
+        debtAmount.value = String(Number(tr.dataset.amount) / 100);
         debtDescription.value = tr.dataset.description;
         debtType.value = tr.dataset.type;
         debtFormTitle.textContent = messages.debtEditTitle;
@@ -632,13 +632,13 @@
         event.preventDefault();
         if (!debtCustomer) return;
         const amount = Number(debtAmount.value);
-        if (!Number.isInteger(amount) || amount < 0) {
+        if (!/^\d+$/.test(debtAmount.value.trim()) || !Number.isSafeInteger(amount * 100) || amount < 0) {
             setStatus(debtStatus, messages.debtInvalidAmount, 'error');
             debtAmount.focus();
             return;
         }
         const payload = {
-            amount_cents: amount,
+            amount_cents: amount * 100,
             description: debtDescription.value.trim(),
             type: debtType.value
         };

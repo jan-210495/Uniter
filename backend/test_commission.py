@@ -18,7 +18,7 @@ from backend.commission import calculate_commission, get_commission_for_transact
 def test_calculate_commission(amount: int, rate: str, commission: int, net: int) -> None:
     assert calculate_commission(amount, Decimal(rate)) == {
         "amount_cents": amount, "commission_cents": commission,
-        "net_cents": net, "rate": rate,
+        "net_cents": net, "total_cents": amount + commission, "rate": rate,
     }
 
 

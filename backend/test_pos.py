@@ -187,13 +187,13 @@ def test_commission_settings_and_calculation(client: TestClient) -> None:
     params = {"amount_cents": 5000, "operator_code": "mtn", "service_code": "prepaid"}
     response = client.get("/api/commission/calculate", params=params)
     assert response.status_code == 200
-    assert response.json() == {"amount_cents": 5000, "commission_cents": 250, "net_cents": 4750, "rate": "0.05"}
+    assert response.json() == {"amount_cents": 5000, "commission_cents": 250, "net_cents": 4750, "total_cents": 5250, "rate": "0.05"}
     update = client.put("/api/settings/commission", json={"rate": "0.12"})
     assert update.status_code == 200
     assert update.json() == {"commission_rate": "0.12"}
     assert client.get("/api/settings/commission").json() == {"commission_rate": "0.12"}
     response = client.get("/api/commission/calculate", params=params)
-    assert response.json() == {"amount_cents": 5000, "commission_cents": 600, "net_cents": 4400, "rate": "0.12"}
+    assert response.json() == {"amount_cents": 5000, "commission_cents": 600, "net_cents": 4400, "total_cents": 5600, "rate": "0.12"}
     params.update(operator_code="syriatel", service_code="postpaid")
     assert client.get("/api/commission/calculate", params=params).json()["commission_cents"] == 600
     params["operator_code"] = "unknown"

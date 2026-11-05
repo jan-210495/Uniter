@@ -27,7 +27,7 @@
                     <div>
                         <label for="phone" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'رقم هاتف العميل' if ar else 'Customer phone' }}</label>
                         <div id="phone-anchor" class="relative">
-                            <input id="phone" name="phone" type="tel" dir="ltr" autocomplete="off" autofocus required pattern="(?:[0-9]|\\+|\\s|\\x2D)+" placeholder="09XXXXXXXX" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="customer-suggestions" aria-autocomplete="list" aria-describedby="phone-help" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                            <input id="phone" name="phone" type="tel" dir="ltr" autocomplete="off" autofocus required pattern="[0-9+\s\x2D]+" placeholder="09XXXXXXXX" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="customer-suggestions" aria-autocomplete="list" aria-describedby="phone-help" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
                             <ul id="customer-suggestions" role="listbox" aria-label="{{ 'العملاء المقترحون' if ar else 'Suggested customers' }}" class="absolute inset-x-0 top-full z-20 mt-1 hidden max-h-72 min-w-[16rem] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg"></ul>
                         </div>
                         <p id="phone-help" class="mt-1.5 text-xs text-slate-500">{{ 'رقم سوري يبدأ بـ 093 أو 094 أو 095 أو 096 أو 098 أو 099.' if ar else 'Syrian mobile number starting with 093, 094, 095, 096, 098 or 099.' }}</p>
@@ -96,7 +96,7 @@
                     <div class="flex items-center justify-between gap-4"><dt class="text-slate-500">{{ 'المبلغ المحدد' if ar else 'Selected amount' }}</dt><dd id="summary-amount" dir="ltr" class="font-semibold tabular-nums text-slate-900">—</dd></div>
                     <div class="flex items-center justify-between gap-4"><dt class="text-slate-500">{{ 'نسبة العمولة' if ar else 'Commission rate' }}</dt><dd id="summary-rate" dir="ltr" class="font-semibold tabular-nums text-slate-900">—</dd></div>
                     <div class="flex items-center justify-between gap-4"><dt class="text-slate-500">{{ 'العمولة' if ar else 'Commission' }}</dt><dd id="summary-commission" dir="ltr" class="font-semibold tabular-nums text-slate-900">—</dd></div>
-                    <div class="flex items-center justify-between gap-4 border-t border-slate-100 pt-4"><dt class="font-semibold text-slate-800">{{ 'المبلغ الصافي' if ar else 'Net amount' }}</dt><dd id="summary-net" dir="ltr" class="text-lg font-bold tabular-nums text-blue-950">—</dd></div>
+                    <div class="flex items-center justify-between gap-4 border-t border-slate-100 pt-4"><dt class="font-semibold text-slate-800">{{ 'الإجمالي على العميل' if ar else 'Customer total' }}</dt><dd id="summary-net" dir="ltr" class="text-lg font-bold tabular-nums text-blue-950">—</dd></div>
                 </dl>
                 <p id="rate-status" role="status" aria-live="polite" class="mt-4 text-xs leading-5 text-slate-500">{{ 'جارٍ تحميل نسبة العمولة…' if ar else 'Loading commission rate…' }}</p>
                 <button type="submit" class="mt-5 w-full rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'إنشاء رمز USSD' if ar else 'Generate USSD' }}</button>
@@ -180,7 +180,8 @@
         const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(value.trim());
         if (!match || match[1].length > 17) return null;
         const cents = BigInt(match[1]) * 100n + BigInt((match[2] || '').padEnd(2, '0'));
-        return cents <= 9223372036854775807n ? cents : null;
+        // JSON numbers must remain exact at the API boundary.
+        return cents <= BigInt(Number.MAX_SAFE_INTEGER) ? cents : null;
     }
 
     function parseRate(value) {
@@ -229,7 +230,7 @@
         }
         const commission = roundEven(cents * rate.numerator, rate.denominator);
         summaryCommission.textContent = formatCents(commission);
-        summaryNet.textContent = formatCents(cents - commission);
+        summaryNet.textContent = formatCents(cents + commission);
     }
     function syncButtons() {
         const cents = parseAmount(amount.value);
@@ -250,7 +251,7 @@
         copyStatus.textContent = '';
     }
     function normalizePhone(value) {
-        let cleaned = value.replace(/[\\s-]+/g, '');
+        let cleaned = value.replace(/[\s-]+/g, '');
         if (cleaned.startsWith('+963')) cleaned = '0' + cleaned.slice(4);
         else if (cleaned.startsWith('00963')) cleaned = '0' + cleaned.slice(5);
         return /^09[345689][0-9]{7}$/.test(cleaned) ? cleaned : null;
