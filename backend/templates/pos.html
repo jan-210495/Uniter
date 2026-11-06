@@ -130,13 +130,36 @@
                 <button type="submit" class="mt-5 w-full rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'إنشاء رمز USSD' if ar else 'Generate USSD' }}</button>
             </section>
             <section id="result" hidden class="rounded-2xl border border-blue-200 bg-blue-50 p-5 sm:p-6" aria-labelledby="result-title" aria-live="polite">
-                <h2 id="result-title" class="text-sm font-bold text-blue-950">{{ 'رمز USSD' if ar else 'USSD code' }}</h2>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <h2 id="result-title" class="text-sm font-bold text-blue-950">{{ 'رمز USSD' if ar else 'USSD code' }}</h2>
+                    <span id="result-status-badge" class="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">{{ 'قيد الانتظار' if ar else 'Pending' }}</span>
+                </div>
                 <p class="mt-1 text-xs leading-5 text-slate-600">{{ 'تم إنشاء معاملة قيد الانتظار وخصمها من رصيد المشغّل. استخدم الرمز لإتمام الشحن عبر هاتف المتجر.' if ar else 'A pending transaction was created and deducted from the operator balance. Use the code to complete the charge from the shop phone.' }}</p>
                 <div class="mt-4 flex flex-wrap items-stretch gap-2">
                     <input id="ussd-output" type="text" dir="ltr" readonly aria-label="{{ 'رمز USSD' if ar else 'USSD code' }}" class="min-w-0 flex-1 rounded-lg border border-blue-200 bg-white px-3 py-3 font-mono text-sm font-semibold text-blue-950">
                     <button id="copy-ussd" type="button" class="rounded-lg border border-blue-800 bg-white px-4 py-3 text-sm font-bold text-blue-900 hover:bg-blue-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'نسخ' if ar else 'Copy' }}</button>
                 </div>
                 <p id="copy-status" role="status" aria-live="polite" class="mt-2 text-xs text-slate-600"></p>
+                <div id="dial-actions" hidden class="mt-3">
+                    <a id="dial-ussd" href="#dial-ussd" aria-describedby="dial-hint" class="inline-flex items-center rounded-lg border border-blue-800 bg-white px-4 py-3 text-sm font-bold text-blue-900 hover:bg-blue-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'فتح لوحة الاتصال' if ar else 'Open phone dialer' }}</a>
+                    <p id="dial-hint" class="mt-2 text-xs leading-5 text-slate-500">{{ 'يفتح هذا الزر لوحة الاتصال في هاتفك مع الرمز فقط. يختلف دعم الأجهزة والمتصفحات، فراجع الرمز وأكّد الاتصال بنفسك. النسخ يبقى الخيار الموثوق.' if ar else 'This only opens your phone dialer with the code. Device and browser support varies, so check the code and confirm the call yourself. Copy stays the reliable option.' }}</p>
+                </div>
+                <div class="mt-5 border-t border-blue-200 pt-4">
+                    <h3 class="text-sm font-bold text-blue-950">{{ 'نتيجة الشحن' if ar else 'Charge result' }}</h3>
+                    <p class="mt-1 text-xs leading-5 text-slate-600">{{ 'سجّل نتيجة محاولة USSD بعد إتمامها على هاتف المتجر. هذا الإجراء لا يغيّر رصيد المشغّل ولا العمولة.' if ar else 'Record the USSD result after finishing it on the shop phone. This step does not change the operator balance or the commission.' }}</p>
+                    <div id="status-actions" class="mt-3 flex flex-wrap gap-2">
+                        <button id="status-completed" type="button" data-status-action="completed" class="rounded-lg border border-blue-900 bg-blue-950 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تم الشحن بنجاح' if ar else 'Charge succeeded' }}</button>
+                        <button id="status-failed" type="button" data-status-action="failed" class="rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm font-bold text-red-700 transition hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700">{{ 'فشل الشحن' if ar else 'Charge failed' }}</button>
+                    </div>
+                    <div id="status-confirm" hidden class="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                        <p id="status-confirm-text" class="text-xs font-semibold leading-5 text-slate-800"></p>
+                        <div class="mt-2 flex flex-wrap gap-2">
+                            <button id="status-confirm-yes" type="button" class="rounded-lg bg-blue-950 px-3 py-2 text-xs font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تأكيد' if ar else 'Confirm' }}</button>
+                            <button id="status-confirm-no" type="button" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'إلغاء' if ar else 'Cancel' }}</button>
+                        </div>
+                    </div>
+                    <p id="status-feedback" role="status" aria-live="polite" class="mt-3 min-h-[1.25rem] text-xs font-medium text-slate-700"></p>
+                </div>
             </section>
         </aside>
     </form>
@@ -167,7 +190,18 @@
         'copied': 'تم نسخ الرمز.' if ar else 'Code copied.',
         'copyError': 'تعذر النسخ تلقائياً. حدد الرمز وانسخه يدوياً.' if ar else 'Could not copy automatically. Select the code and copy it manually.',
         'transactionError': 'تعذر إنشاء المعاملة. حاول مرة أخرى.' if ar else 'Could not create the transaction. Try again.',
-        'insufficientBalance': 'رصيد المشغّل غير كافٍ.' if ar else 'Insufficient operator balance.'
+        'insufficientBalance': 'رصيد المشغّل غير كافٍ.' if ar else 'Insufficient operator balance.',
+        'statusPending': 'قيد الانتظار' if ar else 'Pending',
+        'statusCompleted': 'مكتملة' if ar else 'Completed',
+        'statusFailed': 'فاشلة' if ar else 'Failed',
+        'confirmCompleted': 'تأكيد نجاح الشحن لهذه المعاملة؟' if ar else 'Confirm that this charge succeeded?',
+        'confirmFailed': 'تأكيد فشل هذه المعاملة؟' if ar else 'Confirm that this charge failed?',
+        'statusSavedCompleted': 'تم تسجيل المعاملة كمكتملة.' if ar else 'Transaction recorded as completed.',
+        'statusSavedFailed': 'تم تسجيل المعاملة كفاشلة.' if ar else 'Transaction recorded as failed.',
+        'statusCancelled': 'لم يتم حفظ أي نتيجة.' if ar else 'No result was saved.',
+        'statusConflict': 'تم تسجيل حالة هذه المعاملة نهائياً بالفعل.' if ar else 'This transaction already has a final status.',
+        'statusMissing': 'لم يتم العثور على المعاملة.' if ar else 'Transaction not found.',
+        'statusError': 'تعذر حفظ النتيجة. حاول مرة أخرى.' if ar else 'Could not save the result. Try again.'
     }|tojson }};
     const form = document.getElementById('charge-form');
     const phone = document.getElementById('phone');
@@ -190,7 +224,32 @@
     const voucherButtons = [...document.querySelectorAll('.voucher-button')];
     const result = document.getElementById('result');
     const output = document.getElementById('ussd-output');
+    const copyButton = document.getElementById('copy-ussd');
     const copyStatus = document.getElementById('copy-status');
+    const dialActions = document.getElementById('dial-actions');
+    const dialLink = document.getElementById('dial-ussd');
+    const resultStatusBadge = document.getElementById('result-status-badge');
+    const statusActions = document.getElementById('status-actions');
+    const statusConfirm = document.getElementById('status-confirm');
+    const statusConfirmText = document.getElementById('status-confirm-text');
+    const statusConfirmYes = document.getElementById('status-confirm-yes');
+    const statusConfirmNo = document.getElementById('status-confirm-no');
+    const statusFeedback = document.getElementById('status-feedback');
+    const statusButtons = [...document.querySelectorAll('[data-status-action]')];
+    const STATUS_LABELS = {
+        pending: messages.statusPending,
+        completed: messages.statusCompleted,
+        failed: messages.statusFailed
+    };
+    const STATUS_BADGE_CLASSES = {
+        pending: ['bg-amber-100', 'text-amber-800'],
+        completed: ['bg-green-100', 'text-green-800'],
+        failed: ['bg-red-100', 'text-red-700']
+    };
+    const STATUS_BADGE_ALL = ['bg-amber-100', 'text-amber-800', 'bg-green-100', 'text-green-800', 'bg-red-100', 'text-red-700'];
+    // The transaction behind the visible code; only ever a server response.
+    let activeTransaction = null;
+    let pendingResult = null;
     const rateStatus = document.getElementById('rate-status');
     const summaryAmount = document.getElementById('summary-amount');
     const summaryRate = document.getElementById('summary-rate');
@@ -291,6 +350,155 @@
         result.hidden = true;
         output.value = '';
         copyStatus.textContent = '';
+        dialActions.hidden = true;
+        dialLink.removeAttribute('href');
+        activeTransaction = null;
+        resetStatusPanel();
+    }
+    // --- Generated code: copy, optional dialer handoff and final result -----
+    function setStatusBadge(status) {
+        resultStatusBadge.classList.remove(...STATUS_BADGE_ALL);
+        resultStatusBadge.classList.add(...(STATUS_BADGE_CLASSES[status] || STATUS_BADGE_CLASSES.pending));
+        resultStatusBadge.textContent = STATUS_LABELS[status] || STATUS_LABELS.pending;
+    }
+    function renderStatusActions() {
+        const pending = activeTransaction !== null && activeTransaction.status === 'pending';
+        statusActions.hidden = !pending;
+        if (!pending) {
+            statusConfirm.hidden = true;
+            pendingResult = null;
+        }
+    }
+    function resetStatusPanel() {
+        pendingResult = null;
+        statusConfirm.hidden = true;
+        statusFeedback.textContent = '';
+        statusConfirmYes.disabled = false;
+        statusButtons.forEach((button) => { button.disabled = false; });
+        setStatusBadge(activeTransaction ? activeTransaction.status : 'pending');
+        renderStatusActions();
+    }
+    // The dialer handoff is a plain "tel:" link the operator taps themselves.
+    // It is offered only on coarse-pointer (phone/tablet) devices, and the
+    // trailing "#" is percent-encoded so browsers do not drop it as a URL
+    // fragment. Nothing is dialled on render, and support varies by device.
+    function updateDialAction() {
+        const code = output.value;
+        const coarsePointer = typeof window.matchMedia === 'function'
+            && window.matchMedia('(pointer: coarse)').matches;
+        if (!code || !coarsePointer) {
+            dialActions.hidden = true;
+            dialLink.removeAttribute('href');
+            return;
+        }
+        dialLink.setAttribute('href', 'tel:' + code.replace(/#/g, '%23'));
+        dialActions.hidden = false;
+    }
+    function askStatus(status) {
+        if (!activeTransaction || activeTransaction.status !== 'pending') return;
+        pendingResult = status;
+        const question = status === 'completed' ? messages.confirmCompleted : messages.confirmFailed;
+        statusConfirmText.textContent = question + ' ' + activeTransaction.reference;
+        statusConfirm.hidden = false;
+        statusActions.hidden = true;
+        statusFeedback.textContent = '';
+        statusConfirmYes.focus();
+    }
+    function cancelStatus() {
+        pendingResult = null;
+        statusConfirm.hidden = true;
+        statusActions.hidden = false;
+        statusFeedback.textContent = messages.statusCancelled;
+    }
+    async function saveStatus() {
+        if (!activeTransaction || !pendingResult) return;
+        const target = pendingResult;
+        const transaction = activeTransaction;
+        statusConfirmYes.disabled = true;
+        try {
+            // The server owns the state machine: only pending rows can move to
+            // a final status, and every final status is accepted exactly once.
+            const response = await fetch('/api/transactions/' + transaction.id + '/status', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: target })
+            });
+            const data = await response.json().catch(() => null);
+            if (!response.ok) {
+                if (response.status === 409) throw new Error(messages.statusConflict);
+                if (response.status === 404) throw new Error(messages.statusMissing);
+                throw new Error(messages.statusError);
+            }
+            transaction.status = data && data.status ? data.status : target;
+            setStatusBadge(transaction.status);
+            statusConfirm.hidden = true;
+            statusFeedback.textContent = transaction.status === 'completed'
+                ? messages.statusSavedCompleted
+                : messages.statusSavedFailed;
+        } catch (error) {
+            // Keep the actions reachable so the operator can retry or cancel.
+            statusConfirm.hidden = true;
+            statusActions.hidden = false;
+            statusFeedback.textContent = String(error.message || messages.statusError);
+        } finally {
+            pendingResult = null;
+            statusConfirmYes.disabled = false;
+            renderStatusActions();
+        }
+    }
+    async function copyUssdCode() {
+        const code = output.value;
+        if (!code) return;
+        let copied = false;
+        // The async Clipboard API needs a secure context (HTTPS or localhost)
+        // and a user gesture; it can still be rejected by browser policy.
+        const secure = window.isSecureContext !== false;
+        if (secure && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            try {
+                await navigator.clipboard.writeText(code);
+                copied = true;
+            } catch (_) {
+                copied = false;
+            }
+        }
+        if (!copied) copied = copyWithHiddenField(code);
+        if (copied) {
+            copyStatus.textContent = messages.copied;
+            return;
+        }
+        // Truthful failure path: never claim success, select the code so the
+        // operator can copy it by hand.
+        output.focus();
+        output.select();
+        copyStatus.textContent = messages.copyError;
+    }
+    function copyWithHiddenField(code) {
+        // Legacy fallback for browsers without the async Clipboard API (plain
+        // HTTP shop addresses, older mobile browsers). The temporary field is
+        // removed on every path, and the code is never logged or persisted.
+        if (typeof document.execCommand !== 'function' || !document.body) return false;
+        const helper = document.createElement('textarea');
+        helper.value = code;
+        helper.setAttribute('readonly', '');
+        helper.setAttribute('aria-hidden', 'true');
+        helper.style.position = 'fixed';
+        helper.style.top = '0';
+        helper.style.left = '-9999px';
+        helper.style.opacity = '0';
+        document.body.appendChild(helper);
+        let copied = false;
+        try {
+            helper.focus();
+            if (typeof helper.select === 'function') helper.select();
+            if (typeof helper.setSelectionRange === 'function') helper.setSelectionRange(0, code.length);
+            copied = document.execCommand('copy') === true;
+        } catch (_) {
+            copied = false;
+        } finally {
+            document.body.removeChild(helper);
+            copyButton.focus();
+        }
+        return copied;
     }
     function normalizePhone(value) {
         let cleaned = value.replace(/[\s-]+/g, '');
@@ -624,23 +832,23 @@
             }
             output.value = data.ussd_string;
             copyStatus.textContent = '';
+            // Generating a code only creates a pending transaction; the result
+            // is recorded later, by an explicit, confirmed operator action.
+            activeTransaction = { id: data.id, reference: data.reference, status: 'pending' };
+            resetStatusPanel();
+            updateDialAction();
             result.hidden = false;
         } catch (error) {
             clearResult();
             registerStatus.textContent = String(error.message || messages.transactionError);
         }
     });
-    document.getElementById('copy-ussd').addEventListener('click', async () => {
-        try {
-            if (!navigator.clipboard) throw new Error('Clipboard unavailable');
-            await navigator.clipboard.writeText(output.value);
-            copyStatus.textContent = messages.copied;
-        } catch (_) {
-            output.focus();
-            output.select();
-            copyStatus.textContent = messages.copyError;
-        }
-    });
+    copyButton.addEventListener('click', copyUssdCode);
+    statusButtons.forEach((button) => button.addEventListener('click', () => {
+        askStatus(button.dataset.statusAction);
+    }));
+    statusConfirmYes.addEventListener('click', saveStatus);
+    statusConfirmNo.addEventListener('click', cancelStatus);
     syncVoucherVisibility();
     syncButtons();
     updateSummary();

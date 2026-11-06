@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Annotated, Any, Dict
+from typing import Annotated, Any, Dict, Literal
 from uuid import uuid4
 
 import sys
@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy import delete as sql_delete
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.selectable import Subquery
@@ -171,6 +171,16 @@ class TransactionResponse(BaseModel):
     status: str
     amount_cents: int
     created_at: datetime
+
+
+class TransactionStatusUpdate(BaseModel):
+    """The result of the real-world USSD attempt, recorded by the POS operator.
+
+    Only the two final outcomes are accepted; ``pending`` is the created state
+    and arbitrary status strings are rejected during request validation.
+    """
+
+    status: Literal["completed", "failed"]
 
 
 class TransactionListItem(BaseModel):
@@ -1242,6 +1252,41 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
             raise HTTPException(status_code=409, detail="Customer was created concurrently; retry")
         raise
     await db.refresh(transaction)
+    return transaction
+
+
+@app.patch("/api/transactions/{transaction_id}/status", response_model=TransactionResponse)
+async def update_transaction_status(
+    transaction_id: Annotated[int, Field(ge=1)],
+    data: TransactionStatusUpdate,
+    db: DbSession,
+) -> Transaction:
+    """Record the real-world result of one pending transaction.
+
+    A transaction is created ``pending`` when its USSD code is generated and
+    only its operator may confirm or reject it afterwards. The state guard is
+    part of the UPDATE statement itself, so duplicate or stale requests can
+    never overwrite a final status and concurrent callers get exactly one
+    winner. Accounting is deliberately untouched: the operator balance and the
+    profit ledger keep the values captured at creation time (a failed charge
+    does not refund automatically; see the handoff note).
+    """
+    result = await db.execute(
+        update(Transaction)
+        .where(Transaction.id == transaction_id, Transaction.status == "pending")
+        .values(status=data.status)
+    )
+    if result.rowcount != 1:
+        current = await db.scalar(
+            select(Transaction.status).where(Transaction.id == transaction_id)
+        )
+        if current is None:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        raise HTTPException(status_code=409, detail=f"Transaction is already {current}")
+    await db.commit()
+    transaction = await db.get(Transaction, transaction_id)
+    if transaction is None:  # pragma: no cover - the row was just updated
+        raise HTTPException(status_code=404, detail="Transaction not found")
     return transaction
 
 
