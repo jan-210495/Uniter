@@ -7,7 +7,12 @@
 
 {% block content %}
 <section class="mx-auto max-w-5xl">
-    <div class="mb-8 flex flex-wrap items-end justify-between gap-4">
+    {# Mobile: the title block is dropped so the Charge details card leads the
+       page. The visually hidden heading below keeps the document outline (and
+       screen-reader orientation) intact on phones; from md up the header keeps
+       its original flex layout. #}
+    <h1 class="sr-only md:hidden">{{ 'الشحن السريع' if ar else 'POS Quick Charge' }}</h1>
+    <div class="mb-8 hidden flex-wrap items-end justify-between gap-4 md:flex">
         <div>
             <p class="mb-2 text-xs font-bold uppercase tracking-widest text-blue-800">{{ 'نقطة البيع' if ar else 'Point of sale' }}</p>
             <h1 class="text-3xl font-bold tracking-tight text-blue-950 sm:text-4xl">{{ 'الشحن السريع' if ar else 'POS Quick Charge' }}</h1>
@@ -23,7 +28,7 @@
                 <p class="mt-1 text-sm text-slate-500">{{ 'اختر البيانات المطلوبة أدناه.' if ar else 'Choose the details for this charge.' }}</p>
             </div>
             <div class="space-y-5">
-                <div class="grid gap-4 sm:grid-cols-2">
+                <div class="grid grid-cols-2 gap-4">
                     <div>
                         <label for="phone" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'رقم هاتف العميل' if ar else 'Customer phone' }}</label>
                         <div id="phone-anchor" class="relative">
@@ -49,7 +54,7 @@
                     </p>
                 </div>
                 <p id="customer-search-status" role="status" aria-live="polite" class="mt-1.5 text-xs text-slate-500"></p>
-                <div class="grid gap-4 sm:grid-cols-2">
+                <div class="grid grid-cols-2 gap-4">
                     <div>
                         <label for="operator" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'المشغّل' if ar else 'Operator' }}</label>
                         <select id="operator" name="operator" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
@@ -116,9 +121,9 @@
                 <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
                     <div>
                         <h2 id="summary-title" class="text-lg font-bold text-slate-900">{{ 'ملخص المبلغ' if ar else 'Amount summary' }}</h2>
-                        <p class="mt-1 text-sm text-slate-500">{{ 'المبلغ والعمولة المقدّرة' if ar else 'Amount and estimated commission' }}</p>
+                        <p class="mt-1 hidden text-sm text-slate-500 md:block">{{ 'المبلغ والعمولة المقدّرة' if ar else 'Amount and estimated commission' }}</p>
                     </div>
-                    <button id="refresh-rate" type="button" class="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'تحديث النسبة' if ar else 'Refresh rate' }}</button>
+                    <button id="refresh-rate" type="button" class="hidden rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700 md:block">{{ 'تحديث النسبة' if ar else 'Refresh rate' }}</button>
                 </div>
                 <dl class="space-y-4 text-sm">
                     <div class="flex items-center justify-between gap-4"><dt class="text-slate-500">{{ 'المبلغ المحدد' if ar else 'Selected amount' }}</dt><dd id="summary-amount" dir="ltr" class="font-semibold tabular-nums text-slate-900">—</dd></div>
@@ -126,7 +131,7 @@
                     <div class="flex items-center justify-between gap-4"><dt class="text-slate-500">{{ 'العمولة' if ar else 'Commission' }}</dt><dd id="summary-commission" dir="ltr" class="font-semibold tabular-nums text-slate-900">—</dd></div>
                     <div class="flex items-center justify-between gap-4 border-t border-slate-100 pt-4"><dt class="font-semibold text-slate-800">{{ 'الإجمالي على العميل' if ar else 'Customer total' }}</dt><dd id="summary-net" dir="ltr" class="text-lg font-bold tabular-nums text-blue-950">—</dd></div>
                 </dl>
-                <p id="rate-status" role="status" aria-live="polite" class="mt-4 text-xs leading-5 text-slate-500">{{ 'جارٍ تحميل نسبة العمولة…' if ar else 'Loading commission rate…' }}</p>
+                <p id="rate-status" role="status" aria-live="polite" class="mt-4 hidden text-xs leading-5 text-slate-500 md:block">{{ 'جارٍ تحميل نسبة العمولة…' if ar else 'Loading commission rate…' }}</p>
                 <button type="submit" class="mt-5 w-full rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'إنشاء رمز USSD' if ar else 'Generate USSD' }}</button>
             </section>
             <section id="result" hidden class="rounded-2xl border border-blue-200 bg-blue-50 p-5 sm:p-6" aria-labelledby="result-title" aria-live="polite">
@@ -134,7 +139,7 @@
                     <h2 id="result-title" class="text-sm font-bold text-blue-950">{{ 'رمز USSD' if ar else 'USSD code' }}</h2>
                     <span id="result-status-badge" class="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">{{ 'قيد الانتظار' if ar else 'Pending' }}</span>
                 </div>
-                <p class="mt-1 text-xs leading-5 text-slate-600">{{ 'تم إنشاء معاملة قيد الانتظار وخصمها من رصيد المشغّل. استخدم الرمز لإتمام الشحن عبر هاتف المتجر.' if ar else 'A pending transaction was created and deducted from the operator balance. Use the code to complete the charge from the shop phone.' }}</p>
+                <p class="mt-1 hidden text-xs leading-5 text-slate-600 md:block">{{ 'تم إنشاء معاملة قيد الانتظار وخصمها من رصيد المشغّل. استخدم الرمز لإتمام الشحن عبر هاتف المتجر.' if ar else 'A pending transaction was created and deducted from the operator balance. Use the code to complete the charge from the shop phone.' }}</p>
                 <div class="mt-4 flex flex-wrap items-stretch gap-2">
                     <input id="ussd-output" type="text" dir="ltr" readonly aria-label="{{ 'رمز USSD' if ar else 'USSD code' }}" class="min-w-0 flex-1 rounded-lg border border-blue-200 bg-white px-3 py-3 font-mono text-sm font-semibold text-blue-950">
                     <button id="copy-ussd" type="button" class="rounded-lg border border-blue-800 bg-white px-4 py-3 text-sm font-bold text-blue-900 hover:bg-blue-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'نسخ' if ar else 'Copy' }}</button>
@@ -725,9 +730,12 @@
             rate = parseRate(data.commission_rate);
             if (rate === null) throw new Error('Invalid rate');
             rateStatus.textContent = messages.rateLoaded;
+            // The rate line is desktop-only; a failure still surfaces on phones.
+            rateStatus.classList.add('hidden');
         } catch (_) {
             rate = null;
             rateStatus.textContent = messages.rateError;
+            rateStatus.classList.remove('hidden');
         }
         updateSummary();
     }

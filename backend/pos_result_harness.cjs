@@ -216,7 +216,12 @@ const context = {
     const bodyData = options.body ? JSON.parse(options.body) : null;
     requests.push({ url, method: options.method || 'GET', body: bodyData });
     if (url === '/api/settings/commission') {
-      return { ok: true, status: 200, json: async () => ({ commission_rate: '0.05' }) };
+      const commission = input.commission || 'ok';
+      if (commission === 'error') {
+        return { ok: false, status: 500, json: async () => ({ detail: 'Rate unavailable' }) };
+      }
+      const rate = commission === 'invalid' ? 'nope' : '0.05';
+      return { ok: true, status: 200, json: async () => ({ commission_rate: rate }) };
     }
     if (url === '/api/transactions' && (options.method || 'GET') === 'POST') {
       return {
@@ -314,6 +319,7 @@ function voucherButton(step) {
             value: entry.value,
             text: entry.textContent,
             hidden: Boolean(entry.hidden),
+            classes: [...entry.classes],
             disabled: Boolean(entry.disabled),
             focused: Boolean(entry.focused),
             selected: Boolean(entry.selected),
