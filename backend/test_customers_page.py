@@ -1,5 +1,6 @@
 """Tests for the /customers page and its CRUD endpoints."""
 
+import itertools
 import asyncio
 from collections.abc import AsyncIterator, Iterator
 from contextlib import aclosing
@@ -157,6 +158,7 @@ def test_remove_customer(client: TestClient) -> None:
             "operator_code": "mtn",
             "service_code": "prepaid",
             "amount_cents": 5000,
+            "commit_key": new_commit_key(),
         },
     )
     assert transaction.status_code == 200
@@ -235,3 +237,10 @@ def test_customers_page_uses_shared_navigation(client: TestClient) -> None:
     assert '<a href="/pos"' in page
     assert '<a href="/settlement"' in page
     assert 'href="/customers" class="hover:text-blue-800" aria-current="page"' in page
+
+_COMMIT_KEYS = itertools.count(1)
+
+
+def new_commit_key() -> str:
+    """A fresh commit key: every call is a deliberate, distinct sale."""
+    return f"testkey{next(_COMMIT_KEYS):022d}"

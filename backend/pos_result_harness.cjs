@@ -1,8 +1,8 @@
 // Execute the rendered /pos page script against a minimal DOM double to verify
-// the generated-code result panel: copy paths (async Clipboard API, legacy
-// selection fallback, truthful failure), the optional dialer handoff and the
-// explicit pending -> completed/failed confirmation flow.
-// Clipboard behaviour is simulated per run; network calls are captured only.
+// the Slice 2.3 lifecycle: generating a code only previews it (no row, no
+// debit), copying or dialling commits the sale exactly once via the preview's
+// commit key, and a failed copy records nothing. Clipboard behaviour is
+// simulated per run; network calls are captured and answered, never sent.
 const vm = require('node:vm');
 const fs = require('node:fs');
 
@@ -10,6 +10,8 @@ const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 const html = input.html;
 const clipboardMode = input.clipboard || 'modern'; // modern | reject | none
 const execCommandMode = input.execCommand || 'ok'; // ok | fail | throw | missing
+const previewMode = input.preview || 'ok'; // ok | insufficient | error | missingKey
+const commitMode = input.commit || 'ok'; // ok | insufficient | error
 
 class Element {
   constructor(id = '') {
@@ -114,17 +116,6 @@ for (const selectId of ['operator', 'service']) {
   if (value !== null) element(selectId).value = value;
 }
 
-// Final-status actions (Slice 2), found by their explicit attribute.
-const statusButtons = [];
-const statusPattern = /<button([^>]*\bdata-status-action="[^"]*"[^>]*)>/g;
-let statusMatch;
-while ((statusMatch = statusPattern.exec(html)) !== null) {
-  const attributes = parseAttributes(statusMatch[1]);
-  const target = element(attributes.id);
-  target.dataset.statusAction = attributes['data-status-action'];
-  statusButtons.push(target);
-}
-
 // Voucher chips (Slice 1) with the operator of their group.
 const groups = [];
 const voucherButtons = [];
@@ -183,7 +174,6 @@ const document = {
   querySelectorAll(selector) {
     if (selector === '.voucher-button') return voucherButtons;
     if (selector === '[data-voucher-operator]') return groups;
-    if (selector === '[data-status-action]') return statusButtons;
     return [];
   },
   createElement(tagName) {
@@ -196,11 +186,23 @@ const document = {
   execCommand,
 };
 
+// Every preview mints its own key, as the server does.
+let previewCount = 0;
+function nextCommitKey() {
+  previewCount += 1;
+  return 'previewkey' + String(previewCount).padStart(19, '0');
+}
 const pointerCoarse = input.mobile !== false;
+const navigation = { href: '', assign(url) { this.href = url; } };
 const window = {
   isSecureContext: input.secureContext,
   matchMedia: (query) => ({ matches: query.includes('pointer: coarse') ? pointerCoarse : false }),
+  location: navigation,
 };
+
+function jsonResponse(ok, status, data) {
+  return { ok, status, json: async () => data };
+}
 
 const context = {
   document,
@@ -213,54 +215,47 @@ const context = {
   clearTimeout() {},
   navigator: { clipboard },
   fetch: async (url, options = {}) => {
+    const method = options.method || 'GET';
     const bodyData = options.body ? JSON.parse(options.body) : null;
-    requests.push({ url, method: options.method || 'GET', body: bodyData });
+    requests.push({ url, method, body: bodyData });
     if (url === '/api/settings/commission') {
       const commission = input.commission || 'ok';
-      if (commission === 'error') {
-        return { ok: false, status: 500, json: async () => ({ detail: 'Rate unavailable' }) };
-      }
+      if (commission === 'error') return jsonResponse(false, 500, { detail: 'Rate unavailable' });
       const rate = commission === 'invalid' ? 'nope' : '0.05';
-      return { ok: true, status: 200, json: async () => ({ commission_rate: rate }) };
+      return jsonResponse(true, 200, { commission_rate: rate });
     }
-    if (url === '/api/transactions' && (options.method || 'GET') === 'POST') {
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          id: 42,
-          reference: 'TXN-harness',
-          status: 'pending',
-          ussd_string: '*150*65477*0944123456*50#',
-          amount_cents: 5000,
-        }),
-      };
+    if (url === '/api/transactions/preview' && method === 'POST') {
+      if (previewMode === 'insufficient') {
+        return jsonResponse(false, 400, { detail: 'Insufficient operator balance' });
+      }
+      if (previewMode === 'error') return jsonResponse(false, 400, { detail: 'Operator is inactive' });
+      return jsonResponse(true, 200, {
+        ussd_string: '*150*65477*0944123456*50#',
+        commit_key: previewMode === 'missingKey' ? '' : nextCommitKey(),
+      });
     }
-    if (url.startsWith('/api/transactions/') && url.endsWith('/status')) {
-      const patch = input.patch || { status: 200 };
-      const ok = patch.status < 400;
-      const data = ok
-        ? {
-            id: 42,
-            reference: 'TXN-harness',
-            status: bodyData.status,
-            ussd_string: '*150*65477*0944123456*50#',
-            amount_cents: 5000,
-          }
-        : { detail: 'Transaction is already completed' };
-      return { ok, status: patch.status, json: async () => data };
+    if (url === '/api/transactions' && method === 'POST') {
+      if (commitMode === 'insufficient') {
+        return jsonResponse(false, 400, { detail: 'Insufficient operator balance' });
+      }
+      if (commitMode === 'error') return jsonResponse(false, 409, { detail: 'Could not commit the sale' });
+      return jsonResponse(true, 200, {
+        id: 42,
+        reference: 'TXN-harness',
+        status: 'successful',
+        ussd_string: '*150*65477*0944123456*50#',
+        amount_cents: 5000,
+      });
     }
-    if (url.startsWith('/api/customers/search')) {
-      return { ok: true, status: 200, json: async () => [] };
-    }
-    return { ok: true, status: 200, json: async () => ({}) };
+    if (url.startsWith('/api/customers/search')) return jsonResponse(true, 200, []);
+    return jsonResponse(true, 200, {});
   },
 };
 
 vm.runInNewContext(input.script, context);
 
 async function flush() {
-  for (let index = 0; index < 12; index += 1) await Promise.resolve();
+  for (let index = 0; index < 24; index += 1) await Promise.resolve();
 }
 
 function voucherButton(step) {
@@ -294,15 +289,34 @@ function voucherButton(step) {
       for (const handler of handlers) await handler(event);
       await flush();
     }
+    if (step.clickTwice) {
+      // Two real taps in the same tick: the in-page guard plus the server key
+      // must still produce a single commit request.
+      const target = element(step.clickTwice);
+      const handlers = target.handlers.click || [];
+      if (!handlers.length) throw new Error(`No click handler on ${step.clickTwice}`);
+      await Promise.all(
+        handlers.map((handler) => handler({ preventDefault() {}, target })).concat(
+          handlers.map((handler) => handler({ preventDefault() {}, target }))
+        )
+      );
+      await flush();
+    }
     if (step.focus === true) {
       // Mark focus explicitly when a test needs the "manual copy" affordance.
       element(step.id).focus();
     }
   }
-  const badge = element('result-status-badge');
+  const badge = element('result-badge');
   process.stdout.write(
     JSON.stringify({
       requests,
+      previews: requests.filter(
+        (request) => request.url === '/api/transactions/preview' && request.method === 'POST'
+      ),
+      commits: requests.filter(
+        (request) => request.url === '/api/transactions' && request.method === 'POST'
+      ),
       clipboardWrites,
       execCommandCalls,
       execCommandArgs,
@@ -312,6 +326,7 @@ function voucherButton(step) {
         .map((helper) => ({ value: helper.value, readonly: helper.getAttribute('readonly') })),
       bodyChildren: body.children.length,
       lastFocused: lastFocused ? lastFocused.id : null,
+      navigation: { href: navigation.href },
       elements: Object.fromEntries(
         [...elements].map(([id, entry]) => [
           id,

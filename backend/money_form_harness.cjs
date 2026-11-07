@@ -27,7 +27,7 @@ const context={document, console, AbortController, Date, setTimeout:()=>0, clear
   if(url==='/api/operators/topup') { balance+=body.amount_cents; data={new_balance_cents:balance,reference:'TOPUP-test'}; }
   else if(url==='/api/operators/balance') data=[{operator_code:'mtn',balance_cents:balance}];
   else if(url==='/api/settings/commission') data={commission_rate:'0.05'};
-  else if(url==='/api/transactions') data={ussd_string:'captured'};
+  else if(url==='/api/transactions/preview') data={ussd_string:'captured', commit_key:'moneyboundarykey0000000001'};
   else if(url.includes('/balance')||url.includes('/summary')) data={total_charges_cents:50000,total_payments_cents:0,total_debt_cents:50000};
   return {ok:true,status:200,json:async()=>data};
 }};

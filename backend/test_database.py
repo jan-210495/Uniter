@@ -34,7 +34,7 @@ def test_models_and_relationships(tmp_path, monkeypatch) -> None:
                 customer = database.Customer(phone="123", name="Customer")
                 transaction = database.Transaction(
                     customer=customer, service=service, amount_cents=125,
-                    status="pending", ussd_string="*123*123#", reference="ref-1",
+                    status="successful", ussd_string="*123*123#", reference="ref-1",
                 )
                 session.add(transaction)
                 await session.commit()

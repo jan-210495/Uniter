@@ -49,8 +49,7 @@
                 <label for="filter-status" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'الحالة' if ar else 'Status' }}</label>
                 <select id="filter-status" name="status" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
                     <option value="">{{ 'كل الحالات' if ar else 'All statuses' }}</option>
-                    <option value="pending">{{ 'قيد الانتظار' if ar else 'Pending' }}</option>
-                    <option value="completed">{{ 'مكتملة' if ar else 'Completed' }}</option>
+                    <option value="successful">{{ 'ناجحة' if ar else 'Successful' }}</option>
                     <option value="failed">{{ 'فاشلة' if ar else 'Failed' }}</option>
                 </select>
             </div>
@@ -68,7 +67,7 @@
     <section class="rounded-2xl border border-slate-200 bg-white shadow-sm" aria-labelledby="tx-table-title">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-6">
             <div>
-                <h2 id="tx-table-title" class="text-lg font-bold text-slate-900">{{ 'قائمة المعاملات' if ar else 'Transaction list' }}</h2>
+                <h2 id="tx-table-title" tabindex="-1" class="text-lg font-bold text-slate-900 outline-none">{{ 'قائمة المعاملات' if ar else 'Transaction list' }}</h2>
                 <p class="mt-1 text-sm text-slate-500">{{ 'أحدث المعاملات أولاً.' if ar else 'Newest transactions first.' }}</p>
             </div>
             <div class="flex flex-wrap items-center gap-3">
@@ -89,20 +88,24 @@
                         <th scope="col" class="px-4 py-3 text-start">{{ 'المبلغ' if ar else 'Amount' }}</th>
                         <th scope="col" class="px-4 py-3 text-start">{{ 'الحالة' if ar else 'Status' }}</th>
                         <th scope="col" class="px-4 py-3 text-start">USSD</th>
+                        <th scope="col" class="px-4 py-3 text-end">{{ 'إجراءات' if ar else 'Actions' }}</th>
                     </tr>
                 </thead>
                 <tbody id="tx-rows" class="divide-y divide-slate-100"></tbody>
             </table>
         </div>
+        <p id="tx-action-status" role="status" aria-live="polite" class="border-t border-slate-100 px-5 py-3 text-xs font-semibold text-slate-600 sm:px-6"></p>
     </section>
 
     {# Utility classes rendered by the page script, listed here so the Tailwind CDN emits them. #}
     <div class="hidden" aria-hidden="true">
-        <span class="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800"></span>
         <span class="rounded-full bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-800"></span>
         <span class="rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700"></span>
         <span class="bg-blue-50 text-blue-950"></span>
+        <div class="inline-flex flex-wrap items-center justify-end gap-2"></div>
         <tr class="hover:bg-slate-50"></tr>
+        <button class="whitespace-nowrap border-red-200 text-red-700 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60"></button>
+        <button class="whitespace-nowrap border-slate-200 text-slate-700 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700 disabled:cursor-not-allowed disabled:opacity-60"></button>
     </div>
 </section>
 {% endblock %}
@@ -121,9 +124,17 @@
         'searching': 'يتم البحث عن العملاء…' if ar else 'Searching customers…',
         'noResults': 'لا يوجد عملاء مطابقون.' if ar else 'No matching customers.',
         'searchError': 'تعذر البحث عن العملاء. حاول مرة أخرى.' if ar else 'Could not search customers. Try again.',
-        'statusPending': 'قيد الانتظار' if ar else 'Pending',
-        'statusCompleted': 'مكتملة' if ar else 'Completed',
+        'statusSuccessful': 'ناجحة' if ar else 'Successful',
         'statusFailed': 'فاشلة' if ar else 'Failed',
+        'markFailed': 'تسجيل فشل الشحن' if ar else 'Mark charge failed',
+        'markFailedShort': '✕ فشل الشحن' if ar else '✕ Charge failed',
+        'remove': 'إزالة' if ar else 'Remove',
+        'removeConfirm': 'إزالة هذه المعاملة الفاشلة من القوائم؟ ستبقى في السجل للمراجعة ولن تُرد أي مبالغ.' if ar else 'Remove this failed transaction from the lists? It stays in the audit trail and no money is refunded.',
+        'markFailedDone': 'تم تسجيل فشل الشحن.' if ar else 'Charge marked as failed.',
+        'removeDone': 'تمت إزالة المعاملة الفاشلة.' if ar else 'Failed transaction removed.',
+        'actionWorking': 'جارٍ تنفيذ الإجراء…' if ar else 'Applying…',
+        'actionDenied': 'لا يمكن تنفيذ هذا الإجراء على هذه المعاملة.' if ar else 'This action is not allowed for that transaction.',
+        'actionError': 'تعذر تنفيذ الإجراء. حاول مرة أخرى.' if ar else 'Could not apply the action. Try again.',
         'servicePrepaid': 'مسبق الدفع' if ar else 'Pre-Paid',
         'servicePostpaid': 'لاحق الدفع' if ar else 'Post-Paid'
     }|tojson }};
@@ -139,14 +150,14 @@
     const countEl = document.getElementById('tx-count');
 
     const DEBOUNCE_MS = 220;
+    const actionStatusEl = document.getElementById('tx-action-status');
+    const tableTitle = document.getElementById('tx-table-title');
     const STATUS_LABELS = {
-        pending: messages.statusPending,
-        completed: messages.statusCompleted,
+        successful: messages.statusSuccessful,
         failed: messages.statusFailed
     };
     const STATUS_CLASSES = {
-        pending: 'bg-amber-50 text-amber-800',
-        completed: 'bg-green-50 text-green-800',
+        successful: 'bg-green-50 text-green-800',
         failed: 'bg-red-50 text-red-700'
     };
     const SERVICE_LABELS = {
@@ -332,9 +343,46 @@
         fragment.append(number, unit);
         return fragment;
     }
+    function makeActionButton(text, accessibleName, className, onClick) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = className;
+        button.textContent = text;
+        button.setAttribute('aria-label', accessibleName);
+        button.addEventListener('click', onClick);
+        return button;
+    }
+    function renderActions(transaction) {
+        const cell = makeCell('px-4 py-3 text-end');
+        const group = document.createElement('div');
+        group.className = 'inline-flex flex-wrap items-center justify-end gap-2';
+        if (transaction.status === 'successful') {
+            const failButton = makeActionButton(
+                messages.markFailedShort,
+                messages.markFailed + ' · ' + transaction.reference,
+                'whitespace-nowrap rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-700 disabled:cursor-not-allowed disabled:opacity-60',
+                (event) => { markChargeFailed(transaction, event.currentTarget); }
+            );
+            failButton.dataset.action = 'fail';
+            failButton.title = messages.markFailed;
+            group.appendChild(failButton);
+        } else if (transaction.status === 'failed') {
+            const removeButton = makeActionButton(
+                messages.remove,
+                messages.remove + ' · ' + transaction.reference,
+                'whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700 disabled:cursor-not-allowed disabled:opacity-60',
+                (event) => { removeFailed(transaction, event.currentTarget); }
+            );
+            removeButton.dataset.action = 'remove';
+            group.appendChild(removeButton);
+        }
+        cell.appendChild(group);
+        return cell;
+    }
     function renderRow(transaction) {
         const tr = document.createElement('tr');
         tr.className = 'hover:bg-slate-50';
+        tr.dataset.txId = String(transaction.id);
 
         const reference = makeCell('px-4 py-3 font-mono text-xs text-slate-500');
         reference.dir = 'ltr';
@@ -376,19 +424,91 @@
         ussd.dir = 'ltr';
         ussd.textContent = transaction.ussd_string;
 
-        tr.append(reference, created, customer, operator, service, amount, status, ussd);
+        tr.append(reference, created, customer, operator, service, amount, status, ussd, renderActions(transaction));
         return tr;
     }
     function renderEmpty() {
         const tr = document.createElement('tr');
         const td = makeCell('px-4 py-10 text-center text-sm text-slate-500');
-        td.colSpan = 8;
+        td.colSpan = 9;
         td.textContent = messages.empty;
         tr.appendChild(td);
         return tr;
     }
+    // --- Row actions: successful -> failed, and removing failed rows ------
+    // The server owns both rules, so a stale page can never apply an action
+    // twice or remove a successful sale; the buttons just mirror the state.
+    let actionInFlight = false;
+    let pendingFocus = false;
+
+    function setActionBusy(button, busy) {
+        if (!button) return;
+        button.disabled = busy;
+        if (busy) button.setAttribute('aria-busy', 'true');
+        else button.removeAttribute('aria-busy');
+    }
+    function describeFailure(status) {
+        return status === 409 || status === 404 ? messages.actionDenied : messages.actionError;
+    }
+    async function markChargeFailed(transaction, button) {
+        if (actionInFlight) return;
+        actionInFlight = true;
+        setActionBusy(button, true);
+        actionStatusEl.textContent = messages.actionWorking;
+        try {
+            const response = await fetch('/api/transactions/' + transaction.id + '/status', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'failed' })
+            });
+            if (!response.ok) {
+                actionStatusEl.textContent = describeFailure(response.status);
+                setActionBusy(button, false);
+                return;
+            }
+            actionStatusEl.textContent = messages.markFailedDone;
+            pendingFocus = true;
+            await fetchTransactions();
+        } catch (error) {
+            actionStatusEl.textContent = messages.actionError;
+            setActionBusy(button, false);
+        } finally {
+            actionInFlight = false;
+        }
+    }
+    async function removeFailed(transaction, button) {
+        if (actionInFlight) return;
+        if (typeof window.confirm === 'function' && !window.confirm(messages.removeConfirm)) return;
+        actionInFlight = true;
+        setActionBusy(button, true);
+        actionStatusEl.textContent = messages.actionWorking;
+        try {
+            const response = await fetch('/api/transactions/' + transaction.id, { method: 'DELETE' });
+            if (!response.ok) {
+                actionStatusEl.textContent = describeFailure(response.status);
+                setActionBusy(button, false);
+                return;
+            }
+            actionStatusEl.textContent = messages.removeDone;
+            pendingFocus = true;
+            await fetchTransactions();
+        } catch (error) {
+            actionStatusEl.textContent = messages.actionError;
+            setActionBusy(button, false);
+        } finally {
+            actionInFlight = false;
+        }
+    }
+
     function renderTransactions(transactions) {
         rowsBody.replaceChildren(...(transactions.length ? transactions.map(renderRow) : [renderEmpty()]));
+        if (pendingFocus) {
+            // The acted-on row may be gone; hand focus back to the list header.
+            pendingFocus = false;
+            if (tableTitle && typeof tableTitle.focus === 'function') {
+                tableTitle.focus({ preventScroll: true });
+            }
+        }
         const total = transactions.reduce((sum, transaction) => sum + (Number(transaction.amount_cents) || 0), 0);
         countEl.textContent = transactions.length + ' ' + messages.countLabel;
         statusEl.textContent = transactions.length

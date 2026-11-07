@@ -81,10 +81,15 @@ class Customer(Base):
     debt_ledger: Mapped[list[DebtLedger]] = relationship(back_populates="customer")
 
 
+#: The only statuses a persisted transaction can carry. A row exists only once
+#: the seller committed the sale by copying the code or opening the dialer.
+TRANSACTION_STATUSES = ("successful", "failed")
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
     __table_args__ = (
-        CheckConstraint("status IN ('pending', 'completed', 'failed')", name="transaction_status"),
+        CheckConstraint("status IN ('successful', 'failed')", name="transaction_status"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -95,6 +100,17 @@ class Transaction(Base):
     ussd_string: Mapped[str] = mapped_column(String(255))
     reference: Mapped[str] = mapped_column(String(255), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    # Client-supplied commit key: the same sale commits exactly once, no matter
+    # how often the tap or the request is replayed.
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(64), unique=True, nullable=True, default=None
+    )
+    # Tombstone for removed failed rows: the row and its ledger stay on disk.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    # Migration provenance for rows imported from the pending/completed schema.
+    legacy_status: Mapped[str | None] = mapped_column(String(20), nullable=True, default=None)
 
     customer: Mapped[Customer] = relationship(back_populates="transactions")
     service: Mapped[Service] = relationship(back_populates="transactions")
@@ -225,6 +241,31 @@ async def get_db() -> AsyncIterator[AsyncSession]:
         yield session
 
 
+async def _migrate_schema() -> None:
+    """Apply the guarded schema upgrades to an existing database."""
+    try:
+        from .migrations import migrate_transaction_lifecycle
+    except ImportError:  # pragma: no cover - flat module layout (PyInstaller)
+        from migrations import migrate_transaction_lifecycle
+
+    await migrate_transaction_lifecycle(engine)
+
+
+async def upgrade_existing_database() -> bool:
+    """Upgrade an already-existing database file before the first request.
+
+    ``create_all`` never alters an existing table, so a database written by an
+    earlier version must be rebuilt before the app can write to it. A missing
+    file is left alone: fresh databases are created (and migrated) by the
+    seeding entry points, and nothing is ever created implicitly here.
+    """
+    path = DATABASE_URL.database
+    if not path or not os.path.exists(path):
+        return False
+    await _migrate_schema()
+    return True
+
+
 async def init_db() -> None:
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -232,3 +273,4 @@ async def init_db() -> None:
             key="commission_rate", value="0.05", updated_at=utc_now()
         ).on_conflict_do_nothing(index_elements=[Setting.key])
         await connection.execute(statement)
+    await _migrate_schema()

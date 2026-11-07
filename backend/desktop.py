@@ -60,6 +60,7 @@ _data_dir = ensure_data_dir()
 import uvicorn
 from backend.main import app, templates
 from backend.database import Base, engine, SessionLocal
+from backend.migrations import migrate_transaction_lifecycle
 from backend.seed import seed_data
 
 
@@ -68,9 +69,10 @@ from backend.seed import seed_data
 # ---------------------------------------------------------------------------
 
 async def _seed_database() -> None:
-    """Create all tables and insert seed data idempotently."""
+    """Create all tables, upgrade legacy schemas and seed data idempotently."""
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+    await migrate_transaction_lifecycle(engine)
     async with SessionLocal() as session:
         await seed_data(session)
 

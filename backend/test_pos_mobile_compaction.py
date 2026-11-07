@@ -181,28 +181,26 @@ def test_rate_line_is_mobile_hidden_but_stays_a_live_region(lang: str) -> None:
 
 
 @pytest.mark.parametrize(("lang", "text"), [
-    ("en", "A pending transaction was created and deducted from the operator balance."),
-    ("ar", "تم إنشاء معاملة قيد الانتظار وخصمها من رصيد المشغّل."),
+    ("en", "Nothing is recorded yet and no balance has moved."),
+    ("ar", "لم تُسجَّل المعاملة بعد ولم يُخصم أي مبلغ."),
 ])
 def test_result_card_explanatory_subtext_is_mobile_hidden(lang: str, text: str) -> None:
     html = render(lang)
-    paragraph = re.search(r'<p class="(mt-1 [^"]*)">([^<]*' + re.escape(text) + r'[^<]*)</p>', html)
+    paragraph = re.search(
+        r'<p [^>]*class="(mt-1 [^"]*)"[^>]*>([^<]*' + re.escape(text) + r'[^<]*)</p>', html
+    )
     assert paragraph is not None
     assert {"hidden", "md:block"} <= set(classes_of(paragraph.group(1)))
-    # The code, copy action, status badge and result controls are untouched.
+    # The code, copy action, commit state and dialer controls are untouched.
     for element_id in (
         "ussd-output",
         "copy-ussd",
         "copy-status",
-        "result-status-badge",
-        "status-actions",
-        "status-failed",
-        "status-confirm",
-        "status-feedback",
+        "result-badge",
+        "commit-status",
         "dial-actions",
     ):
         assert f'id="{element_id}"' in html
-    assert 'data-status-action="completed"' in html
 
 
 # --- Desktop contract -----------------------------------------------------
@@ -255,18 +253,17 @@ def test_voucher_selection_and_transaction_flow_still_work() -> None:
             {"values": {"operator": "syriatel"}, "id": "operator", "event": "change"},
             {"voucher": {"operator": "syriatel", "amount": "62.50"}},
             {"values": {"phone": "0933123456"}, "id": "charge-form", "event": "submit"},
-            {"id": "status-completed", "event": "click"},
-            {"id": "status-confirm-yes", "event": "click"},
+            {"id": "copy-ussd", "event": "click"},
         ]
     )
     assert result["elements"]["amount"]["value"] == "62.50"
     assert result["elements"]["summary-amount"]["text"] == "62.5"
-    post = next(item for item in result["requests"] if item["method"] == "POST")
+    post = next(item for item in result["requests"] if item["url"] == "/api/transactions/preview")
     assert post["body"]["amount_cents"] == 6250
-    assert result["badge"]["text"] == "Completed"
-    assert [item["body"] for item in result["requests"] if item["method"] == "PATCH"] == [
-        {"status": "completed"}
-    ]
+    commit = next(item for item in result["commits"])
+    assert commit["body"]["amount_cents"] == 6250
+    assert commit["body"]["commit_key"] == "previewkey0000000000000000001"
+    assert result["badge"]["text"] == "Recorded"
 
 
 def test_copy_action_still_reports_success() -> None:

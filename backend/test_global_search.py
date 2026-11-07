@@ -1,3 +1,4 @@
+import itertools
 import asyncio
 from collections.abc import AsyncIterator, Iterator
 from contextlib import aclosing
@@ -54,6 +55,7 @@ def post_transaction(client: TestClient, phone: str, operator: str, service: str
             "operator_code": operator,
             "service_code": service,
             "amount_cents": amount,
+            "commit_key": new_commit_key(),
         },
     )
     assert response.status_code == 200
@@ -121,7 +123,7 @@ def test_search_transaction_by_reference(client: TestClient) -> None:
         "id", "reference", "amount_cents", "status", "customer_phone",
         "customer_name", "operator_code", "operator_name",
     }
-    assert item["amount_cents"] == 5000 and item["status"] == "pending"
+    assert item["amount_cents"] == 5000 and item["status"] == "successful"
     assert item["customer_phone"] == "0933123456" and item["customer_name"] == "Ahmad"
     assert item["operator_code"] == "mtn" and item["operator_name"] == "MTN"
 
@@ -173,3 +175,10 @@ def test_search_limits_each_section_to_ten(client: TestClient) -> None:
     # Newest transactions come first.
     ids = [item["id"] for item in references["transactions"]]
     assert ids == sorted(ids, reverse=True)
+
+_COMMIT_KEYS = itertools.count(1)
+
+
+def new_commit_key() -> str:
+    """A fresh commit key: every call is a deliberate, distinct sale."""
+    return f"testkey{next(_COMMIT_KEYS):022d}"

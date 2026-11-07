@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 from collections.abc import AsyncIterator, Iterator
 from contextlib import aclosing
 
@@ -56,16 +57,16 @@ def test_transaction_existing_and_new_customers(client: TestClient) -> None:
         ).status_code == 200
     customer = client.post("/api/customers", json={"phone": "0933123456", "name": "Customer"}).json()
     payload = {"customer_phone": "0933123456", "operator_code": "mtn", "service_code": "prepaid", "amount_cents": 5000}
-    response = client.post("/api/transactions", json=payload)
+    response = post_transaction(client, payload)
     assert response.status_code == 200
     result = response.json()
     assert result["ussd_string"] == "*150*65477*0933123456*50#"
-    assert result["status"] == "pending" and result["amount_cents"] == 5000
+    assert result["status"] == "successful" and result["amount_cents"] == 5000
     assert result["reference"].startswith("TXN-") and result["created_at"]
     assert client.get("/api/customers/lookup", params={"phone": "0933123456"}).json() == customer
 
     payload.update(customer_phone="0944123456", operator_code="syriatel", service_code="postpaid", amount_cents=0)
-    response2 = client.post("/api/transactions", json=payload)
+    response2 = post_transaction(client, payload)
     assert response2.status_code == 200
     assert response2.json()["ussd_string"] == "*150*1*67858*5*0*0944123456*0944123456#"
     assert response2.json()["reference"] != result["reference"]
@@ -92,16 +93,16 @@ def test_transaction_existing_and_new_customers(client: TestClient) -> None:
 
 def test_invalid_transaction_has_no_customer_side_effect(client: TestClient) -> None:
     payload = {"customer_phone": "0999999999", "operator_code": "unknown", "service_code": "prepaid", "amount_cents": 5000}
-    assert client.post("/api/transactions", json=payload).status_code == 404
+    assert post_transaction(client, payload).status_code == 404
     payload["operator_code"] = "mtn"
     payload["service_code"] = "unknown"
-    assert client.post("/api/transactions", json=payload).status_code == 404
+    assert post_transaction(client, payload).status_code == 404
     payload["service_code"] = "prepaid"
     payload["amount_cents"] = -1
-    assert client.post("/api/transactions", json=payload).status_code == 422
+    assert post_transaction(client, payload).status_code == 422
     payload["amount_cents"] = 5000
     payload["customer_phone"] = "0999#*1"
-    assert client.post("/api/transactions", json=payload).status_code == 422
+    assert post_transaction(client, payload).status_code == 422
     assert client.get("/api/customers/lookup", params={"phone": "0999999999"}).status_code == 404
 
 
@@ -117,7 +118,7 @@ def test_inactive_configuration_is_not_used(client: TestClient) -> None:
 
     asyncio.run(disable_service())
     payload = {"customer_phone": "0999999999", "operator_code": "mtn", "service_code": "prepaid", "amount_cents": 5000}
-    assert client.post("/api/transactions", json=payload).status_code == 400
+    assert post_transaction(client, payload).status_code == 400
     assert client.get("/api/customers/lookup", params={"phone": "0999999999"}).status_code == 404
 
 
@@ -129,12 +130,13 @@ def test_failed_transaction_does_not_leave_new_customer(client: TestClient, monk
         "/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 25000}
     ).status_code == 200
     payload = {"customer_phone": "0933123456", "operator_code": "mtn", "service_code": "prepaid", "amount_cents": 5000}
-    assert client.post("/api/transactions", json=payload).status_code == 200
+    assert post_transaction(client, payload).status_code == 200
     payload["customer_phone"] = "0944123456"
-    from sqlalchemy.exc import IntegrityError
-    with pytest.raises(IntegrityError):
-        client.post("/api/transactions", json=payload)
+    # The frozen uuid4 makes the reference collide, so the second commit fails
+    # atomically: no customer, no row, no debit, and a retryable 409.
+    assert post_transaction(client, payload).status_code == 409
     assert client.get("/api/customers/lookup", params={"phone": "0944123456"}).status_code == 404
+    assert len(client.get("/api/transactions").json()) == 1
 
 
 def test_normalized_customer_and_transaction_phones(client: TestClient) -> None:
@@ -154,13 +156,13 @@ def test_normalized_customer_and_transaction_phones(client: TestClient) -> None:
 
     payload = {"customer_phone": "+963933123456", "operator_code": "mtn",
                "service_code": "prepaid", "amount_cents": 5000}
-    transaction = client.post("/api/transactions", json=payload)
+    transaction = post_transaction(client, payload)
     assert transaction.status_code == 200
     assert transaction.json()["ussd_string"] == "*150*65477*0933123456*50#"
     assert client.get("/api/customers/lookup", params={"phone": "0933123456"}).json() == customer
 
     payload["customer_phone"] = "00963 944-123-456"
-    transaction = client.post("/api/transactions", json=payload)
+    transaction = post_transaction(client, payload)
     assert transaction.status_code == 200
     assert transaction.json()["ussd_string"] == "*150*65477*0944123456*50#"
     created = client.get("/api/customers/lookup", params={"phone": "0944123456"})
@@ -177,7 +179,7 @@ def test_phone_validation_errors(client: TestClient) -> None:
     assert "Invalid Syrian mobile number" in response.json()["detail"][0]["msg"]
     payload = {"customer_phone": "0923123456", "operator_code": "mtn",
                "service_code": "prepaid", "amount_cents": 5000}
-    response = client.post("/api/transactions", json=payload)
+    response = post_transaction(client, payload)
     assert response.status_code == 422
     assert "Invalid Syrian mobile number" in response.json()["detail"][0]["msg"]
 
@@ -304,3 +306,18 @@ def test_customer_search_returns_list_item_shape(client: TestClient) -> None:
     assert set(results[0]) == {"id", "phone", "name", "balance_cents", "debt_cents"}
     assert results[0]["phone"] == "0933123456"
     assert results[0]["debt_cents"] == 3000
+
+
+_COMMIT_KEYS = itertools.count(1)
+
+
+def new_commit_key() -> str:
+    """A fresh commit key: each call is a deliberate, distinct sale."""
+    return f"testposkey{next(_COMMIT_KEYS):019d}"
+
+
+def post_transaction(client: TestClient, payload: dict, **overrides):
+    body = dict(payload)
+    body.update(overrides)
+    body["commit_key"] = new_commit_key()
+    return client.post("/api/transactions", json=body)

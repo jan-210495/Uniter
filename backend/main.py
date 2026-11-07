@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import case, func, or_, select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy import delete as sql_delete
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.selectable import Subquery
@@ -19,12 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
     from .commission import get_commission_for_transaction
-    from .database import Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
+    from .database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from .seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from .validation import validate_syrian_phone
 else:
     from commission import get_commission_for_transaction
-    from database import Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
+    from database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from validation import validate_syrian_phone
 
@@ -134,7 +135,19 @@ class OperatorTopupResponse(BaseModel):
     reference: str
 
 
-class TransactionCreate(BaseModel):
+@app.on_event("startup")
+async def _upgrade_schema_on_startup() -> None:
+    """Upgrade an existing database before the first request is served.
+
+    Guarded and data-preserving; a fresh install is untouched because the file
+    does not exist yet. See ``database.upgrade_existing_database``.
+    """
+    await upgrade_existing_database()
+
+
+class TransactionRequest(BaseModel):
+    """Sale details shared by the preview and the commit call."""
+
     customer_phone: str
     operator_code: Code
     service_code: Code
@@ -144,6 +157,19 @@ class TransactionCreate(BaseModel):
     @classmethod
     def validate_customer_phone(cls, phone: str) -> str:
         return validate_syrian_phone(phone)
+
+
+class TransactionCreate(TransactionRequest):
+    """Commit a sale exactly once: ``commit_key`` is the idempotency key."""
+
+    commit_key: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class TransactionPreviewResponse(BaseModel):
+    """A rendered USSD code plus the key that will commit it."""
+
+    ussd_string: str
+    commit_key: str
 
 
 class CommissionSettingUpdate(BaseModel):
@@ -174,13 +200,13 @@ class TransactionResponse(BaseModel):
 
 
 class TransactionStatusUpdate(BaseModel):
-    """The result of the real-world USSD attempt, recorded by the POS operator.
+    """A requested status change for an existing transaction.
 
-    Only the two final outcomes are accepted; ``pending`` is the created state
-    and arbitrary status strings are rejected during request validation.
+    Arbitrary strings are rejected during request validation; the only
+    supported transition (successful -> failed) is enforced by the route.
     """
 
-    status: Literal["completed", "failed"]
+    status: Literal["successful", "failed"]
 
 
 class TransactionListItem(BaseModel):
@@ -536,7 +562,10 @@ async def global_search(
         .join(Customer, Transaction.customer_id == Customer.id)
         .join(Service, Transaction.service_id == Service.id)
         .join(Operator, Service.operator_id == Operator.id)
-        .where(or_(Transaction.reference.ilike(like), Customer.phone.ilike(like)))
+        .where(
+            or_(Transaction.reference.ilike(like), Customer.phone.ilike(like)),
+            Transaction.deleted_at.is_(None),
+        )
         .order_by(Transaction.created_at.desc(), Transaction.id.desc())
         .limit(10)
     )
@@ -570,12 +599,23 @@ async def stats_summary(
     Transaction; both cover the same UTC window and are optionally restricted
     to one operator. The daily series is zero-filled so every calendar day in
     the window has a row, oldest first.
+
+    Removed (tombstoned) transactions are excluded from both sides, so profit
+    and volume always describe the same sales. Failed rows still count in the
+    by-status breakdown, because the sale happened; removal is a reporting
+    tombstone and never reverses money.
     """
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(days=period)
 
-    profit_conditions = [ProfitLedger.created_at >= window_start]
-    transaction_conditions = [Transaction.created_at >= window_start]
+    profit_conditions = [
+        ProfitLedger.created_at >= window_start,
+        Transaction.deleted_at.is_(None),
+    ]
+    transaction_conditions = [
+        Transaction.created_at >= window_start,
+        Transaction.deleted_at.is_(None),
+    ]
     if operator_code is not None:
         profit_conditions.append(ProfitLedger.operator_code == operator_code)
         transaction_conditions.append(Operator.code == operator_code)
@@ -587,6 +627,8 @@ async def stats_summary(
             func.coalesce(func.sum(ProfitLedger.profit_cents), 0).label("profit_cents"),
             func.coalesce(func.sum(ProfitLedger.commission_cents), 0).label("commission_cents"),
         )
+        .select_from(ProfitLedger)
+        .join(Transaction, ProfitLedger.transaction_id == Transaction.id)
         .where(*profit_conditions)
         .group_by(ProfitLedger.operator_code)
     )
@@ -631,6 +673,8 @@ async def stats_summary(
             func.date(ProfitLedger.created_at).label("day"),
             func.coalesce(func.sum(ProfitLedger.profit_cents), 0).label("profit_cents"),
         )
+        .select_from(ProfitLedger)
+        .join(Transaction, ProfitLedger.transaction_id == Transaction.id)
         .where(*profit_conditions)
         .group_by(func.date(ProfitLedger.created_at))
     )
@@ -683,7 +727,7 @@ async def stats_summary(
             count=status_counts.get(status, (0, 0))[0],
             volume_cents=status_counts.get(status, (0, 0))[1],
         )
-        for status in ("pending", "completed", "failed")
+        for status in TRANSACTION_STATUSES
     ]
 
     today = now.date()
@@ -1177,21 +1221,117 @@ async def topup_operator_balance(
     )
 
 
-@app.post("/api/transactions", response_model=TransactionResponse)
-async def create_transaction(data: TransactionCreate, db: DbSession) -> Transaction:
-    operator = await db.scalar(select(Operator).where(Operator.code == data.operator_code))
+async def _resolve_sale_configuration(
+    db: AsyncSession, operator_code: str, service_code: str
+) -> tuple[Operator, Service]:
+    """Return the active operator/service pair or raise the usual 404/400."""
+    operator = await db.scalar(select(Operator).where(Operator.code == operator_code))
     if operator is None:
         raise HTTPException(status_code=404, detail="Operator not found")
     service = await db.scalar(
         select(Service).where(
-            Service.operator_id == operator.id, Service.code == data.service_code
+            Service.operator_id == operator.id, Service.code == service_code
         )
     )
     if service is None:
         raise HTTPException(status_code=404, detail="Service not found for operator")
     if not operator.is_active or not service.is_active:
         raise HTTPException(status_code=400, detail="Operator or service is inactive")
+    return operator, service
 
+
+async def _require_operator_balance(
+    db: AsyncSession, operator: Operator, amount_cents: int
+) -> None:
+    """Reject a sale the shop cannot fund with its prepaid operator credit."""
+    balance = await db.scalar(
+        select(OperatorBalance.balance_cents).where(OperatorBalance.operator_id == operator.id)
+    )
+    if balance is None or balance < amount_cents:
+        raise HTTPException(status_code=400, detail="Insufficient operator balance")
+
+
+async def _committed_transaction(
+    db: AsyncSession, data: TransactionCreate
+) -> Transaction | None:
+    """Return the sale already stored for this commit key, if any.
+
+    The key identifies one deliberate sale, so replaying the request returns
+    that same row (whatever its current status) instead of charging again. A
+    key reused for different details is rejected rather than silently answered.
+    """
+    row = (
+        await db.execute(
+            select(
+                Transaction,
+                Customer.phone.label("customer_phone"),
+                Operator.code.label("operator_code"),
+                Service.code.label("service_code"),
+            )
+            .join(Customer, Transaction.customer_id == Customer.id)
+            .join(Service, Transaction.service_id == Service.id)
+            .join(Operator, Service.operator_id == Operator.id)
+            .where(Transaction.idempotency_key == data.commit_key)
+        )
+    ).first()
+    if row is None:
+        return None
+    transaction = row[0]
+    same_sale = (
+        row.customer_phone == data.customer_phone
+        and row.operator_code == data.operator_code
+        and row.service_code == data.service_code
+        and transaction.amount_cents == data.amount_cents
+    )
+    if not same_sale:
+        raise HTTPException(
+            status_code=409,
+            detail="This commit key already belongs to a different sale",
+        )
+    return transaction
+
+
+@app.post("/api/transactions/preview", response_model=TransactionPreviewResponse)
+async def preview_transaction(
+    data: TransactionRequest, db: DbSession
+) -> TransactionPreviewResponse:
+    """Render the USSD code for a sale without persisting anything.
+
+    Generating a code is not a sale: no transaction row, no operator debit and
+    no commission entry are created here. The returned ``commit_key`` is what
+    the commit call uses to make the seller's tap idempotent.
+    """
+    operator, _service = await _resolve_sale_configuration(
+        db, data.operator_code, data.service_code
+    )
+    await _require_operator_balance(db, operator, data.amount_cents)
+    try:
+        ussd_string = await generate_ussd(
+            db, data.operator_code, data.service_code, data.customer_phone, data.amount_cents
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return TransactionPreviewResponse(ussd_string=ussd_string, commit_key=uuid4().hex)
+
+
+@app.post("/api/transactions", response_model=TransactionResponse)
+async def create_transaction(data: TransactionCreate, db: DbSession) -> Transaction:
+    """Commit a sale: persist it as successful and apply accounting once.
+
+    The seller's copy/dialer tap is the commit event. The operator balance is
+    debited with a single conditional UPDATE and the transaction row plus its
+    profit ledger row are written in the same database transaction, so a sale
+    is either fully recorded or not recorded at all. Replaying the same
+    ``commit_key`` returns the stored sale without touching the ledger again.
+    """
+    replay = await _committed_transaction(db, data)
+    if replay is not None:
+        return replay
+
+    operator, service = await _resolve_sale_configuration(
+        db, data.operator_code, data.service_code
+    )
+    await _require_operator_balance(db, operator, data.amount_cents)
     try:
         ussd_string = await generate_ussd(
             db, data.operator_code, data.service_code, data.customer_phone, data.amount_cents
@@ -1199,40 +1339,56 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    # The shop must hold enough prepaid credit with the operator; rejecting
-    # before anything is written keeps the request atomic.
-    balance = await db.scalar(
-        select(OperatorBalance).where(OperatorBalance.operator_id == operator.id)
-    )
-    if balance is None or balance.balance_cents < data.amount_cents:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail="Insufficient operator balance")
-
     try:
         commission = await get_commission_for_transaction(db, data.amount_cents)
     except ValueError as exc:
         raise HTTPException(status_code=500, detail="Invalid stored commission rate") from exc
     commission_cents = int(commission["commission_cents"])
 
-    customer = await db.scalar(select(Customer).where(Customer.phone == data.customer_phone))
-    is_new_customer = customer is None
-    if customer is None:
-        # The transaction request has no customer name; use the phone as a placeholder.
-        customer = Customer(phone=data.customer_phone, name=data.customer_phone)
-        db.add(customer)
-
-    transaction = Transaction(
-        customer=customer,
-        service=service,
-        amount_cents=data.amount_cents,
-        status="pending",
-        ussd_string=ussd_string,
-        reference=f"TXN-{uuid4().hex}",
-    )
-    db.add(transaction)
-    # Commission is collected from the customer, not spent as operator credit.
-    balance.balance_cents -= data.amount_cents
+    transaction: Transaction | None = None
     try:
+        customer = await db.scalar(select(Customer).where(Customer.phone == data.customer_phone))
+        if customer is None:
+            # Race-free get-or-create: a concurrent commit inserts nothing and
+            # both requests continue with the same customer row. The request
+            # carries no customer name, so the phone is the placeholder.
+            await db.execute(
+                sqlite_insert(Customer)
+                .values(phone=data.customer_phone, name=data.customer_phone)
+                .on_conflict_do_nothing(index_elements=[Customer.phone])
+            )
+            customer = await db.scalar(
+                select(Customer).where(Customer.phone == data.customer_phone)
+            )
+        if customer is None:  # pragma: no cover - the row exists after the insert
+            raise HTTPException(status_code=409, detail="Customer could not be resolved; retry")
+
+        # Atomic, non-negative debit: two concurrent commits can never overdraw.
+        debit = await db.execute(
+            update(OperatorBalance)
+            .where(
+                OperatorBalance.operator_id == operator.id,
+                OperatorBalance.balance_cents >= data.amount_cents,
+            )
+            .values(
+                balance_cents=OperatorBalance.balance_cents - data.amount_cents,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        if debit.rowcount != 1:
+            await db.rollback()
+            raise HTTPException(status_code=400, detail="Insufficient operator balance")
+
+        transaction = Transaction(
+            customer_id=customer.id,
+            service_id=service.id,
+            amount_cents=data.amount_cents,
+            status="successful",
+            ussd_string=ussd_string,
+            reference=f"TXN-{uuid4().hex}",
+            idempotency_key=data.commit_key,
+        )
+        db.add(transaction)
         await db.flush()  # assigns transaction.id for the profit ledger row
         db.add(
             ProfitLedger(
@@ -1246,11 +1402,14 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        # Concurrent requests can attempt to create the same new customer.
-        existing = await db.scalar(select(Customer).where(Customer.phone == data.customer_phone))
-        if is_new_customer and existing is not None:
-            raise HTTPException(status_code=409, detail="Customer was created concurrently; retry")
-        raise
+        # A concurrent commit with the same key won the race: answer with it
+        # instead of charging again. Nothing from this attempt survives.
+        replay = await _committed_transaction(db, data)
+        if replay is not None:
+            return replay
+        raise HTTPException(
+            status_code=409, detail="Could not commit the sale; retry with the same commit key"
+        ) from None
     await db.refresh(transaction)
     return transaction
 
@@ -1261,20 +1420,20 @@ async def update_transaction_status(
     data: TransactionStatusUpdate,
     db: DbSession,
 ) -> Transaction:
-    """Record the real-world result of one pending transaction.
+    """Mark a successful sale as failed.
 
-    A transaction is created ``pending`` when its USSD code is generated and
-    only its operator may confirm or reject it afterwards. The state guard is
-    part of the UPDATE statement itself, so duplicate or stale requests can
-    never overwrite a final status and concurrent callers get exactly one
-    winner. Accounting is deliberately untouched: the operator balance and the
-    profit ledger keep the values captured at creation time (a failed charge
-    does not refund automatically; see the handoff note).
+    The seller records the real-world outcome from the Transactions page. Only
+    ``successful -> failed`` is allowed, the guard lives in the UPDATE itself
+    (so replays and races cannot apply twice), and no money moves: the operator
+    debit, commission and profit ledger rows are deliberately left as recorded.
     """
+    if data.status != "failed":
+        raise HTTPException(status_code=409, detail="Transactions can only be marked failed")
+
     result = await db.execute(
         update(Transaction)
-        .where(Transaction.id == transaction_id, Transaction.status == "pending")
-        .values(status=data.status)
+        .where(Transaction.id == transaction_id, Transaction.status == "successful")
+        .values(status="failed")
     )
     if result.rowcount != 1:
         current = await db.scalar(
@@ -1282,7 +1441,7 @@ async def update_transaction_status(
         )
         if current is None:
             raise HTTPException(status_code=404, detail="Transaction not found")
-        raise HTTPException(status_code=409, detail=f"Transaction is already {current}")
+        raise HTTPException(status_code=409, detail="Transaction is already failed")
     await db.commit()
     transaction = await db.get(Transaction, transaction_id)
     if transaction is None:  # pragma: no cover - the row was just updated
@@ -1290,8 +1449,50 @@ async def update_transaction_status(
     return transaction
 
 
+@app.delete("/api/transactions/{transaction_id}", status_code=204, response_class=Response)
+async def remove_failed_transaction(
+    transaction_id: Annotated[int, Field(ge=1)], db: DbSession
+) -> Response:
+    """Remove a failed transaction from the reporting views (tombstone).
+
+    Only failed rows can be removed, and removal never refunds: the row keeps
+    its status with ``deleted_at`` set, and its profit ledger row and the
+    operator debit stay untouched so the audit trail survives. Deleting again
+    is safe and returns the same 204.
+    """
+    result = await db.execute(
+        update(Transaction)
+        .where(
+            Transaction.id == transaction_id,
+            Transaction.status == "failed",
+            Transaction.deleted_at.is_(None),
+        )
+        .values(deleted_at=datetime.now(timezone.utc))
+    )
+    if result.rowcount == 1:
+        await db.commit()
+        return Response(status_code=204)
+
+    row = (
+        await db.execute(
+            select(Transaction.status, Transaction.deleted_at).where(
+                Transaction.id == transaction_id
+            )
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if row.status != "failed":
+        raise HTTPException(status_code=409, detail="Only failed transactions can be removed")
+    return Response(status_code=204)  # already removed: repeating is safe
+
+
 def _transaction_list_statement():
-    """Base select of transactions joined with customer/operator/service labels."""
+    """Base select of live transactions joined with customer/operator/service labels.
+
+    Removed (tombstoned) rows are hidden from the list and the operator page;
+    the row itself and its profit ledger entry stay on disk for auditing.
+    """
     return (
         select(
             Transaction.id,
@@ -1310,6 +1511,7 @@ def _transaction_list_statement():
         .join(Customer, Transaction.customer_id == Customer.id)
         .join(Service, Transaction.service_id == Service.id)
         .join(Operator, Service.operator_id == Operator.id)
+        .where(Transaction.deleted_at.is_(None))
     )
 
 
@@ -1318,7 +1520,7 @@ async def list_transactions(
     db: DbSession,
     operator_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
     service_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
-    status: Annotated[str | None, Query(pattern="^(pending|completed|failed)$")] = None,
+    status: Annotated[str | None, Query(pattern="^(successful|failed)$")] = None,
     customer_phone: Annotated[str | None, Query(min_length=1, max_length=32)] = None,
 ) -> list[TransactionListItem]:
     """List transactions newest-first, optionally filtered by operator code,
@@ -1578,12 +1780,15 @@ async def close_register(
     if register.status != "open":
         raise HTTPException(status_code=400, detail="Can only close an open register")
 
-    # Compute cash collected: sum of completed transaction amount_cents since register opened
+    # Cash collected: the amount of every committed (successful) transaction in
+    # the register window. Failed and removed rows never count as cash; a
+    # removal is a reporting tombstone and reverses nothing.
     transactions_result = await db.scalars(
         select(Transaction)
         .where(
             Transaction.created_at >= register.opened_at,
-            Transaction.status == "completed",
+            Transaction.status == "successful",
+            Transaction.deleted_at.is_(None),
         )
     )
     transactions = transactions_result.all()
@@ -1629,12 +1834,15 @@ async def get_register_summary(
     if register is None:
         raise HTTPException(status_code=404, detail="No register found")
 
-    # Compute cash collected: sum of completed transaction amount_cents since register opened
+    # Cash collected: the amount of every committed (successful) transaction in
+    # the register window. Failed and removed rows never count as cash; a
+    # removal is a reporting tombstone and reverses nothing.
     transactions_result = await db.scalars(
         select(Transaction)
         .where(
             Transaction.created_at >= register.opened_at,
-            Transaction.status == "completed",
+            Transaction.status == "successful",
+            Transaction.deleted_at.is_(None),
         )
     )
     transactions = transactions_result.all()

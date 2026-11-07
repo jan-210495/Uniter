@@ -2,6 +2,7 @@
 the /pos transaction flow, the swapped auto-operator mapping and the mobile
 header layout."""
 
+import itertools
 import asyncio
 from collections.abc import AsyncIterator, Iterator
 from contextlib import aclosing
@@ -159,12 +160,13 @@ def test_pos_flow_creates_transaction_deducts_balance_and_records_profit(client)
             "operator_code": "mtn",
             "service_code": "prepaid",
             "amount_cents": 5000,
+            "commit_key": new_commit_key(),
         },
     )
     assert response.status_code == 200
     transaction = response.json()
     assert transaction["ussd_string"] == "*150*65477*0933123456*50#"
-    assert transaction["status"] == "pending"
+    assert transaction["status"] == "successful"
 
     # The operator balance was deducted.
     balances = {row["operator_code"]: row for row in test_client.get("/api/operators/balance").json()}
@@ -239,3 +241,10 @@ def test_pages_still_render(client) -> None:
         for lang in ("en", "ar"):
             response = test_client.get(f"/{page}", params={"lang": lang})
             assert response.status_code == 200, (page, lang)
+
+_COMMIT_KEYS = itertools.count(1)
+
+
+def new_commit_key() -> str:
+    """A fresh commit key: every call is a deliberate, distinct sale."""
+    return f"testkey{next(_COMMIT_KEYS):022d}"

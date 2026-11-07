@@ -111,7 +111,7 @@ def seed_window_data(sessions: async_sessionmaker) -> datetime:
     Returns the "now" the expectations below are computed against.
     """
     now = datetime.now(timezone.utc)
-    # MTN: profit 9,500 (comm 500); pending; yesterday.
+    # MTN: profit 9,500 (comm 500); successful; yesterday.
     insert_transaction(
         sessions,
         phone="0933123456",
@@ -119,11 +119,11 @@ def seed_window_data(sessions: async_sessionmaker) -> datetime:
         operator_code="mtn",
         service_code="prepaid",
         amount_cents=10_000,
-        status="pending",
+        status="successful",
         created_at=now - timedelta(days=1),
         commission_cents=500,
     )
-    # MTN: profit 2,375 (comm 125); pending; three days ago.
+    # MTN: profit 2,375 (comm 125); successful; three days ago.
     insert_transaction(
         sessions,
         phone="0933123456",
@@ -131,11 +131,11 @@ def seed_window_data(sessions: async_sessionmaker) -> datetime:
         operator_code="mtn",
         service_code="prepaid",
         amount_cents=2_500,
-        status="pending",
+        status="successful",
         created_at=now - timedelta(days=3),
         commission_cents=125,
     )
-    # Syriatel: profit 3,800 (comm 200); completed; two days ago.
+    # Syriatel: profit 3,800 (comm 200); successful; two days ago.
     insert_transaction(
         sessions,
         phone="0944123456",
@@ -143,7 +143,7 @@ def seed_window_data(sessions: async_sessionmaker) -> datetime:
         operator_code="syriatel",
         service_code="prepaid",
         amount_cents=4_000,
-        status="completed",
+        status="successful",
         created_at=now - timedelta(days=2),
         commission_cents=200,
     )
@@ -166,7 +166,7 @@ def seed_window_data(sessions: async_sessionmaker) -> datetime:
         operator_code="mtn",
         service_code="prepaid",
         amount_cents=100_000,
-        status="completed",
+        status="successful",
         created_at=now - timedelta(days=30),
         commission_cents=5_000,
     )
@@ -217,10 +217,9 @@ def test_summary_shape_and_defaults(stats_env) -> None:
             "transaction_count": 0,
         },
     ]
-    # All three statuses are present even with zero counts.
+    # Both persisted statuses are present even with zero counts.
     assert data["by_status"] == [
-        {"status": "pending", "count": 0, "volume_cents": 0},
-        {"status": "completed", "count": 0, "volume_cents": 0},
+        {"status": "successful", "count": 0, "volume_cents": 0},
         {"status": "failed", "count": 0, "volume_cents": 0},
     ]
     # Daily series: 7 zero-filled days, oldest first, ending today.
@@ -289,8 +288,7 @@ def test_totals_breakdowns_and_daily_match_hand_computation(stats_env) -> None:
     # Sorted by profit descending (MTN first).
     assert [row["operator_code"] for row in data["by_operator"]] == ["mtn", "syriatel"]
     assert data["by_status"] == [
-        {"status": "pending", "count": 2, "volume_cents": 12_500},
-        {"status": "completed", "count": 1, "volume_cents": 4_000},
+        {"status": "successful", "count": 3, "volume_cents": 16_500},
         {"status": "failed", "count": 1, "volume_cents": 1_000},
     ]
 
@@ -299,7 +297,7 @@ def test_totals_breakdowns_and_daily_match_hand_computation(stats_env) -> None:
     assert daily[(now - timedelta(days=1)).date().isoformat()] == {
         "date": (now - timedelta(days=1)).date().isoformat(),
         "profit_cents": 9_500,
-        "volume_cents": 11_000,  # 10,000 pending + 1,000 failed
+        "volume_cents": 11_000,  # 10,000 successful + 1,000 failed
         "transaction_count": 2,
     }
     assert daily[(now - timedelta(days=2)).date().isoformat()]["profit_cents"] == 3_800
@@ -329,10 +327,9 @@ def test_operator_filter_restricts_every_section(stats_env) -> None:
         "transaction_count": 3,
     }
     assert [row["operator_code"] for row in data["by_operator"]] == ["mtn"]
-    # Syriatel-only activity is gone; completed stays listed with a zero count.
+    # MTN keeps two successful sales and the failed one.
     assert data["by_status"] == [
-        {"status": "pending", "count": 2, "volume_cents": 12_500},
-        {"status": "completed", "count": 0, "volume_cents": 0},
+        {"status": "successful", "count": 2, "volume_cents": 12_500},
         {"status": "failed", "count": 1, "volume_cents": 1_000},
     ]
     daily = {row["date"]: row for row in data["daily"]}
@@ -357,8 +354,7 @@ def test_unknown_operator_filter_is_permissive(stats_env) -> None:
         "transaction_count": 0,
     }
     assert data["by_status"] == [
-        {"status": "pending", "count": 0, "volume_cents": 0},
-        {"status": "completed", "count": 0, "volume_cents": 0},
+        {"status": "successful", "count": 0, "volume_cents": 0},
         {"status": "failed", "count": 0, "volume_cents": 0},
     ]
     assert len(data["daily"]) == 7
@@ -405,8 +401,7 @@ def test_stats_page_markup(stats_env) -> None:
         "stats-volume",
         "stats-count",
         "stats-operator-rows",
-        "stats-pending-count",
-        "stats-completed-count",
+        "stats-successful-count",
         "stats-failed-count",
         "stats-daily-rows",
         "stats-status",
