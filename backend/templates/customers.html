@@ -222,6 +222,7 @@
         'nameRequired': 'أدخل اسم العميل.' if ar else 'Enter the customer name.',
         'saveFailed': 'تعذر حفظ التغييرات. حاول مرة أخرى.' if ar else 'Could not save the change. Try again.',
         'removeFailed': 'تعذر حذف العميل. حاول مرة أخرى.' if ar else 'Could not remove the customer. Try again.',
+        'removeBlocked': 'لا يمكن حذف هذا العميل: لديه معاملات محذوفة محفوظة للمراجعة.' if ar else 'This customer cannot be removed: their removed transactions are kept for the audit trail.',
         'loadFailed': 'تعذر تحميل قائمة العملاء.' if ar else 'Could not load the customer list.',
         'confirmRemove': 'حذف العميل {name}؟ سيتم حذف سجل معاملاته وديونه أيضاً.' if ar else 'Remove {name}? Their transaction and debt history will be deleted too.',
         'editNameLabel': 'اسم العميل' if ar else 'Customer name',
@@ -456,6 +457,12 @@
             const response = await fetch(`${apiBase}/api/customers/${encodeURIComponent(tr.dataset.customerId)}`, {
                 method: 'DELETE',
             });
+            if (response.status === 409) {
+                // Removed failed rows are the audit trail of a committed sale,
+                // so the server refuses to cascade-delete them.
+                setStatus(statusEl, messages.removeBlocked, 'error');
+                return;
+            }
             if (!response.ok) throw new Error('delete failed');
             setStatus(statusEl, messages.removed, 'success');
             await refresh(false);

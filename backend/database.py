@@ -109,7 +109,9 @@ class Transaction(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
     )
-    # Migration provenance for rows imported from the pending/completed schema.
+    # Provenance for rows imported by the lifecycle upgrade: the status this row
+    # had in the pending/completed schema, kept so the mapping stays traceable
+    # and reversible.
     legacy_status: Mapped[str | None] = mapped_column(String(20), nullable=True, default=None)
 
     customer: Mapped[Customer] = relationship(back_populates="transactions")
@@ -255,15 +257,26 @@ async def upgrade_existing_database() -> bool:
     """Upgrade an already-existing database file before the first request.
 
     ``create_all`` never alters an existing table, so a database written by an
-    earlier version must be rebuilt before the app can write to it. A missing
-    file is left alone: fresh databases are created (and migrated) by the
-    seeding entry points, and nothing is ever created implicitly here.
+    earlier version must be rebuilt before the app can write to it. The policy
+    lives with the migration itself:
+
+    * missing file — untouched: fresh databases are created (and already
+      current) by the seeding entry points; nothing is created implicitly here;
+    * empty file — reported as uninitialised, nothing to migrate;
+    * partially initialised schema — :class:`SchemaUpgradeError` so the app
+      fails closed instead of serving a schema it cannot write to;
+    * existing v1.0.x database — atomic, idempotent rebuild.
+
+    Any failure propagates: the caller (startup hook, ``init_db`` or the desktop
+    seed) stops instead of serving an incompatible schema, and the database file
+    is left as it was found.
     """
-    path = DATABASE_URL.database
-    if not path or not os.path.exists(path):
-        return False
-    await _migrate_schema()
-    return True
+    try:
+        from .migrations import upgrade_existing_database as _upgrade
+    except ImportError:  # pragma: no cover - flat module layout (PyInstaller)
+        from migrations import upgrade_existing_database as _upgrade
+
+    return await _upgrade(engine, DATABASE_URL.database)
 
 
 async def init_db() -> None:

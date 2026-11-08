@@ -1,7 +1,8 @@
 """Tests for the /customers page and its CRUD endpoints."""
 
-import itertools
 import asyncio
+import itertools
+import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import aclosing
 
@@ -19,7 +20,8 @@ RAMI_PHONE = "0944123456"
 
 
 @pytest.fixture
-def client(tmp_path) -> Iterator[TestClient]:
+def client_and_engine(tmp_path):
+    """The app client plus its database, for tests that must inspect the rows."""
     engine = create_async_engine(
         URL.create("sqlite+aiosqlite", database=str(tmp_path / "customers.db"))
     )
@@ -40,10 +42,15 @@ def client(tmp_path) -> Iterator[TestClient]:
     app.dependency_overrides[get_db] = override_db
     try:
         with TestClient(app) as test_client:
-            yield test_client
+            yield test_client, engine
     finally:
         app.dependency_overrides.pop(get_db, None)
         asyncio.run(engine.dispose())
+
+
+@pytest.fixture
+def client(client_and_engine) -> Iterator[TestClient]:
+    yield client_and_engine[0]
 
 
 def create_customer(client: TestClient, phone: str, name: str) -> dict:
@@ -174,6 +181,73 @@ def test_remove_customer(client: TestClient) -> None:
     # Deleting again (or a missing customer) reports 404.
     assert client.delete(f"/api/customers/{customer['id']}").status_code == 404
     assert client.delete("/api/customers/999999").status_code == 404
+
+
+def _database_rows(engine) -> dict:
+    """Every row an audit-sensitive deletion could touch."""
+
+    async def read():
+        async with engine.connect() as connection:
+            return await connection.run_sync(
+                lambda sync: {
+                    table: [
+                        tuple(row)
+                        for row in sync.exec_driver_sql(
+                            f"SELECT * FROM {table} ORDER BY id"
+                        ).all()
+                    ]
+                    for table in ("customers", "transactions", "profit_ledger", "operator_balance")
+                }
+            )
+
+    return asyncio.run(read())
+
+
+def test_remove_customer_is_refused_while_removed_transactions_exist(
+    client_and_engine,
+) -> None:
+    """A tombstoned row is audit history: its customer cannot be deleted."""
+    client, engine = client_and_engine
+    customer = create_customer(client, AHMAD_PHONE, "Ahmad")
+    assert client.post(
+        "/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 100000}
+    ).status_code == 200
+    sale = client.post(
+        "/api/transactions",
+        json={
+            "customer_phone": AHMAD_PHONE,
+            "operator_code": "mtn",
+            "service_code": "prepaid",
+            "amount_cents": 5000,
+            "commit_key": new_commit_key(),
+        },
+    )
+    assert sale.status_code == 200
+    transaction_id = sale.json()["id"]
+    assert client.patch(
+        f"/api/transactions/{transaction_id}/status", json={"status": "failed"}
+    ).status_code == 200
+    assert client.delete(f"/api/transactions/{transaction_id}").status_code == 204
+
+    before = _database_rows(engine)
+    response = client.delete(f"/api/customers/{customer['id']}")
+    assert response.status_code == 409
+    assert "audit trail" in response.json()["detail"]
+
+    # Nothing was cascaded: the customer, the tombstone, the ledger and the
+    # operator debit are exactly as they were.
+    assert _database_rows(engine) == before
+    assert client.get("/api/customers/lookup", params={"phone": AHMAD_PHONE}).status_code == 200
+
+    # Both languages explain the refusal instead of a generic failure. The
+    # messages object is JSON-encoded into the page, so compare its escaped form.
+    english = client.get("/customers").text
+    arabic = client.get("/customers", params={"lang": "ar"}).text
+    assert "removeBlocked" in english and "removeBlocked" in arabic
+    assert "kept for the audit trail" in english
+    arabic_message = "لا يمكن حذف هذا العميل: لديه معاملات محذوفة محفوظة للمراجعة."
+    escaped = json.dumps(arabic_message, ensure_ascii=True)[1:-1]
+    assert escaped in arabic or escaped.replace("\\", "\\\\") in arabic
 
 
 def test_debt_balance_comes_from_the_ledger(client: TestClient) -> None:

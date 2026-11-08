@@ -60,7 +60,7 @@ _data_dir = ensure_data_dir()
 import uvicorn
 from backend.main import app, templates
 from backend.database import Base, engine, SessionLocal
-from backend.migrations import migrate_transaction_lifecycle
+from backend.migrations import SchemaUpgradeError, migrate_transaction_lifecycle
 from backend.seed import seed_data
 
 
@@ -78,11 +78,19 @@ async def _seed_database() -> None:
 
 
 def ensure_default_data() -> None:
-    """Seed the database so the app works out of the box on first launch."""
+    """Seed the database so the app works out of the box on first launch.
+
+    A schema upgrade that cannot be completed safely is re-raised: the app must
+    not serve a database it cannot write to, and the file must be left exactly
+    as it was found. Other seeding problems stay non-fatal, as before.
+    """
     import asyncio
 
     try:
         asyncio.run(_seed_database())
+    except SchemaUpgradeError:
+        logger.exception("The database schema cannot be upgraded safely; refusing to start")
+        raise
     except Exception:
         logger.exception("Database seeding failed; the app may still work if tables already exist")
 
@@ -473,9 +481,15 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
 def main(args: list[str] | None = None) -> int:
     parsed = parse_args(args)
 
-    # Seed the database so the app works out of the box on first launch.
+    # Seed the database so the app works out of the box on first launch. A
+    # failed, unsafe upgrade stops here: no server is started against a
+    # database this build cannot read or write.
     ensure_data_dir()
-    ensure_default_data()
+    try:
+        ensure_default_data()
+    except SchemaUpgradeError as error:
+        logger.error("Uniter cannot start: %s", error)
+        return 1
 
     target_host = "127.0.0.1" if parsed.host in ("0.0.0.0", "") else parsed.host
     app_url = f"http://{target_host}:{parsed.port}"

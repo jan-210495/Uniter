@@ -1022,10 +1022,30 @@ async def update_customer(customer_id: int, data: CustomerUpdate, db: DbSession)
 
 @app.delete("/api/customers/{customer_id}", status_code=204, response_class=Response)
 async def delete_customer(customer_id: int, db: DbSession) -> Response:
-    """Remove a customer together with its transactions and debt ledger rows."""
+    """Remove a customer together with its transactions and debt ledger rows.
+
+    Removed failed rows are refused: a tombstoned transaction is the audit trail
+    of a sale the seller had already committed (its operator debit and profit
+    ledger row stay on disk), so deleting the customer — which would cascade to
+    the transaction and ledger rows — is not allowed. Nothing is deleted when
+    that guard trips.
+    """
     customer = await db.get(Customer, customer_id)
     if customer is None:
         raise HTTPException(status_code=404, detail="Customer not found")
+    tombstoned = await db.scalar(
+        select(func.count())
+        .select_from(Transaction)
+        .where(
+            Transaction.customer_id == customer_id,
+            Transaction.deleted_at.is_not(None),
+        )
+    )
+    if tombstoned:
+        raise HTTPException(
+            status_code=409,
+            detail="Customer keeps removed transactions for the audit trail",
+        )
     # Dependent rows are removed explicitly: SQLite enforces the foreign keys,
     # and the customer row owns this history once the customer is deleted.
     customer_transactions = select(Transaction.id).where(Transaction.customer_id == customer_id)
