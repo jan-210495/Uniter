@@ -1013,3 +1013,317 @@ def test_upgrade_aborts_when_the_old_vocabulary_is_still_referenced(tmp_path) ->
         assert asyncio.run(_read_snapshot(engine)) == before
     finally:
         asyncio.run(engine.dispose())
+
+
+# ---------------------------------------------------------------------------
+# Slice 2.3b: a committed sale needs no customer record
+# ---------------------------------------------------------------------------
+
+#: A database written by the 2.3/2.3a build: lifecycle columns present,
+#: customer_id still NOT NULL and no transaction-level phone.
+PRE_2_3B_SQL = (
+    """
+    CREATE TABLE transactions (
+        id INTEGER NOT NULL,
+        customer_id INTEGER NOT NULL,
+        service_id INTEGER NOT NULL,
+        amount_cents INTEGER NOT NULL,
+        status VARCHAR(20) NOT NULL,
+        ussd_string VARCHAR(255) NOT NULL,
+        reference VARCHAR(255) NOT NULL,
+        created_at DATETIME NOT NULL,
+        idempotency_key VARCHAR(64),
+        deleted_at DATETIME,
+        legacy_status VARCHAR(20),
+        PRIMARY KEY (id),
+        CONSTRAINT transaction_status CHECK (status IN ('successful', 'failed')),
+        UNIQUE (reference),
+        FOREIGN KEY(customer_id) REFERENCES customers (id),
+        FOREIGN KEY(service_id) REFERENCES services (id),
+        UNIQUE (idempotency_key)
+    )
+    """,
+    "INSERT INTO transactions (id, customer_id, service_id, amount_cents, status,"
+    " ussd_string, reference, created_at)"
+    " VALUES (1, 1, 1, 5000, 'successful', '*150*1#', 'TXN-linked', '2026-01-02 10:00:00')",
+    "INSERT INTO transactions (id, customer_id, service_id, amount_cents, status,"
+    " ussd_string, reference, created_at, legacy_status)"
+    " VALUES (2, 1, 1, 4000, 'failed', '*150*2#', 'TXN-imported', '2026-01-03 11:00:00', 'pending')",
+    "INSERT INTO profit_ledger (transaction_id, operator_code, amount_cents,"
+    " commission_cents, profit_cents, created_at)"
+    " VALUES (1, 'mtn', 5000, 250, 250, '2026-01-02 10:00:00')",
+)
+
+
+def build_pre_2_3b(tmp_path):
+    engine = make_engine(tmp_path, "pre-2-3b.db")
+    asyncio.run(_build_with(engine, PRE_2_3B_SQL))
+    return engine
+
+
+#: Columns the 2.3b snapshot compares; ``customer_phone`` may not exist yet.
+SNAPSHOT_COLUMNS = (
+    "id",
+    "customer_id",
+    "service_id",
+    "amount_cents",
+    "status",
+    "reference",
+    "ussd_string",
+    "created_at",
+    "idempotency_key",
+    "deleted_at",
+    "legacy_status",
+    "customer_phone",
+)
+
+
+async def _customer_snapshot(engine) -> dict:
+    async with engine.connect() as connection:
+        present = {
+            row[1]
+            for row in (
+                await connection.exec_driver_sql("PRAGMA table_info(transactions)")
+            ).all()
+        }
+        selected = ", ".join(
+            name for name in SNAPSHOT_COLUMNS if name in present
+        )
+        return {
+            "rows": [
+                tuple(row)
+                for row in (
+                    await connection.exec_driver_sql(
+                        f"SELECT {selected} FROM transactions ORDER BY id"
+                    )
+                ).all()
+            ],
+            "has_customer_phone": "customer_phone" in present,
+            "customers": [
+                tuple(row)
+                for row in (
+                    await connection.exec_driver_sql("SELECT * FROM customers ORDER BY id")
+                ).all()
+            ],
+            "ledger": [
+                tuple(row)
+                for row in (
+                    await connection.exec_driver_sql("SELECT * FROM profit_ledger ORDER BY id")
+                ).all()
+            ],
+            "balances": [
+                tuple(row)
+                for row in (
+                    await connection.exec_driver_sql("SELECT * FROM operator_balance ORDER BY id")
+                ).all()
+            ],
+            "foreign_key_check": [
+                tuple(row) for row in (await connection.exec_driver_sql("PRAGMA foreign_key_check")).all()
+            ],
+            "integrity": [
+                tuple(row) for row in (await connection.exec_driver_sql("PRAGMA integrity_check")).all()
+            ],
+            "columns": [
+                tuple(row)
+                for row in (await connection.exec_driver_sql("PRAGMA table_info(transactions)")).all()
+            ],
+            "objects": [
+                tuple(row)
+                for row in (
+                    await connection.exec_driver_sql(
+                        "SELECT type, name, tbl_name, sql FROM sqlite_master"
+                        " WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+                    )
+                ).all()
+            ],
+        }
+
+
+def test_widening_preserves_every_row_customer_and_ledger_entry(tmp_path) -> None:
+    engine = build_pre_2_3b(tmp_path)
+    try:
+        before = asyncio.run(_customer_snapshot(engine))
+        assert before["has_customer_phone"] is False
+        assert asyncio.run(migrate_transaction_lifecycle(engine)) is True
+        after = asyncio.run(_customer_snapshot(engine))
+        assert after["has_customer_phone"] is True
+
+        # Every row, id, link, amount, reference and provenance is unchanged;
+        # the new phone column is backfilled from the linked customer.
+        assert after["rows"] == [
+            (1, 1, 1, 5000, "successful", "TXN-linked", "*150*1#",
+             "2026-01-02 10:00:00", None, None, None, "0944123456"),
+            (2, 1, 1, 4000, "failed", "TXN-imported", "*150*2#",
+             "2026-01-03 11:00:00", None, None, "pending", "0944123456"),
+        ]
+        assert after["customers"] == before["customers"]
+        assert after["ledger"] == before["ledger"]
+        assert after["balances"] == before["balances"]
+        assert after["foreign_key_check"] == before["foreign_key_check"] == []
+        assert after["integrity"] == [("ok",)]
+
+        # Only the transactions table changed: nothing else in the schema did.
+        changed = {
+            (kind, name, table)
+            for kind, name, table, sql in after["objects"]
+            if (kind, name, table, sql) not in before["objects"]
+        }
+        assert all(name == "transactions" for _kind, name, _table in changed)
+
+        # The link may now be NULL, and the column order matches a fresh build.
+        columns = {row[1]: row for row in after["columns"]}
+        assert columns["customer_id"][3] == 0  # notnull
+        assert "customer_phone" in columns
+    finally:
+        asyncio.run(engine.dispose())
+
+
+def test_widened_schema_matches_a_freshly_created_database(tmp_path) -> None:
+    engine = build_pre_2_3b(tmp_path)
+    fresh = make_engine(tmp_path, "fresh-2-3b.db")
+
+    async def setup_fresh() -> None:
+        async with fresh.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+
+    asyncio.run(setup_fresh())
+    try:
+        asyncio.run(migrate_transaction_lifecycle(engine))
+        migrated = asyncio.run(_read_snapshot(engine))
+        created = asyncio.run(_read_snapshot(fresh))
+    finally:
+        asyncio.run(engine.dispose())
+        asyncio.run(fresh.dispose())
+
+    assert migrated["columns"] == created["columns"]
+    assert migrated["foreign_keys"] == created["foreign_keys"]
+
+
+def test_widening_is_idempotent(tmp_path) -> None:
+    engine = build_pre_2_3b(tmp_path)
+    try:
+        assert asyncio.run(migrate_transaction_lifecycle(engine)) is True
+        state = asyncio.run(_customer_snapshot(engine))
+        assert asyncio.run(migrate_transaction_lifecycle(engine)) is False
+        assert asyncio.run(_customer_snapshot(engine)) == state
+    finally:
+        asyncio.run(engine.dispose())
+
+
+def test_the_widened_table_accepts_a_sale_without_a_customer(tmp_path) -> None:
+    engine = build_pre_2_3b(tmp_path)
+    try:
+        asyncio.run(migrate_transaction_lifecycle(engine))
+
+        async def insert() -> None:
+            async with engine.begin() as connection:
+                await connection.exec_driver_sql(
+                    "INSERT INTO transactions (customer_id, service_id, amount_cents, status,"
+                    " ussd_string, reference, created_at, idempotency_key, customer_phone)"
+                    " VALUES (NULL, 1, 1200, 'successful', '*150*12#', 'TXN-one-time',"
+                    " '2026-02-01 00:00:00', 'onetimekey000000000001', '0955123456')"
+                )
+
+        asyncio.run(insert())
+        assert asyncio.run(_customer_snapshot(engine))["foreign_key_check"] == []
+    finally:
+        asyncio.run(engine.dispose())
+
+
+def test_widening_aborts_while_the_customer_link_is_still_required(tmp_path) -> None:
+    """A half-widened table (phone column, link still NOT NULL) fails closed."""
+    engine = make_engine(tmp_path, "half-widened.db")
+    ddl = PRE_2_3B_SQL[0].replace(
+        "        legacy_status VARCHAR(20),",
+        "        legacy_status VARCHAR(20),\n        customer_phone VARCHAR(32),",
+    )
+    asyncio.run(
+        _build_with(
+            engine,
+            (ddl, PRE_2_3B_SQL[1]),
+        )
+    )
+    try:
+        before = asyncio.run(_customer_snapshot(engine))
+        with pytest.raises(SchemaUpgradeError, match="NOT NULL"):
+            asyncio.run(migrate_transaction_lifecycle(engine))
+        assert asyncio.run(_customer_snapshot(engine)) == before
+    finally:
+        asyncio.run(engine.dispose())
+
+
+def test_widening_aborts_on_a_leftover_temporary_table(tmp_path) -> None:
+    from backend.migrations import CUSTOMER_TABLE
+
+    engine = build_pre_2_3b(tmp_path)
+
+    async def add_leftover() -> None:
+        async with engine.begin() as connection:
+            await connection.exec_driver_sql(
+                f"CREATE TABLE {CUSTOMER_TABLE} (id INTEGER PRIMARY KEY)"
+            )
+
+    asyncio.run(add_leftover())
+    try:
+        before = asyncio.run(_customer_snapshot(engine))
+        with pytest.raises(SchemaUpgradeError, match="leftover"):
+            asyncio.run(migrate_transaction_lifecycle(engine))
+        assert asyncio.run(_customer_snapshot(engine)) == before
+    finally:
+        asyncio.run(engine.dispose())
+
+
+def test_a_legacy_placeholder_name_is_preserved_through_the_widening(tmp_path) -> None:
+    """A customer whose name is its phone (v1.0.x data) is kept verbatim."""
+    engine = build_pre_2_3b(tmp_path)
+
+    async def rename_to_phone() -> None:
+        async with engine.begin() as connection:
+            await connection.exec_driver_sql("UPDATE customers SET name = '0944123456'")
+
+    asyncio.run(rename_to_phone())
+    try:
+        assert asyncio.run(migrate_transaction_lifecycle(engine)) is True
+        state = asyncio.run(_customer_snapshot(engine))
+        assert state["customers"][0][1:3] == ("0944123456", "0944123456")
+        # The row keeps its link; only the phone column is filled in.
+        assert [row[1] for row in state["rows"]] == [1, 1]
+        assert state["foreign_key_check"] == []
+    finally:
+        asyncio.run(engine.dispose())
+
+
+def test_widening_fails_closed_and_leaves_the_file_untouched(tmp_path, monkeypatch) -> None:
+    from backend import migrations
+
+    engine = build_pre_2_3b(tmp_path)
+    try:
+        before = asyncio.run(_customer_snapshot(engine))
+
+        def explode(connection, plan):
+            raise RuntimeError("injected failure after the widened copy")
+
+        monkeypatch.setattr(migrations, "_verify_customer_copy", explode)
+        with pytest.raises(RuntimeError, match="injected failure"):
+            asyncio.run(migrate_transaction_lifecycle(engine))
+        monkeypatch.undo()
+
+        assert asyncio.run(_customer_snapshot(engine)) == before
+        # Still upgradeable afterwards.
+        assert asyncio.run(migrate_transaction_lifecycle(engine)) is True
+    finally:
+        asyncio.run(engine.dispose())
+
+
+def test_both_steps_apply_to_a_v1_0_x_database_in_one_run(tmp_path) -> None:
+    """The 2.3 lifecycle rebuild and the 2.3b widening compose."""
+    engine = build_legacy(tmp_path)
+    try:
+        assert asyncio.run(migrate_transaction_lifecycle(engine)) is True
+        state = asyncio.run(_customer_snapshot(engine))
+        assert [row[4] for row in state["rows"]] == ["failed", "successful", "failed"]
+        assert [row[11] for row in state["rows"]] == ["0944123456"] * 3
+        assert state["foreign_key_check"] == [] and state["integrity"] == [("ok",)]
+        assert asyncio.run(migrate_transaction_lifecycle(engine)) is False
+    finally:
+        asyncio.run(engine.dispose())

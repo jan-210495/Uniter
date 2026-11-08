@@ -25,6 +25,7 @@ ROWS = [
         "status": "successful",
         "amount_cents": 3000,
         "created_at": "2026-11-05T09:00:00+00:00",
+        "customer_id": 1,
         "customer_phone": "0944123456",
         "customer_name": "Ahmad",
         "operator_code": "mtn",
@@ -39,6 +40,7 @@ ROWS = [
         "status": "failed",
         "amount_cents": 2000,
         "created_at": "2026-11-04T09:00:00+00:00",
+        "customer_id": 2,
         "customer_phone": "0933123456",
         "customer_name": "Rami",
         "operator_code": "syriatel",
@@ -53,6 +55,7 @@ ROWS = [
         "status": "successful",
         "amount_cents": 1000,
         "created_at": "2026-11-03T09:00:00+00:00",
+        "customer_id": 1,
         "customer_phone": "0944123456",
         "customer_name": "Ahmad",
         "operator_code": "mtn",
@@ -121,6 +124,35 @@ def test_only_allowed_actions_are_rendered_per_status() -> None:
 
     # Every row keeps its nine cells, including the actions column.
     assert all(entry["cells"] == 9 for entry in result["rows"])
+
+
+def test_a_one_time_sale_has_no_customer_name_a_neutral_label() -> None:
+    """An unlinked sale shows its phone, and a neutral label instead of a name.
+
+    The number is never repeated as the customer name.
+    """
+    one_time = dict(ROWS[0])
+    one_time.update(id=9, reference="TXN-one-time", customer_id=None,
+                    customer_name=None, customer_phone="0955123456")
+    result = run([], rows=[one_time])
+    entry = row(result, 9)
+    assert [cell["text"] for cell in entry["customer"]] == ["One-time sale", "0955123456"]
+    assert entry["customer"][1]["dir"] == "ltr"
+    # Neutral styling, not the dark customer-name emphasis.
+    assert "text-slate-500" in entry["customer"][0]["classes"]
+    assert "text-slate-900" not in entry["customer"][0]["classes"]
+
+    arabic = run([], rows=[one_time], lang="ar")
+    assert [cell["text"] for cell in row(arabic, 9)["customer"]] == [
+        "بيع لمرة واحدة",
+        "0955123456",
+    ]
+
+
+def test_a_linked_sale_still_shows_its_customer_name() -> None:
+    result = run([])
+    assert [cell["text"] for cell in row(result, 3)["customer"]] == ["Ahmad", "0944123456"]
+    assert "text-slate-900" in row(result, 3)["customer"][0]["classes"]
 
 
 def test_arabic_actions_are_translated() -> None:

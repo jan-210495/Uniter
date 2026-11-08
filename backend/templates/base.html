@@ -141,7 +141,8 @@
             'transactions': 'المعاملات' if lang|default('en') == 'ar' else 'Transactions',
             'operators': 'المشغّلون' if lang|default('en') == 'ar' else 'Operators',
             'balance': 'الرصيد' if lang|default('en') == 'ar' else 'Balance',
-            'currency': 'ل.س' if lang|default('en') == 'ar' else 'SYP'
+            'currency': 'ل.س' if lang|default('en') == 'ar' else 'SYP',
+            'oneTimeSale': 'بيع لمرة واحدة' if lang|default('en') == 'ar' else 'One-time sale'
         }|tojson }};
         const SEARCH_DEBOUNCE_MS = 220;
         const searchResults = document.getElementById('global-search-results');
@@ -233,7 +234,8 @@
                 data.transactions.forEach((transaction) => {
                     appendSearchOption(
                         'transaction', transaction, transaction.reference,
-                        transaction.customer_name + ' · ' + formatSearchMoney(transaction.amount_cents)
+                        (transaction.customer_name || searchMessages.oneTimeSale)
+                            + ' · ' + formatSearchMoney(transaction.amount_cents)
                     );
                 });
             }

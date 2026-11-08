@@ -96,6 +96,11 @@ ADDED_COLUMNS = (
     ("legacy_status", "VARCHAR(20)"),
 )
 
+#: Slice 2.3b columns: a committed sale no longer requires a customer record.
+#: ``customer_id`` becomes nullable and the transaction carries the charged
+#: phone itself, so a one-time sale stays identifiable in history and filters.
+CUSTOMER_COLUMNS = (("customer_phone", "VARCHAR(32)"),)
+
 #: Columns the application needs on every version of the table.
 REQUIRED_COLUMNS = frozenset(
     {
@@ -112,6 +117,9 @@ REQUIRED_COLUMNS = frozenset(
 
 TABLE = "transactions"
 LEGACY_TABLE = "transactions_legacy"
+#: Temporary name used by the 2.3b widening. Deliberately different from
+#: ``LEGACY_TABLE`` so a half-finished lifecycle upgrade is still detected.
+CUSTOMER_TABLE = "transactions_customer_upgrade"
 STATUS_CONSTRAINT = "transaction_status"
 
 _CREATE_TABLE_RE = re.compile(
@@ -350,10 +358,10 @@ def _rewrite_status_checks(definitions: list[str]) -> int:
     return rewritten
 
 
-def _rewrite_ddl(ddl: str) -> tuple[str, tuple[str, ...]]:
+def _rewrite_ddl(ddl: str, added_columns=ADDED_COLUMNS) -> tuple[str, tuple[str, ...]]:
     """Return the new CREATE TABLE statement for the rebuilt ``transactions``.
 
-    Only the table name, the status CHECK list and the three added columns are
+    Only the table name, the status CHECK list and the added columns are
     changed; every other definition is copied verbatim.
     """
     name, definitions, trailer = _split_create_table(ddl)
@@ -376,7 +384,7 @@ def _rewrite_ddl(ddl: str) -> tuple[str, tuple[str, ...]]:
     }
     inserted = [
         f"{column_name} {column_type}"
-        for column_name, column_type in ADDED_COLUMNS
+        for column_name, column_type in added_columns
         if column_name not in existing_columns
     ]
     if inserted:
@@ -544,21 +552,35 @@ def _source_columns(plan: _Plan) -> list[str]:
     return list(_definition_column_names(_split_create_table(plan.ddl)[1]))
 
 
-def _copy_statement(plan: _Plan) -> str:
-    """Copy every legacy column, mapping status and recording its legacy value.
+#: Expression for each column this revision adds to the copied rows. Columns
+#: already present in the live table are copied verbatim instead (an extra
+#: column added by hand keeps its value); the three lifecycle columns start
+#: empty except ``legacy_status``, which records provenance.
+_ADDED_COLUMN_EXPRESSIONS = {
+    "idempotency_key": "NULL",
+    "deleted_at": "NULL",
+    "legacy_status": "status",
+}
 
-    Unknown extra columns are carried over verbatim, so nothing is dropped; the
-    three new columns start empty except ``legacy_status`` (provenance).
+
+def _copy_statement(plan: _Plan) -> str:
+    """Copy every column, mapping status and recording its legacy value.
+
+    Unknown extra columns are carried over verbatim, so nothing is dropped.
     """
     source = _source_columns(plan)
     expressions = [
         _STATUS_CASE_SQL if name == "status" else _quote(name) for name in source
     ]
-    targets = ", ".join(_quote(name) for name in source)
-    target_sql = targets + ", idempotency_key, deleted_at, legacy_status"
-    expression_sql = ", ".join(expressions) + ", NULL, NULL, status"
+    added = [
+        (name, _ADDED_COLUMN_EXPRESSIONS[name])
+        for name, _sql_type in ADDED_COLUMNS
+        if name not in source
+    ]
+    targets = ", ".join([_quote(name) for name in source] + [name for name, _ in added])
+    expression_sql = ", ".join(expressions + [expression for _, expression in added])
     return (
-        f"INSERT INTO {_quote(TABLE)} ({target_sql}) "
+        f"INSERT INTO {_quote(TABLE)} ({targets}) "
         f"SELECT {expression_sql} FROM {_quote(LEGACY_TABLE)} ORDER BY id"
     )
 
@@ -650,20 +672,280 @@ def _verify_rebuild(connection, plan: _Plan) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Public entry points
+# Slice 2.3b: a committed sale no longer requires a customer record
 # ---------------------------------------------------------------------------
 
+def _backfill_phone_sql(source_table: str) -> str:
+    """Backfill for ``customer_phone``: the linked customer's canonical phone.
 
-def _run(connection) -> bool:
-    plan = _build_plan(connection)
+    Rows without a customer link keep NULL (a phone-only sale recorded by a
+    build that already stores the phone) — the value is never invented. The
+    qualifier is the table being *copied from*, which the rebuild renames.
+    """
+    return (
+        f"(SELECT phone FROM customers WHERE customers.id = {_quote(source_table)}.customer_id)"
+    )
+
+
+def _build_customer_plan(connection) -> _Plan | None:
+    """Inspect the live table and plan the 2.3b widening, or ``None`` if current.
+
+    The table must already carry the lifecycle columns (that upgrade is a
+    separate, earlier step). Raises ``SchemaUpgradeError`` — before anything is
+    written — for a schema this upgrade cannot widen safely.
+    """
+    if not _has_table(connection, TABLE):
+        return None
+    if _has_table(connection, CUSTOMER_TABLE):
+        raise SchemaUpgradeError(
+            f"a leftover {CUSTOMER_TABLE!r} table exists; refusing to overwrite it"
+        )
+
+    ddl = connection.exec_driver_sql(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (TABLE,)
+    ).scalar()
+    if not ddl:
+        raise SchemaUpgradeError("transactions table has no recorded CREATE TABLE statement")
+
+    columns = _table_columns(connection, TABLE)
+    names = {column.name for column in columns}
+    missing = sorted((REQUIRED_COLUMNS | {name for name, _ in ADDED_COLUMNS}) - names)
+    if missing:
+        raise SchemaUpgradeError(
+            "transactions table is missing required columns: " + ", ".join(missing)
+        )
+
+    present = [name for name, _ in CUSTOMER_COLUMNS if name in names]
+    if len(present) == len(CUSTOMER_COLUMNS):
+        # Already widened. The link must still be nullable, otherwise a
+        # phone-only sale would be impossible again.
+        if not _customer_link_is_nullable(connection, columns):
+            raise SchemaUpgradeError(
+                "transactions.customer_id is NOT NULL; a phone-only sale cannot be recorded"
+            )
+        return None
+    if present:
+        raise SchemaUpgradeError(
+            "transactions table has a partially widened customer column set: "
+            + ", ".join(present)
+        )
+
+    for column in columns:
+        if (
+            column.name not in REQUIRED_COLUMNS
+            and column.name not in {name for name, _ in ADDED_COLUMNS}
+            and column.notnull
+            and column.default is None
+            and not column.primary_key
+        ):
+            raise SchemaUpgradeError(
+                "transactions table has an unknown NOT NULL column without a default: "
+                + column.name
+            )
+
+    new_ddl, new_columns = _rewrite_ddl(ddl, ADDED_COLUMNS + CUSTOMER_COLUMNS)
+    if not _customer_link_is_nullable(connection, columns):
+        new_ddl = _make_customer_link_nullable(new_ddl)
+
+    objects = _master_objects(connection)
+    indexes = tuple(
+        obj for obj in objects if obj.type == "index" and obj.tbl_name == TABLE and obj.sql
+    )
+    triggers = tuple(obj for obj in objects if obj.type == "trigger" and obj.tbl_name == TABLE)
+    other_objects = tuple(
+        obj
+        for obj in objects
+        if not (obj.type == "table" and obj.name == TABLE)
+        and not (obj.type in {"index", "trigger"} and obj.tbl_name == TABLE)
+    )
+    row_count = int(
+        connection.exec_driver_sql(f"SELECT COUNT(*) FROM {_quote(TABLE)}").scalar() or 0
+    )
+    return _Plan(
+        ddl=ddl,
+        new_ddl=new_ddl,
+        columns=new_columns,
+        indexes=indexes,
+        triggers=triggers,
+        other_objects=other_objects,
+        foreign_key_violations=_foreign_key_violations(connection),
+        row_count=row_count,
+    )
+
+
+_CUSTOMER_ID_DEFINITION_RE = re.compile(
+    r'^\s*"?customer_id"?\s+(?P<type>INTEGER|BIGINT|INT).*$', re.IGNORECASE
+)
+
+
+def _customer_link_is_nullable(connection, columns=None) -> bool:
+    """True when ``customer_id`` may be NULL (i.e. a phone-only sale is legal)."""
+    if columns is None:
+        columns = _table_columns(connection, TABLE)
+    for column in columns:
+        if column.name == "customer_id":
+            return not column.notnull
+    return False
+
+
+def _make_customer_link_nullable(new_ddl: str) -> str:
+    """Drop NOT NULL from the ``customer_id`` column definition only.
+
+    Everything else in the definition — type, UNIQUE, CHECK, DEFAULT, and the
+    table-level foreign key — is left exactly as it was.
+    """
+    name, definitions, trailer = _split_create_table(new_ddl)
+    if name != TABLE:  # pragma: no cover - produced by _rewrite_ddl
+        raise SchemaUpgradeError(f"unexpected table name in transactions DDL: {name!r}")
+    rewritten = 0
+    for index, definition in enumerate(definitions):
+        if _is_table_constraint(definition):
+            continue
+        match = _CUSTOMER_ID_DEFINITION_RE.match(definition)
+        if match is None:
+            continue
+        text = definition
+        text = re.sub(r"\s+NOT\s+NULL\b", "", text, count=1, flags=re.IGNORECASE)
+        if re.search(r"\bNOT\s+NULL\b", text, re.IGNORECASE):
+            raise SchemaUpgradeError(
+                "transactions.customer_id NOT NULL constraint could not be removed safely"
+            )
+        definitions[index] = text
+        rewritten += 1
+    if rewritten != 1:
+        raise SchemaUpgradeError(
+            "transactions.customer_id column definition is missing or duplicated"
+        )
+    body = ",\n    ".join(definitions)
+    return f"CREATE TABLE {_quote(TABLE)} (\n    {body}\n){trailer}"
+
+
+def _customer_copy_statement(plan: _Plan) -> str:
+    """Copy every live column, backfilling the phone from the linked customer.
+
+    ``customer_phone`` is new, so it is not read from the source table: it is
+    backfilled from the linked customer record. The display keeps reading the
+    name from that record, exactly as before.
+    """
+    source = _source_columns(plan)
+    targets = list(plan.columns)
+    expressions = []
+    for name in targets:
+        if name in source:
+            expressions.append(_quote(name))
+        elif name == "customer_phone":
+            expressions.append(_backfill_phone_sql(CUSTOMER_TABLE))
+        else:  # pragma: no cover - the only new column is handled above
+            raise SchemaUpgradeError(f"no copy expression for new column {name!r}")
+    return (
+        f"INSERT INTO {_quote(TABLE)} ({', '.join(_quote(name) for name in targets)}) "
+        f"SELECT {', '.join(expressions)} FROM {_quote(CUSTOMER_TABLE)} ORDER BY id"
+    )
+
+
+def _apply_customer_upgrade(connection, plan: _Plan) -> None:
+    """Widen the table inside the caller's transaction."""
+    connection.exec_driver_sql(f"ALTER TABLE {_quote(TABLE)} RENAME TO {_quote(CUSTOMER_TABLE)}")
+    connection.exec_driver_sql(plan.new_ddl)
+    connection.exec_driver_sql(_customer_copy_statement(plan))
+    _verify_customer_copy(connection, plan)
+    connection.exec_driver_sql(f"DROP TABLE {_quote(CUSTOMER_TABLE)}")
+    for index in plan.indexes:
+        connection.exec_driver_sql(index.sql or "")
+    for trigger in plan.triggers:
+        connection.exec_driver_sql(trigger.sql or "")
+    _verify_rebuild(connection, plan)
+    if not _customer_link_is_nullable(connection):
+        raise SchemaUpgradeError(
+            "rebuilt transactions.customer_id is still NOT NULL"
+        )
+
+
+def _verify_customer_copy(connection, plan: _Plan) -> None:
+    """Prove the widened copy kept every row, link, amount and name/phone."""
+    copied = int(connection.exec_driver_sql(f"SELECT COUNT(*) FROM {_quote(TABLE)}").scalar() or 0)
+    if copied != plan.row_count:
+        raise SchemaUpgradeError(
+            f"row copy mismatch: expected {plan.row_count}, copied {copied}"
+        )
+    for check in (
+        f"SELECT COUNT(*) FROM (SELECT id FROM {_quote(CUSTOMER_TABLE)} "
+        f"EXCEPT SELECT id FROM {_quote(TABLE)})",
+        f"SELECT COUNT(*) FROM (SELECT id FROM {_quote(TABLE)} "
+        f"EXCEPT SELECT id FROM {_quote(CUSTOMER_TABLE)})",
+        # Nothing that was already recorded may change value.
+        f"SELECT COUNT(*) FROM (SELECT id, customer_id, service_id, amount_cents, status,"
+        f" reference, ussd_string, created_at, idempotency_key, deleted_at, legacy_status"
+        f" FROM {_quote(CUSTOMER_TABLE)}"
+        f" EXCEPT SELECT id, customer_id, service_id, amount_cents, status,"
+        f" reference, ussd_string, created_at, idempotency_key, deleted_at, legacy_status"
+        f" FROM {_quote(TABLE)})",
+    ):
+        if connection.exec_driver_sql(check).scalar():
+            raise SchemaUpgradeError("the widened transactions table does not match the original")
+    # Every linked row kept its phone, taken from the customer record.
+    mismatched = connection.exec_driver_sql(
+        f"SELECT COUNT(*) FROM {_quote(TABLE)} t"
+        f" JOIN customers c ON c.id = t.customer_id"
+        f" WHERE t.customer_phone IS NOT c.phone"
+    ).scalar()
+    if mismatched:
+        raise SchemaUpgradeError(
+            f"the phone backfill did not match the linked customer for {int(mismatched)} rows"
+        )
+    # Nothing is guessed where there was no link: the column stays empty. Every
+    # name still comes from the customer record, exactly as before, so a legacy
+    # record whose name is a phone number is preserved rather than rewritten.
+    invented = connection.exec_driver_sql(
+        f"SELECT COUNT(*) FROM {_quote(TABLE)} WHERE customer_id IS NULL AND customer_phone IS NOT NULL"
+    ).scalar()
+    if invented:
+        raise SchemaUpgradeError("the phone backfill invented values for unlinked rows")
+
+
+def _run_customer_upgrade(connection) -> bool:
+    plan = _build_customer_plan(connection)
     if plan is None:
         return False
-    _apply(connection, plan)
+    _apply_customer_upgrade(connection, plan)
     return True
+
+
+def _transaction_upgrade_plan(connection) -> tuple[_Plan | None, _Plan | None]:
+    """Both steps' plans, computed in order without writing anything.
+
+    Returns ``(lifecycle_plan, customer_plan)``; either may be ``None`` when
+    that step is already current. The second plan is only meaningful when the
+    first is ``None`` — after the lifecycle rebuild the live schema is the one
+    the first step produced, which already lacks the 2.3b columns.
+    """
+    lifecycle_plan = _build_plan(connection)
+    if lifecycle_plan is not None:
+        # The lifecycle rebuild is the first step; 2.3b is planned (and applied)
+        # only against its result, inside the same lock.
+        return lifecycle_plan, None
+    return None, _build_customer_plan(connection)
+
+
+def _run_all(connection) -> bool:
+    """Apply every pending step inside the caller's transaction, in order."""
+    lifecycle_plan = _build_plan(connection)
+    changed = False
+    if lifecycle_plan is not None:
+        _apply(connection, lifecycle_plan)
+        changed = True
+    if _run_customer_upgrade(connection):
+        changed = True
+    return changed
 
 
 async def migrate_transaction_lifecycle(engine: AsyncEngine) -> bool:
     """Upgrade the transactions table in place; return True when it changed.
+
+    Two steps run in one locked transaction, in this order: the
+    pending/completed -> successful/failed lifecycle rebuild (Slice 2.3/2.3a),
+    then the widening that lets a committed sale exist without a customer
+    record (Slice 2.3b). Both are data-preserving and idempotent.
 
     Safe to call on a current or empty database (no-op) and safe to call
     repeatedly or from two processes at once. Raises ``SchemaUpgradeError``
@@ -673,8 +955,8 @@ async def migrate_transaction_lifecycle(engine: AsyncEngine) -> bool:
         # Maintenance work needs explicit transaction control, and PRAGMA
         # statements only take effect outside an implicit transaction.
         await connection.execution_options(isolation_level="AUTOCOMMIT")
-        precheck = await connection.run_sync(_build_plan)
-        if precheck is None:
+        lifecycle_plan, customer_plan = await connection.run_sync(_transaction_upgrade_plan)
+        if lifecycle_plan is None and customer_plan is None:
             return False
 
         await connection.exec_driver_sql("PRAGMA busy_timeout=5000")
@@ -685,7 +967,7 @@ async def migrate_transaction_lifecycle(engine: AsyncEngine) -> bool:
         await connection.exec_driver_sql("BEGIN IMMEDIATE")
         try:
             # Re-inspect inside the write lock: another start may have won.
-            changed = await connection.run_sync(_run)
+            changed = await connection.run_sync(_run_all)
             await connection.exec_driver_sql("COMMIT")
         except Exception:
             await connection.exec_driver_sql("ROLLBACK")
@@ -696,7 +978,7 @@ async def migrate_transaction_lifecycle(engine: AsyncEngine) -> bool:
             await connection.exec_driver_sql("PRAGMA foreign_keys=ON")
 
     if changed:
-        logger.info("Upgraded transactions to the successful/failed lifecycle")
+        logger.info("Upgraded transactions to the committed-sale lifecycle")
     return changed
 
 
@@ -734,6 +1016,7 @@ async def upgrade_existing_database(engine: AsyncEngine, database_path: str | No
 
 __all__ = [
     "ADDED_COLUMNS",
+    "CUSTOMER_COLUMNS",
     "FINAL_STATUSES",
     "LEGACY_STATUSES",
     "STATUS_MAP",

@@ -136,7 +136,8 @@
         'actionDenied': 'لا يمكن تنفيذ هذا الإجراء على هذه المعاملة.' if ar else 'This action is not allowed for that transaction.',
         'actionError': 'تعذر تنفيذ الإجراء. حاول مرة أخرى.' if ar else 'Could not apply the action. Try again.',
         'servicePrepaid': 'مسبق الدفع' if ar else 'Pre-Paid',
-        'servicePostpaid': 'لاحق الدفع' if ar else 'Post-Paid'
+        'servicePostpaid': 'لاحق الدفع' if ar else 'Post-Paid',
+        'oneTimeCustomer': 'بيع لمرة واحدة' if ar else 'One-time sale'
     }|tojson }};
     const pageLang = {{ lang|default('en')|tojson }};
     const filterForm = document.getElementById('tx-filters');
@@ -394,11 +395,18 @@
         const customer = makeCell('px-4 py-3');
         const customerName = document.createElement('span');
         customerName.className = 'block font-semibold text-slate-900';
-        customerName.textContent = transaction.customer_name;
         const customerPhone = document.createElement('span');
         customerPhone.dir = 'ltr';
         customerPhone.className = 'block font-mono text-xs text-slate-500';
         customerPhone.textContent = transaction.customer_phone;
+        if (transaction.customer_name) {
+            customerName.textContent = transaction.customer_name;
+        } else {
+            // No customer record: the phone is shown on its own, with a neutral
+            // label instead of repeating the number as a name.
+            customerName.className = 'block font-semibold text-slate-500';
+            customerName.textContent = messages.oneTimeCustomer;
+        }
         customer.append(customerName, customerPhone);
 
         const operator = makeCell('px-4 py-3 text-slate-700');

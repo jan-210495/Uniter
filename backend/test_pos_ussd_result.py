@@ -104,6 +104,8 @@ def test_copy_commits_the_sale_once_with_the_preview_key() -> None:
     commit = commits(result)[0]
     assert commit["body"] == {
         "customer_phone": "0944123456",
+        # No name was typed: the commit is a one-time sale, not a customer.
+        "customer_name": None,
         "operator_code": "mtn",
         "service_code": "prepaid",
         "amount_cents": 5000,
@@ -263,3 +265,133 @@ def test_arabic_copy_failure_feedback() -> None:
     assert result["elements"]["copy-status"]["text"] == (
         "تعذر النسخ تلقائياً. حدد الرمز وانسخه يدوياً."
     )
+
+
+# --- Slice 2.3b: named regulars vs one-time sales -------------------------
+# A name identifies a repeat customer; a blank or whitespace-only name is a
+# one-time sale. In both cases the sale commits once, on Copy or the dialer tap,
+# and preparing the code writes nothing.
+
+GENERATE_NAMED = [
+    {"values": {"phone": "0944123456", "customer-name": "Ahmad"}, "id": "charge-form", "event": "submit"}
+]
+GENERATE_BLANK = [
+    {"values": {"phone": "0944123456", "customer-name": "   "}, "id": "charge-form", "event": "submit"}
+]
+
+
+def test_generate_with_a_name_previews_without_registering_anything() -> None:
+    result = run(GENERATE_NAMED)
+    assert [request["url"] for request in result["previews"]] == ["/api/transactions/preview"]
+    # No customer is created while preparing a code.
+    assert [r for r in result["requests"] if r["method"] == "POST" and r["url"] == "/api/customers"] == []
+    assert commits(result) == []
+    assert result["elements"]["result-badge"]["text"] == "Not recorded yet"
+    assert result["elements"]["register-status"]["text"] == (
+        "A regular customer will be registered when the sale is recorded."
+    )
+
+
+def test_generate_random_text_name_is_only_registered_on_commit() -> None:
+    """Even a brand-new name writes nothing until the seller commits."""
+    result = run(GENERATE_NAMED + COPY)
+    creates = [r for r in result["requests"] if r["method"] == "POST" and r["url"] == "/api/customers"]
+    assert creates == []
+    assert len(commits(result)) == 1
+    assert commits(result)[0]["body"]["customer_name"] == "Ahmad"
+
+
+def test_a_name_registered_under_another_number_is_not_silently_replaced() -> None:
+    """The seller typed 0944…; the name resolves to 0933…. Neither is swapped in."""
+    result = run(GENERATE_NAMED + COPY, customerLookup="found")
+    assert [r["url"] for r in result["requests"] if "lookup-by-name" in r["url"]] == [
+        "/api/customers/lookup-by-name?name=Ahmad"
+    ]
+    # No charge is prepared against a number the seller did not type, and the
+    # typed number is not quietly rewritten either.
+    assert result["previews"] == []
+    assert commits(result) == []
+    assert [r for r in result["requests"] if "api/customers" in r["url"] and r["method"] == "POST"] == []
+    assert result["elements"]["register-status"]["text"] == (
+        "That name is registered under a different number. Check the name or the number."
+    )
+    assert result["elements"]["result-badge"]["text"] == "Not recorded yet"
+
+
+def test_the_matching_number_still_previews_and_commits_under_the_name() -> None:
+    """With the registered number typed, the name resolves and the sale commits."""
+    steps = [{"values": {"phone": "0933123456", "customer-name": "Ahmad"},
+              "id": "charge-form", "event": "submit"}]
+    result = run(steps + COPY, customerLookup="found")
+    assert result["previews"][0]["body"] == {
+        "customer_phone": "0933123456",
+        "operator_code": "mtn",
+        "service_code": "prepaid",
+        "amount_cents": 5000,
+    }
+    commit = commits(result)[0]
+    assert commit["body"]["customer_name"] == "Ahmad"
+    assert commit["body"]["customer_phone"] == "0933123456"
+    assert commit["body"]["commit_key"] == COMMIT_KEY
+
+
+def test_an_unreadable_name_lookup_does_not_prepare_or_record_a_sale() -> None:
+    result = run(GENERATE_NAMED + COPY, customerLookup="error")
+    assert commits(result) == []
+    assert result["elements"]["register-status"]["text"] == "Could not look up the customer. Try again."
+
+
+def test_blank_name_is_a_one_time_sale_with_no_customer_call() -> None:
+    result = run(GENERATE_BLANK + COPY)
+    assert [r for r in result["requests"] if "api/customers" in r["url"]] == []
+    assert len(commits(result)) == 1
+    assert commits(result)[0]["body"]["customer_name"] is None
+    assert commits(result)[0]["body"]["customer_phone"] == "0944123456"
+    assert result["elements"]["register-status"]["text"] == "One-time sale with no customer account."
+    assert result["elements"]["result-badge"]["text"] == "Recorded"
+
+
+def test_no_name_at_all_is_a_one_time_sale_too() -> None:
+    result = run(GENERATE + COPY)
+    assert [r for r in result["requests"] if "api/customers" in r["url"]] == []
+    assert commits(result)[0]["body"]["customer_name"] is None
+
+
+def test_named_sale_dialer_commits_once_and_keeps_the_dialer_url() -> None:
+    result = run(GENERATE_NAMED + [{"id": "dial-ussd", "event": "click"}])
+    assert len(commits(result)) == 1
+    assert commits(result)[0]["body"]["customer_name"] == "Ahmad"
+    assert result["navigation"]["href"] == "tel:*150*65477*0944123456*50%23"
+    assert result["elements"]["result-badge"]["text"] == "Recorded"
+
+
+def test_one_time_sale_dialer_commits_once_and_keeps_the_dialer_url() -> None:
+    result = run(GENERATE_BLANK + [{"id": "dial-ussd", "event": "click"}])
+    assert len(commits(result)) == 1
+    assert commits(result)[0]["body"]["customer_name"] is None
+    assert result["navigation"]["href"] == "tel:*150*65477*0944123456*50%23"
+    assert result["elements"]["result-badge"]["text"] == "Recorded"
+
+
+def test_failed_copy_with_a_name_records_nothing_and_registers_no_one() -> None:
+    result = run(GENERATE_NAMED + COPY, clipboard="reject", execCommand="fail")
+    assert commits(result) == []
+    assert [r for r in result["requests"] if "api/customers" in r["url"] and r["method"] == "POST"] == []
+    assert result["elements"]["result-badge"]["text"] == "Not recorded yet"
+    assert result["elements"]["commit-status"]["text"] == (
+        "Nothing was recorded: copy the code by hand and send it to the customer."
+    )
+
+
+def test_failed_commit_with_a_name_records_nothing() -> None:
+    result = run(GENERATE_NAMED + COPY, commit="error")
+    assert len(commits(result)) == 1
+    assert result["elements"]["result-badge"]["text"] == "Not recorded yet"
+    assert result["elements"]["commit-status"]["text"] == "Could not commit the sale"
+
+
+def test_one_time_sale_copy_commit_arabic_feedback() -> None:
+    result = run(GENERATE_BLANK + COPY, lang="ar")
+    assert commits(result)[0]["body"]["customer_name"] is None
+    assert result["elements"]["register-status"]["text"] == "بيع لمرة واحدة بلا حساب عميل."
+    assert result["elements"]["result-badge"]["text"] == "مسجّلة"

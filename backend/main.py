@@ -145,18 +145,41 @@ async def _upgrade_schema_on_startup() -> None:
     await upgrade_existing_database()
 
 
+def normalize_customer_name(name: str | None) -> str | None:
+    """Return a usable customer name, or ``None`` when there is none.
+
+    Customer records are for repeat (named) customers. A blank or
+    whitespace-only name means the buyer is a one-time, phone-only customer:
+    no customer record is created or modified. A number is never accepted as a
+    stand-in for a name here.
+    """
+    cleaned = (name or "").strip()
+    return cleaned or None
+
+
 class TransactionRequest(BaseModel):
-    """Sale details shared by the preview and the commit call."""
+    """Sale details shared by the preview and the commit call.
+
+    ``customer_name`` is optional: with a name the sale belongs to a repeat
+    customer (linked, and registered on first use); without one it is a
+    one-time sale recorded against the phone alone.
+    """
 
     customer_phone: str
     operator_code: Code
     service_code: Code
     amount_cents: int = Field(ge=0, le=9223372036854775807)
+    customer_name: str | None = Field(default=None, max_length=255)
 
     @field_validator("customer_phone")
     @classmethod
     def validate_customer_phone(cls, phone: str) -> str:
         return validate_syrian_phone(phone)
+
+    @field_validator("customer_name")
+    @classmethod
+    def validate_customer_name(cls, name: str | None) -> str | None:
+        return normalize_customer_name(name)
 
 
 class TransactionCreate(TransactionRequest):
@@ -210,7 +233,11 @@ class TransactionStatusUpdate(BaseModel):
 
 
 class TransactionListItem(BaseModel):
-    """A transaction enriched with customer, operator and service labels."""
+    """A transaction enriched with customer, operator and service labels.
+
+    ``customer_id`` and ``customer_name`` are ``None`` for a one-time sale: no
+    customer record exists for it, and its phone is never repeated as a name.
+    """
 
     id: int
     reference: str
@@ -218,8 +245,9 @@ class TransactionListItem(BaseModel):
     status: str
     amount_cents: int
     created_at: datetime
+    customer_id: int | None
     customer_phone: str
-    customer_name: str
+    customer_name: str | None
     operator_code: str
     operator_name: str
     service_code: str
@@ -233,8 +261,9 @@ class SearchTransactionItem(BaseModel):
     reference: str
     amount_cents: int
     status: str
+    customer_id: int | None
     customer_phone: str
-    customer_name: str
+    customer_name: str | None
     operator_code: str
     operator_name: str
 
@@ -548,22 +577,27 @@ async def global_search(
     )
     customers = [CustomerListItem(**row._mapping) for row in customer_rows.all()]
 
+    # The customer join is an outer join and the phone match covers the row's
+    # own phone, so a one-time sale is searchable by reference and by number.
+    customer_phone_label = func.coalesce(Transaction.customer_phone, Customer.phone)
     transaction_rows = await db.execute(
         select(
             Transaction.id,
             Transaction.reference,
             Transaction.amount_cents,
             Transaction.status,
-            Customer.phone.label("customer_phone"),
+            Transaction.customer_id.label("customer_id"),
+            customer_phone_label.label("customer_phone"),
             Customer.name.label("customer_name"),
             Operator.code.label("operator_code"),
             Operator.name.label("operator_name"),
         )
-        .join(Customer, Transaction.customer_id == Customer.id)
+        .select_from(Transaction)
+        .outerjoin(Customer, Transaction.customer_id == Customer.id)
         .join(Service, Transaction.service_id == Service.id)
         .join(Operator, Service.operator_id == Operator.id)
         .where(
-            or_(Transaction.reference.ilike(like), Customer.phone.ilike(like)),
+            or_(Transaction.reference.ilike(like), customer_phone_label.ilike(like)),
             Transaction.deleted_at.is_(None),
         )
         .order_by(Transaction.created_at.desc(), Transaction.id.desc())
@@ -1048,12 +1082,35 @@ async def delete_customer(customer_id: int, db: DbSession) -> Response:
         )
     # Dependent rows are removed explicitly: SQLite enforces the foreign keys,
     # and the customer row owns this history once the customer is deleted.
-    customer_transactions = select(Transaction.id).where(Transaction.customer_id == customer_id)
+    #
+    # A transaction that already records its own phone (every sale committed by
+    # this build) does not have to disappear with the customer: it is a
+    # committed sale with its own accounting, so it is unlinked instead and
+    # stays in history as a one-time sale. Rows imported from an older build
+    # carry no phone of their own; their history lives on the customer record,
+    # so those are removed with it, exactly as before.
+    dropped_ids = select(Transaction.id).where(
+        Transaction.customer_id == customer_id,
+        Transaction.customer_phone.is_(None),
+    )
     await db.execute(
-        sql_delete(ProfitLedger).where(ProfitLedger.transaction_id.in_(customer_transactions))
+        sql_delete(ProfitLedger).where(ProfitLedger.transaction_id.in_(dropped_ids))
     )
     await db.execute(sql_delete(DebtLedger).where(DebtLedger.customer_id == customer_id))
-    await db.execute(sql_delete(Transaction).where(Transaction.customer_id == customer_id))
+    await db.execute(
+        sql_delete(Transaction).where(
+            Transaction.customer_id == customer_id,
+            Transaction.customer_phone.is_(None),
+        )
+    )
+    await db.execute(
+        update(Transaction)
+        .where(
+            Transaction.customer_id == customer_id,
+            Transaction.customer_phone.is_not(None),
+        )
+        .values(customer_id=None)
+    )
     await db.delete(customer)
     await db.commit()
     return Response(status_code=204)
@@ -1284,11 +1341,12 @@ async def _committed_transaction(
         await db.execute(
             select(
                 Transaction,
-                Customer.phone.label("customer_phone"),
+                func.coalesce(Transaction.customer_phone, Customer.phone).label("customer_phone"),
                 Operator.code.label("operator_code"),
                 Service.code.label("service_code"),
             )
-            .join(Customer, Transaction.customer_id == Customer.id)
+            .select_from(Transaction)
+            .outerjoin(Customer, Transaction.customer_id == Customer.id)
             .join(Service, Transaction.service_id == Service.id)
             .join(Operator, Service.operator_id == Operator.id)
             .where(Transaction.idempotency_key == data.commit_key)
@@ -1309,6 +1367,109 @@ async def _committed_transaction(
             detail="This commit key already belongs to a different sale",
         )
     return transaction
+
+
+#: Reported when several records carry the typed name and the phone cannot pick
+#: one, so the sale would have to be guessed.
+AMBIGUOUS_CUSTOMER_NAME = (
+    "More than one customer has this name; enter the phone number that belongs to this customer"
+)
+#: Reported when the typed phone already belongs to a different person.
+PHONE_BELONGS_TO_ANOTHER_CUSTOMER = (
+    "That phone number belongs to a different customer; check the name or open the customer page"
+)
+#: Reported when the name matches a customer but the typed number does not: it
+#: may be a new number for the same person or a different person entirely.
+NAME_DOES_NOT_MATCH_CUSTOMER_PHONE = (
+    "A customer with this name is registered under a different number; "
+    "check the number or open the customer page"
+)
+
+
+def _store_sale_preferences(
+    customer: Customer, operator_code: str, service_code: str
+) -> None:
+    """Remember the operator/service a named customer's sale used.
+
+    Only gaps are filled: a value the customer already has is kept, so a
+    preference the seller chose on the customer page is never overridden.
+    """
+    if customer.operator_code is None:
+        customer.operator_code = operator_code
+    if customer.service_code is None:
+        customer.service_code = service_code
+
+
+async def _resolve_sale_customer(
+    db: AsyncSession, name: str, phone: str, operator_code: str, service_code: str
+) -> tuple[Customer | None, str | None]:
+    """Link a named sale to the right customer, registering a new regular one.
+
+    Returns ``(customer, conflict)``. The seller's typed name identifies a
+    repeat customer; the typed phone is only used to register a new record,
+    never to overrule an existing person's number:
+
+    * no record with that name -> the phone is registered as a named regular
+      customer, with the sale's operator/service stored for next time
+      (race-free get-or-create);
+    * one record with that name and that phone -> reuse it and fill any gap in
+      its stored preferences;
+    * more than one record with that name -> only the row whose phone matches
+      is unambiguous; otherwise the name is ambiguous and nothing is written;
+    * the typed phone already belongs to somebody else -> the sale would be
+      attributed to the wrong person, so it is refused instead of guessed.
+
+    A conflict never writes anything: the caller gets the problem, not a
+    half-applied sale.
+    """
+    rows = (
+        await db.scalars(
+            select(Customer)
+            .where(func.lower(Customer.name) == name.lower())
+            .order_by(Customer.id)
+            .limit(2)
+        )
+    ).all()
+    if not rows:
+        holder = await db.scalar(select(Customer).where(Customer.phone == phone))
+        if holder is not None:
+            if holder.name.strip().lower() != name.lower():
+                # This number is somebody else's; the new name cannot take it.
+                return None, PHONE_BELONGS_TO_ANOTHER_CUSTOMER
+            # A concurrent commit just registered this sale's customer.
+            _store_sale_preferences(holder, operator_code, service_code)
+            return holder, None
+        await db.execute(
+            sqlite_insert(Customer)
+            .values(
+                phone=phone,
+                name=name,
+                operator_code=operator_code,
+                service_code=service_code,
+            )
+            .on_conflict_do_nothing(index_elements=[Customer.phone])
+        )
+        customer = await db.scalar(select(Customer).where(Customer.phone == phone))
+        if customer is None:  # pragma: no cover - the row exists after the insert
+            raise HTTPException(status_code=409, detail="Customer could not be resolved; retry")
+        return customer, None
+
+    if len(rows) > 1:
+        matched = [row for row in rows if row.phone == phone]
+        if len(matched) != 1:
+            return None, AMBIGUOUS_CUSTOMER_NAME
+        _store_sale_preferences(matched[0], operator_code, service_code)
+        return matched[0], None
+
+    customer = rows[0]
+    if customer.phone != phone:
+        # The name points at a record whose number is different: the typed
+        # number is either a new number for them or somebody else's. Neither
+        # can be assumed, so the sale is not attached and the record is left
+        # exactly as it is (the existing number is never overwritten).
+        return None, NAME_DOES_NOT_MATCH_CUSTOMER_PHONE
+    _store_sale_preferences(customer, operator_code, service_code)
+    return customer, None
 
 
 @app.post("/api/transactions/preview", response_model=TransactionPreviewResponse)
@@ -1343,6 +1504,12 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
     profit ledger row are written in the same database transaction, so a sale
     is either fully recorded or not recorded at all. Replaying the same
     ``commit_key`` returns the stored sale without touching the ledger again.
+
+    Customer records are for repeat customers only. A sale with a name is
+    linked to (or registers) that named regular customer; a sale with a blank
+    or whitespace-only name is a one-time sale: it commits and is accounted for
+    normally, keeps its phone on the row, and no customer record is created or
+    modified. A number is never used as a name.
     """
     replay = await _committed_transaction(db, data)
     if replay is not None:
@@ -1367,21 +1534,23 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
 
     transaction: Transaction | None = None
     try:
-        customer = await db.scalar(select(Customer).where(Customer.phone == data.customer_phone))
-        if customer is None:
-            # Race-free get-or-create: a concurrent commit inserts nothing and
-            # both requests continue with the same customer row. The request
-            # carries no customer name, so the phone is the placeholder.
-            await db.execute(
-                sqlite_insert(Customer)
-                .values(phone=data.customer_phone, name=data.customer_phone)
-                .on_conflict_do_nothing(index_elements=[Customer.phone])
+        customer: Customer | None = None
+        if data.customer_name is not None:
+            # A named sale belongs to a repeat customer: link an existing
+            # record (by exact name) or register this one as a named regular.
+            # An ambiguous name aborts before anything is written.
+            customer, conflict = await _resolve_sale_customer(
+                db,
+                data.customer_name,
+                data.customer_phone,
+                data.operator_code,
+                data.service_code,
             )
-            customer = await db.scalar(
-                select(Customer).where(Customer.phone == data.customer_phone)
-            )
-        if customer is None:  # pragma: no cover - the row exists after the insert
-            raise HTTPException(status_code=409, detail="Customer could not be resolved; retry")
+            if conflict is not None:
+                await db.rollback()
+                raise HTTPException(status_code=409, detail=conflict)
+        # A blank name is a one-time sale: no customer record is created,
+        # modified or linked, and the phone is kept on the transaction row.
 
         # Atomic, non-negative debit: two concurrent commits can never overdraw.
         debit = await db.execute(
@@ -1400,13 +1569,16 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
             raise HTTPException(status_code=400, detail="Insufficient operator balance")
 
         transaction = Transaction(
-            customer_id=customer.id,
+            customer_id=None if customer is None else customer.id,
             service_id=service.id,
             amount_cents=data.amount_cents,
             status="successful",
             ussd_string=ussd_string,
             reference=f"TXN-{uuid4().hex}",
             idempotency_key=data.commit_key,
+            # The charged number is on every row, linked or not, so history and
+            # filters can identify the sale without a customer record.
+            customer_phone=data.customer_phone,
         )
         db.add(transaction)
         await db.flush()  # assigns transaction.id for the profit ledger row
@@ -1507,28 +1679,39 @@ async def remove_failed_transaction(
     return Response(status_code=204)  # already removed: repeating is safe
 
 
+#: Columns every transaction view shows, with the customer labels resolved for
+#: linked rows and for one-time (unlinked) sales alike. An unlinked sale keeps
+#: its own phone and has no name — the number is never presented as one.
+_TRANSACTION_LABELS = (
+    Transaction.id,
+    Transaction.reference,
+    Transaction.ussd_string,
+    Transaction.status,
+    Transaction.amount_cents,
+    Transaction.created_at,
+    Transaction.customer_id.label("customer_id"),
+    func.coalesce(Transaction.customer_phone, Customer.phone).label("customer_phone"),
+    Customer.name.label("customer_name"),
+    Operator.code.label("operator_code"),
+    Operator.name.label("operator_name"),
+    Service.code.label("service_code"),
+    Service.name.label("service_name"),
+)
+
+
 def _transaction_list_statement():
     """Base select of live transactions joined with customer/operator/service labels.
 
-    Removed (tombstoned) rows are hidden from the list and the operator page;
-    the row itself and its profit ledger entry stay on disk for auditing.
+    The customer join is an OUTER join: a committed one-time sale has no
+    customer record, and it must never disappear from history, filters or
+    reports because of that. Removed (tombstoned) rows are hidden from the list
+    and the operator page; the row itself and its profit ledger entry stay on
+    disk for auditing.
     """
     return (
-        select(
-            Transaction.id,
-            Transaction.reference,
-            Transaction.ussd_string,
-            Transaction.status,
-            Transaction.amount_cents,
-            Transaction.created_at,
-            Customer.phone.label("customer_phone"),
-            Customer.name.label("customer_name"),
-            Operator.code.label("operator_code"),
-            Operator.name.label("operator_name"),
-            Service.code.label("service_code"),
-            Service.name.label("service_name"),
-        )
-        .join(Customer, Transaction.customer_id == Customer.id)
+        select(*_TRANSACTION_LABELS)
+        .select_from(Transaction)
+        .outerjoin(Customer, Transaction.customer_id == Customer.id)
         .join(Service, Transaction.service_id == Service.id)
         .join(Operator, Service.operator_id == Operator.id)
         .where(Transaction.deleted_at.is_(None))
@@ -1554,7 +1737,11 @@ async def list_transactions(
     if status is not None:
         statement = statement.where(Transaction.status == status)
     if customer_phone is not None:
-        statement = statement.where(Customer.phone.ilike(f"%{customer_phone}%"))
+        statement = statement.where(
+            func.coalesce(Transaction.customer_phone, Customer.phone).ilike(
+                f"%{customer_phone}%"
+            )
+        )
     rows = await db.execute(statement.order_by(Transaction.created_at.desc(), Transaction.id.desc()))
     return [TransactionListItem(**row._mapping) for row in rows.all()]
 

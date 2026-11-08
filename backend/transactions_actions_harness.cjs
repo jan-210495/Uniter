@@ -46,6 +46,11 @@ class Element {
     this.handlers[type].push(handler);
   }
 
+  // ``span.className = '...'`` must update the class set, as the real DOM does.
+  get className() { return [...this.classes].join(' '); }
+  set className(value) {
+    this.classes = new Set(String(value).split(/\s+/).filter(Boolean));
+  }
   setAttribute(name, value) { this.attributes[name.toLowerCase()] = String(value); }
   getAttribute(name) { return this.attributes[name.toLowerCase()] ?? null; }
   removeAttribute(name) { delete this.attributes[name.toLowerCase()]; }
@@ -235,6 +240,17 @@ function actionButton(txId, action) {
   const renderedRows = element('tx-rows').children.map((row) => ({
     id: row.dataset.txId || null,
     cells: row.children.length,
+    // The customer cell (column 3): name label and phone, as rendered.
+    customer: (() => {
+      const cell = row.children[2];
+      if (!cell) return null;
+      return cell.children.map((span) => ({
+        text: span.textContent,
+        // ``dir`` is set as a property by the page; keep it DOM-equivalent.
+        dir: span.dir ?? span.getAttribute('dir'),
+        classes: [...(span.classes || [])],
+      }));
+    })(),
     status: (() => {
       const badge = row.children[6] && row.children[6].children[0];
       return badge ? badge.textContent : null;

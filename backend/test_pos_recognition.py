@@ -205,7 +205,7 @@ def test_customers_page_add_form_has_operator_and_service_fields(client: TestCli
     assert (customer.operator_code, customer.service_code) == ("mtn", "prepaid")
 
 
-def test_pos_page_has_auto_operator_and_auto_register(client: TestClient) -> None:
+def test_pos_page_has_auto_operator_and_named_recognition(client: TestClient) -> None:
     english = client.get("/pos")
     arabic = client.get("/pos", params={"lang": "ar"})
     assert english.status_code == arabic.status_code == 200
@@ -219,18 +219,25 @@ def test_pos_page_has_auto_operator_and_auto_register(client: TestClient) -> Non
         assert "'096': 'mtn'" in rendered
         # A manual operator choice is never overridden by later typing.
         assert "operatorTouched" in rendered
-        # Auto-register flow: lookup by name, then create with preferences.
+        # A named sale is recognized by exact name; registering the customer is
+        # left to the commit call, so preparing a code writes nothing.
         assert "'/api/customers/lookup-by-name?name=' + encodeURIComponent(name)" in rendered
-        assert "fetch('/api/customers'" in rendered
-        assert "payload.operator_code = operator.value" in rendered
-        assert "payload.service_code = service.value" in rendered
+        assert "resolveNamedCustomer" in rendered
+        assert "fetch('/api/customers'" not in rendered
+        # A blank name is a one-time sale with no customer record.
+        assert "messages.oneTimeSale" in rendered
         # Feedback live region below the form.
         assert 'id="register-status"' in rendered
         assert 'role="status"' in rendered
-    assert "Customer registered:" in english.text
+    assert "A regular customer will be registered when the sale is recorded." in english.text
+    assert "One-time sale with no customer account." in english.text
     assert "Customer found:" in english.text
     # Arabic script messages are emitted by tojson as escaped unicode.
     import json
 
-    for message in ("تم تسجيل العميل:", "تم العثور على العميل:"):
+    for message in (
+        "سيُسجَّل عميل دائم عند تسجيل البيع.",
+        "بيع لمرة واحدة بلا حساب عميل.",
+        "تم العثور على العميل:",
+    ):
         assert json.dumps(message, ensure_ascii=True)[1:-1] in arabic.text

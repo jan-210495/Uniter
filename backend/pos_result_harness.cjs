@@ -248,6 +248,25 @@ const context = {
       });
     }
     if (url.startsWith('/api/customers/search')) return jsonResponse(true, 200, []);
+    if (url.startsWith('/api/customers/lookup-by-name')) {
+      // 'found' answers with a known named regular customer; the POS must use
+      // that customer's canonical number. 'missing' reports none, so a name is
+      // only registered by the commit call.
+      const lookup = input.customerLookup || 'missing';
+      if (lookup === 'found') {
+        return jsonResponse(true, 200, {
+          id: 7,
+          phone: '0933123456',
+          name: 'Ahmad',
+          balance_cents: 0,
+        });
+      }
+      if (lookup === 'error') return jsonResponse(false, 500, { detail: 'lookup failed' });
+      return jsonResponse(false, 404, { detail: 'Customer not found' });
+    }
+    if (url === '/api/customers' && method === 'POST') {
+      return jsonResponse(true, 200, { id: 8, phone: bodyData.phone, name: bodyData.name, balance_cents: 0 });
+    }
     return jsonResponse(true, 200, {});
   },
 };

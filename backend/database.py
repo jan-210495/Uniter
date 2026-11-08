@@ -93,7 +93,12 @@ class Transaction(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"))
+    # A sale to a one-time (phone-only) buyer has no customer record: the link
+    # stays NULL and the phone is kept on the row itself, see ``customer_phone``.
+    # Customer records exist for repeat, named customers only.
+    customer_id: Mapped[int | None] = mapped_column(
+        ForeignKey("customers.id"), nullable=True, default=None
+    )
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"))
     amount_cents: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20))
@@ -113,8 +118,12 @@ class Transaction(Base):
     # had in the pending/completed schema, kept so the mapping stays traceable
     # and reversible.
     legacy_status: Mapped[str | None] = mapped_column(String(20), nullable=True, default=None)
+    # The number the seller charged. Stored on the row for every sale so a
+    # one-time (unlinked) sale is still identifiable in history, filters and
+    # search, and so history always shows the number that was actually charged.
+    customer_phone: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
 
-    customer: Mapped[Customer] = relationship(back_populates="transactions")
+    customer: Mapped[Customer | None] = relationship(back_populates="transactions")
     service: Mapped[Service] = relationship(back_populates="transactions")
 
 

@@ -47,17 +47,24 @@ def topup(client: TestClient, operator_code: str, amount_cents: int) -> None:
     ).status_code == 200
 
 
-def post_transaction(client: TestClient, phone: str, operator: str, service: str, amount: int) -> dict:
-    response = client.post(
-        "/api/transactions",
-        json={
-            "customer_phone": phone,
-            "operator_code": operator,
-            "service_code": service,
-            "amount_cents": amount,
-            "commit_key": new_commit_key(),
-        },
-    )
+def post_transaction(
+    client: TestClient,
+    phone: str,
+    operator: str,
+    service: str,
+    amount: int,
+    customer_name: str | None = None,
+) -> dict:
+    body = {
+        "customer_phone": phone,
+        "operator_code": operator,
+        "service_code": service,
+        "amount_cents": amount,
+        "commit_key": new_commit_key(),
+    }
+    if customer_name is not None:
+        body["customer_name"] = customer_name
+    response = client.post("/api/transactions", json=body)
     assert response.status_code == 200
     return response.json()
 
@@ -113,14 +120,16 @@ def test_search_customer_by_phone_fragment(client: TestClient) -> None:
 def test_search_transaction_by_reference(client: TestClient) -> None:
     topup(client, "mtn", 100000)
     client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
-    transaction = post_transaction(client, "0933123456", "mtn", "prepaid", 5000)
+    transaction = post_transaction(
+        client, "0933123456", "mtn", "prepaid", 5000, customer_name="Ahmad"
+    )
 
     results = search(client, transaction["reference"])
     assert results["customers"] == []
     assert results["transactions"][0]["id"] == transaction["id"]
     item = results["transactions"][0]
     assert set(item) == {
-        "id", "reference", "amount_cents", "status", "customer_phone",
+        "id", "reference", "amount_cents", "status", "customer_id", "customer_phone",
         "customer_name", "operator_code", "operator_name",
     }
     assert item["amount_cents"] == 5000 and item["status"] == "successful"
@@ -131,6 +140,26 @@ def test_search_transaction_by_reference(client: TestClient) -> None:
     by_phone = search(client, "0933")
     assert [t["id"] for t in by_phone["transactions"]] == [transaction["id"]]
     assert by_phone["customers"][0]["name"] == "Ahmad"
+
+
+def test_search_finds_committed_one_time_sales(client: TestClient) -> None:
+    """A sale with no customer record is still searchable, by reference and phone."""
+    topup(client, "mtn", 100000)
+    transaction = post_transaction(client, "0955123456", "mtn", "prepaid", 1200)
+
+    by_reference = search(client, transaction["reference"])
+    assert by_reference["customers"] == []
+    assert [t["id"] for t in by_reference["transactions"]] == [transaction["id"]]
+    item = by_reference["transactions"][0]
+    assert item["customer_id"] is None
+    assert item["customer_phone"] == "0955123456"
+    assert item["customer_name"] is None
+    assert item["operator_code"] == "mtn"
+
+    # The row's own phone is matched too, though no customer holds it.
+    by_phone = search(client, "0955")
+    assert [t["id"] for t in by_phone["transactions"]] == [transaction["id"]]
+    assert by_phone["customers"] == []
 
 
 def test_search_operators_by_code_or_name(client: TestClient) -> None:
@@ -148,7 +177,7 @@ def test_search_mixed_query_spans_all_sections(client: TestClient) -> None:
     topup(client, "mtn", 100000)
     client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
     client.post("/api/customers", json={"phone": "0944123456", "name": "Lina"})
-    post_transaction(client, "0944123456", "mtn", "prepaid", 2500)
+    post_transaction(client, "0944123456", "mtn", "prepaid", 2500, customer_name="Lina")
 
     # "n" matches the customer Lina, every TXN- reference and the operator MTN.
     results = search(client, "n")

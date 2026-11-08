@@ -170,14 +170,19 @@ def test_remove_customer(client: TestClient) -> None:
     )
     assert transaction.status_code == 200
 
-    # The customer row owns its ledger and transaction history, so both go with it.
+    # Sales are committed accounting: they survive the customer record and stay
+    # in history as one-time sales that carry their own phone. The customer's
+    # debt balance and its ledger both go with the record.
     response = client.delete(f"/api/customers/{customer['id']}")
     assert response.status_code == 204
     assert response.content == b""
     assert client.get("/api/customers/lookup", params={"phone": AHMAD_PHONE}).status_code == 404
     assert client.get("/api/customers").json() == []
     assert 'id="customers-empty"' in client.get("/customers").text
-
+    remaining = client.get("/api/transactions").json()
+    assert [(row["customer_id"], row["customer_name"], row["customer_phone"]) for row in remaining] == [
+        (None, None, AHMAD_PHONE)
+    ]
     # Deleting again (or a missing customer) reports 404.
     assert client.delete(f"/api/customers/{customer['id']}").status_code == 404
     assert client.delete("/api/customers/999999").status_code == 404
@@ -216,6 +221,7 @@ def test_remove_customer_is_refused_while_removed_transactions_exist(
         "/api/transactions",
         json={
             "customer_phone": AHMAD_PHONE,
+            "customer_name": "Ahmad",
             "operator_code": "mtn",
             "service_code": "prepaid",
             "amount_cents": 5000,

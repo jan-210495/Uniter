@@ -50,13 +50,24 @@ def test_customer_creation_lookup_and_duplicates(client: TestClient) -> None:
     assert client.post("/api/customers", json={"phone": "123#*1", "name": "Bad"}).status_code == 422
 
 
-def test_transaction_existing_and_new_customers(client: TestClient) -> None:
+def test_transaction_existing_and_one_time_customers(client: TestClient) -> None:
+    """A linked sale reuses its customer; a named one registers a regular.
+
+    A sale carrying no customer name is a one-time sale: it is recorded with
+    its phone and never leaves a customer record behind.
+    """
     for operator_code in ("mtn", "syriatel"):
         assert client.post(
             "/api/operators/topup", json={"operator_code": operator_code, "amount_cents": 100000}
         ).status_code == 200
     customer = client.post("/api/customers", json={"phone": "0933123456", "name": "Customer"}).json()
-    payload = {"customer_phone": "0933123456", "operator_code": "mtn", "service_code": "prepaid", "amount_cents": 5000}
+    payload = {
+        "customer_phone": "0933123456",
+        "customer_name": "Customer",
+        "operator_code": "mtn",
+        "service_code": "prepaid",
+        "amount_cents": 5000,
+    }
     response = post_transaction(client, payload)
     assert response.status_code == 200
     result = response.json()
@@ -65,25 +76,34 @@ def test_transaction_existing_and_new_customers(client: TestClient) -> None:
     assert result["reference"].startswith("TXN-") and result["created_at"]
     assert client.get("/api/customers/lookup", params={"phone": "0933123456"}).json() == customer
 
-    payload.update(customer_phone="0944123456", operator_code="syriatel", service_code="postpaid", amount_cents=0)
+    # No name: committed and accounted for, but no customer record at all.
+    payload.update(
+        customer_phone="0944123456", operator_code="syriatel", service_code="postpaid", amount_cents=0
+    )
+    payload.pop("customer_name")
     response2 = post_transaction(client, payload)
     assert response2.status_code == 200
     assert response2.json()["ussd_string"] == "*150*1*67858*5*0*0944123456*0944123456#"
     assert response2.json()["reference"] != result["reference"]
-    created = client.get("/api/customers/lookup", params={"phone": "0944123456"}).json()
-    assert created["name"] == "0944123456" and created["balance_cents"] == 0
+    assert client.get("/api/customers/lookup", params={"phone": "0944123456"}).status_code == 404
 
     async def check_persisted() -> None:
         async with aclosing(app.dependency_overrides[get_db]()) as dependency:
             session = await anext(dependency)
             rows = (await session.execute(
-                select(Transaction, Customer.phone, Operator.code, Service.code)
-                .join(Customer).join(Service).join(Operator).order_by(Transaction.id)
+                select(Transaction, Operator.code, Service.code)
+                .select_from(Transaction)
+                .join(Service, Transaction.service_id == Service.id)
+                .join(Operator, Service.operator_id == Operator.id)
+                .order_by(Transaction.id)
             )).all()
             assert len(rows) == 2
-            assert [(row.phone, row[2], row[3]) for row in rows] == [
+            assert [(row.Transaction.customer_phone, row[1], row[2]) for row in rows] == [
                 ("0933123456", "mtn", "prepaid"), ("0944123456", "syriatel", "postpaid")
             ]
+            # Only the named sale is linked to a customer record.
+            installed = (await session.execute(select(Customer.phone))).scalars().all()
+            assert list(installed) == ["0933123456"]
             assert [row.Transaction.ussd_string for row in rows] == [
                 "*150*65477*0933123456*50#", "*150*1*67858*5*0*0944123456*0944123456#"
             ]
@@ -154,20 +174,21 @@ def test_normalized_customer_and_transaction_phones(client: TestClient) -> None:
     duplicate = client.post("/api/customers", json={"phone": "00963933123456", "name": "Duplicate"})
     assert duplicate.status_code == 409
 
-    payload = {"customer_phone": "+963933123456", "operator_code": "mtn",
-               "service_code": "prepaid", "amount_cents": 5000}
+    payload = {"customer_phone": "+963933123456", "customer_name": "Customer",
+               "operator_code": "mtn", "service_code": "prepaid", "amount_cents": 5000}
     transaction = post_transaction(client, payload)
     assert transaction.status_code == 200
     assert transaction.json()["ussd_string"] == "*150*65477*0933123456*50#"
     assert client.get("/api/customers/lookup", params={"phone": "0933123456"}).json() == customer
 
     payload["customer_phone"] = "00963 944-123-456"
+    payload["customer_name"] = "Rami"
     transaction = post_transaction(client, payload)
     assert transaction.status_code == 200
     assert transaction.json()["ussd_string"] == "*150*65477*0944123456*50#"
     created = client.get("/api/customers/lookup", params={"phone": "0944123456"})
     assert created.status_code == 200
-    assert created.json()["phone"] == "0944123456"
+    assert created.json()["phone"] == "0944123456" and created.json()["name"] == "Rami"
 
 
 def test_phone_validation_errors(client: TestClient) -> None:

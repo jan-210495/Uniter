@@ -62,7 +62,11 @@
                         <td class="px-4 py-3 font-mono text-xs text-slate-500" dir="ltr">{{ transaction.reference }}</td>
                         <td class="px-4 py-3 text-xs text-slate-600" dir="ltr">{{ transaction.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
                         <td class="px-4 py-3">
+                            {% if transaction.customer_name %}
                             <span class="block font-semibold text-slate-900">{{ transaction.customer_name }}</span>
+                            {% else %}
+                            <span class="block font-semibold text-slate-500">{{ 'بيع لمرة واحدة' if ar else 'One-time sale' }}</span>
+                            {% endif %}
                             <span class="block font-mono text-xs text-slate-500" dir="ltr">{{ transaction.customer_phone }}</span>
                         </td>
                         <td class="px-4 py-3 text-slate-700">{{ transaction.operator_name }}</td>

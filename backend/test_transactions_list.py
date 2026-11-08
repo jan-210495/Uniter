@@ -41,18 +41,23 @@ def client(tmp_path) -> Iterator[TestClient]:
 
 
 def post_transaction(
-    client: TestClient, phone: str, operator: str, service: str, amount_cents: int
+    client: TestClient,
+    phone: str,
+    operator: str,
+    service: str,
+    amount_cents: int,
+    customer_name: str | None = None,
 ) -> dict:
-    response = client.post(
-        "/api/transactions",
-        json={
-            "customer_phone": phone,
-            "operator_code": operator,
-            "service_code": service,
-            "amount_cents": amount_cents,
-            "commit_key": new_commit_key(),
-        },
-    )
+    body = {
+        "customer_phone": phone,
+        "operator_code": operator,
+        "service_code": service,
+        "amount_cents": amount_cents,
+        "commit_key": new_commit_key(),
+    }
+    if customer_name is not None:
+        body["customer_name"] = customer_name
+    response = client.post("/api/transactions", json=body)
     assert response.status_code == 200
     return response.json()
 
@@ -72,10 +77,11 @@ def mark_failed(transaction_id: int) -> None:
 
 @pytest.fixture
 def transactions(client: TestClient) -> dict[str, dict]:
-    """Five committed transactions across both customers and both operators.
+    """Six committed transactions: two named regulars, one one-time sale.
 
     Ahmad: mtn/prepaid x2 and syriatel/postpaid (all successful).
     Rami: syriatel/prepaid successful, mtn/postpaid marked failed.
+    One-time: mtn/prepaid with no customer name (no customer record).
     """
     for operator_code in ("mtn", "syriatel"):
         assert client.post(
@@ -84,11 +90,22 @@ def transactions(client: TestClient) -> dict[str, dict]:
     client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
     client.post("/api/customers", json={"phone": "0944123456", "name": "Rami"})
     created = {
-        "ahmad_mtn_a": post_transaction(client, "0933123456", "mtn", "prepaid", 5000),
-        "ahmad_mtn_b": post_transaction(client, "0933123456", "mtn", "prepaid", 2500),
-        "ahmad_syriatel": post_transaction(client, "0933123456", "syriatel", "postpaid", 10000),
-        "rami_syriatel": post_transaction(client, "0944123456", "syriatel", "prepaid", 1500),
-        "rami_mtn": post_transaction(client, "0944123456", "mtn", "postpaid", 0),
+        "ahmad_mtn_a": post_transaction(
+            client, "0933123456", "mtn", "prepaid", 5000, customer_name="Ahmad"
+        ),
+        "ahmad_mtn_b": post_transaction(
+            client, "0933123456", "mtn", "prepaid", 2500, customer_name="Ahmad"
+        ),
+        "ahmad_syriatel": post_transaction(
+            client, "0933123456", "syriatel", "postpaid", 10000, customer_name="Ahmad"
+        ),
+        "rami_syriatel": post_transaction(
+            client, "0944123456", "syriatel", "prepaid", 1500, customer_name="Rami"
+        ),
+        "rami_mtn": post_transaction(
+            client, "0944123456", "mtn", "postpaid", 0, customer_name="Rami"
+        ),
+        "one_time": post_transaction(client, "0955123456", "mtn", "prepaid", 1200),
     }
     mark_failed(created["rami_mtn"]["id"])
     return created
@@ -118,7 +135,7 @@ def test_list_without_filters_returns_all_transactions(
     item = next(i for i in items if i["id"] == transactions["ahmad_mtn_a"]["id"])
     assert set(item) == {
         "id", "reference", "ussd_string", "status", "amount_cents", "created_at",
-        "customer_phone", "customer_name", "operator_code", "operator_name",
+        "customer_id", "customer_phone", "customer_name", "operator_code", "operator_name",
         "service_code", "service_name",
     }
     assert item["reference"] == transactions["ahmad_mtn_a"]["reference"]
@@ -129,12 +146,21 @@ def test_list_without_filters_returns_all_transactions(
     assert item["operator_code"] == "mtn" and item["operator_name"] == "MTN"
     assert item["service_code"] == "prepaid" and item["service_name"] == "Pre-Paid Charging"
 
+    # The one-time sale is listed too: its phone is shown, its name is empty
+    # (a number is never presented as a customer name).
+    one_time = next(i for i in items if i["id"] == transactions["one_time"]["id"])
+    assert one_time["customer_id"] is None
+    assert one_time["customer_phone"] == "0955123456"
+    assert one_time["customer_name"] is None
+    assert one_time["amount_cents"] == 1200
+
 
 def test_list_filters_by_operator(client: TestClient, transactions: dict[str, dict]) -> None:
     assert get_ids(client, operator_code="mtn") == {
         transactions["ahmad_mtn_a"]["id"],
         transactions["ahmad_mtn_b"]["id"],
         transactions["rami_mtn"]["id"],
+        transactions["one_time"]["id"],
     }
     assert get_ids(client, operator_code="syriatel") == {
         transactions["ahmad_syriatel"]["id"],
@@ -149,6 +175,7 @@ def test_list_filters_by_service(client: TestClient, transactions: dict[str, dic
         transactions["ahmad_mtn_a"]["id"],
         transactions["ahmad_mtn_b"]["id"],
         transactions["rami_syriatel"]["id"],
+        transactions["one_time"]["id"],
     }
     assert get_ids(client, service_code="postpaid") == {
         transactions["ahmad_syriatel"]["id"],
@@ -162,6 +189,7 @@ def test_list_filters_by_status(client: TestClient, transactions: dict[str, dict
         transactions["ahmad_mtn_b"]["id"],
         transactions["ahmad_syriatel"]["id"],
         transactions["rami_syriatel"]["id"],
+        transactions["one_time"]["id"],
     }
     assert get_ids(client, status="failed") == {transactions["rami_mtn"]["id"]}
 

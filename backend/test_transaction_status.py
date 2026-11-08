@@ -86,6 +86,7 @@ def create_transaction(
     operator_code: str = "mtn",
     service_code: str = "prepaid",
     amount_cents: int = 5000,
+    customer_name: str | None = "Ahmad",
 ) -> dict[str, Any]:
     # Commit keys live on the client side; one per deliberate sale.
     client.commit_keys = getattr(client, "commit_keys", 0) + 1
@@ -97,6 +98,7 @@ def create_transaction(
             "service_code": service_code,
             "amount_cents": amount_cents,
             "commit_key": f"statuskey{client.commit_keys:022d}",
+            **({"customer_name": customer_name} if customer_name else {}),
         },
     )
     assert response.status_code == 200, response.text

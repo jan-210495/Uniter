@@ -169,9 +169,10 @@
         'searchError': 'تعذر البحث عن العملاء. حاول مرة أخرى.' if ar else 'Could not search customers. Try again.',
         'customerSelected': 'تم اختيار العميل.' if ar else 'Customer selected.',
         'customerFound': 'تم العثور على العميل:' if ar else 'Customer found:',
-        'customerRegistered': 'تم تسجيل العميل:' if ar else 'Customer registered:',
-        'duplicatePhone': 'رقم الهاتف مسجل مسبقاً لعميل آخر.' if ar else 'That phone number is already registered to another customer.',
-        'registerError': 'تعذر تسجيل العميل. حاول مرة أخرى.' if ar else 'Could not register the customer. Try again.',
+        'willRegister': 'سيُسجَّل عميل دائم عند تسجيل البيع.' if ar else 'A regular customer will be registered when the sale is recorded.',
+        'oneTimeSale': 'بيع لمرة واحدة بلا حساب عميل.' if ar else 'One-time sale with no customer account.',
+        'registerError': 'تعذر البحث عن العميل. حاول مرة أخرى.' if ar else 'Could not look up the customer. Try again.',
+        'namePhoneMismatch': 'هذا الاسم مسجل برقم آخر. تحقق من الاسم أو الرقم.' if ar else 'That name is registered under a different number. Check the name or the number.',
         'balance': 'الرصيد' if ar else 'Balance',
         'debt': 'الدين' if ar else 'Debt',
         'currency': 'ل.س' if ar else 'SYP',
@@ -363,6 +364,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     customer_phone: sale.customer_phone,
+                    customer_name: sale.customer_name,
                     operator_code: sale.operator_code,
                     service_code: sale.service_code,
                     amount_cents: sale.amount_cents,
@@ -716,13 +718,22 @@
         clearResult();
     });
     document.getElementById('refresh-rate').addEventListener('click', loadRate);
-    // --- Auto-register on Generate USSD ---
-    // With a name filled: an exact name match reuses that customer's phone;
-    // otherwise the customer is registered with the typed phone, operator and
-    // service before the preview is generated.
-    async function ensureCustomer() {
+    // --- Named customer recognition on Generate USSD ---
+    // Preparing a code never writes anything: no customer, no transaction, no
+    // accounting. A typed name only resolves which customer this sale belongs
+    // to — the same exact-name match the API uses — so the charge goes to that
+    // person's canonical number. Registration of a new named regular happens
+    // on the commit call (Copy / dialer), never here; a blank or
+    // whitespace-only name is a one-time sale with no customer record at all.
+    // Returns whether the sale may go ahead: false means the seller must fix
+    // the name or the number first, and nothing is previewed or recorded.
+    async function resolveNamedCustomer() {
         const name = nameInput.value.trim();
-        if (!name) return;
+        if (!name) {
+            // No name: this is a one-time sale, so no customer is registered.
+            registerStatus.textContent = messages.oneTimeSale;
+            return true;
+        }
         try {
             const response = await fetch(
                 '/api/customers/lookup-by-name?name=' + encodeURIComponent(name),
@@ -730,44 +741,46 @@
             );
             if (response.ok) {
                 const customer = await response.json();
+                const typed = normalizePhone(phone.value);
+                // The server resolves a name to that person's registered number,
+                // but a number the seller typed for somebody else is never
+                // silently replaced: the seller has to confirm which is right.
+                if (typed && typed !== customer.phone) {
+                    registerStatus.textContent = messages.namePhoneMismatch;
+                    return false;
+                }
                 phone.value = customer.phone;
                 phone.setCustomValidity('');
+                showCustomerInfo(customer);
                 registerStatus.textContent = messages.customerFound + ' ' + customer.name;
-                return;
+                return true;
             }
             if (response.status !== 404) throw new Error('lookup failed');
-            const normalized = normalizePhone(phone.value);
-            if (!normalized) return; // the regular validation reports the invalid phone
-            const payload = { phone: normalized, name };
-            if (operator.value) payload.operator_code = operator.value;
-            if (service.value) payload.service_code = service.value;
-            const create = await fetch('/api/customers', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            if (create.ok) {
-                phone.value = normalized;
-                registerStatus.textContent = messages.customerRegistered + ' ' + name;
-            } else if (create.status === 409) {
-                // Phone already belongs to another customer; keep the typed phone.
-                registerStatus.textContent = messages.duplicatePhone;
-            } else {
-                throw new Error('register failed');
-            }
+            // A new name is registered by the commit; the typed number stands.
+            registerStatus.textContent = messages.willRegister;
+            return true;
         } catch (_) {
+            // Which customer this name belongs to is unknown, so nothing is
+            // previewed or recorded until the lookup works again.
             registerStatus.textContent = messages.registerError;
+            return false;
         }
     }
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         registerStatus.textContent = '';
-        await ensureCustomer();
+        if (!(await resolveNamedCustomer())) {
+            clearResult();
+            return;
+        }
         const normalized = normalizePhone(phone.value);
         const cents = parseAmount(amount.value);
         phone.setCustomValidity(normalized ? '' : messages.invalidPhone);
         amount.setCustomValidity(cents === null ? messages.invalidAmount : '');
         if (!form.reportValidity()) { clearResult(); return; }
+        // Blank (or whitespace-only) means a one-time sale: the name is sent
+        // as null and no customer record is created.
+        const saleName = nameInput.value.trim() || null;
         // Prepare only: this previews the USSD code and nothing is stored.
         // No row, no debit and no commission exist until the seller copies or
         // dials the code, which is the commit event below.
@@ -801,6 +814,7 @@
                 ussd_string: data.ussd_string,
                 commit_key: data.commit_key,
                 customer_phone: normalized,
+                customer_name: saleName,
                 operator_code: operator.value,
                 service_code: service.value,
                 amount_cents: Number(cents),

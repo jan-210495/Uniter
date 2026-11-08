@@ -239,7 +239,8 @@ def test_commit_records_one_successful_sale_and_one_debit(client) -> None:
     assert payload["reference"].startswith("TXN-")
     assert payload["created_at"]
 
-    assert counts(sessions) == (1, 1, 1)
+    # A sale with no customer name is a one-time sale: no customer record.
+    assert counts(sessions) == (1, 1, 0)
     # 100,000 funded, 5,000 charged: exactly one debit.
     assert balance(sessions) == 95_000
     assert ledger_rows(sessions) == [
@@ -298,7 +299,7 @@ def test_replay_returns_the_same_sale_without_recharging(client) -> None:
         assert replay.status_code == 200
         assert replay.json() == first.json()
 
-    assert counts(sessions) == (1, 1, 1)
+    assert counts(sessions) == (1, 1, 0)
     assert balance(sessions) == 95_000
     assert len(ledger_rows(sessions)) == 1
 
@@ -313,7 +314,7 @@ def test_replay_with_different_details_is_rejected(client) -> None:
     assert commit(test_client, key=key, phone="0933123456").status_code == 409
     assert commit(test_client, key=key, operator_code="syriatel").status_code == 409
 
-    assert counts(sessions) == (1, 1, 1)
+    assert counts(sessions) == (1, 1, 0)
     assert balance(sessions) == 95_000
     assert balance(sessions, "syriatel") == 0
 
@@ -328,7 +329,7 @@ def test_distinct_keys_are_distinct_sales(client) -> None:
     assert first.json()["id"] != second.json()["id"]
     assert first.json()["reference"] != second.json()["reference"]
 
-    assert counts(sessions) == (2, 2, 1)
+    assert counts(sessions) == (2, 2, 0)
     assert balance(sessions) == 90_000
     assert [row["transaction_id"] for row in ledger_rows(sessions)] == [
         first.json()["id"],
@@ -354,7 +355,7 @@ def test_insufficient_balance_rejects_atomically(client) -> None:
     retry = commit(test_client, key=key, amount_cents=5000)
     assert retry.status_code == 200
     assert retry.json()["status"] == "successful"
-    assert counts(sessions) == (1, 1, 1)
+    assert counts(sessions) == (1, 1, 0)
     assert balance(sessions) == 96_000
 
 
@@ -392,7 +393,7 @@ def test_commit_key_uniqueness_is_enforced_by_the_database(client) -> None:
         await session.rollback()
 
     run_db(sessions, duplicate)
-    assert counts(sessions) == (1, 1, 1)
+    assert counts(sessions) == (1, 1, 0)
 
 
 def test_concurrent_identical_commits_charge_once(client) -> None:
@@ -414,7 +415,7 @@ def test_concurrent_identical_commits_charge_once(client) -> None:
     ]
     references = {response.json()["reference"] for response in responses}
     assert len(references) == 1
-    assert counts(sessions) == (1, 1, 1)
+    assert counts(sessions) == (1, 1, 0)
     assert balance(sessions) == 95_000
     assert len(ledger_rows(sessions)) == 1
 
