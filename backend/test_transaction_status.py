@@ -2,9 +2,8 @@
 
 A committed sale is ``successful``. The seller can record the real-world outcome
 on the Transactions page (successful -> failed) and may remove failed rows from
-the reporting views. Neither action moves money: the operator debit, the
-commission and the profit ledger row stay exactly as recorded, which is the
-documented no-refund policy (see the handoff).
+the reporting views. Marking failed refunds the stored face debit once;
+removal moves no money. Commission and the original profit history survive.
 """
 
 import asyncio
@@ -150,10 +149,11 @@ def set_failed(client: TestClient, transaction_id: int):
 # --- Marking a successful sale failed ------------------------------------
 
 
-def test_marking_successful_as_failed_changes_only_the_status(client) -> None:
+@pytest.mark.parametrize("customer_name", ["Ahmad", "   "])
+def test_marking_successful_as_failed_refunds_the_stored_face_amount(client, customer_name) -> None:
     test_client, sessions = client
     fund(test_client, amount_cents=100_000)
-    transaction = create_transaction(test_client)
+    transaction = create_transaction(test_client, customer_name=customer_name)
     assert transaction["status"] == "successful"
     profit_before = profits(sessions)
     balance_before = balance(sessions)
@@ -163,9 +163,13 @@ def test_marking_successful_as_failed_changes_only_the_status(client) -> None:
     assert response.json()["status"] == "failed"
     assert response.json()["reference"] == transaction["reference"]
 
-    # No money moved and the ledger was not edited.
-    assert balance(sessions) == balance_before
+    # Refund only the stored face debit, never the separately recorded commission.
+    assert balance(sessions) == balance_before + transaction["amount_cents"]
     assert profits(sessions) == profit_before
+    async def audit(session):
+        from sqlalchemy import text
+        return (await session.execute(text("SELECT transaction_id, operator_id, amount_cents FROM operator_credit_refund"))).all()
+    assert [tuple(row) for row in run_db(sessions, audit)] == [(transaction["id"], 1, 5000)]
     assert raw_row(sessions, transaction["id"])["status"] == "failed"
     listed = {row["id"]: row["status"] for row in test_client.get("/api/transactions").json()}
     assert listed[transaction["id"]] == "failed"
@@ -208,10 +212,10 @@ def test_failed_is_final(client) -> None:
     assert set_failed(test_client, transaction["id"]).status_code == 409
     assert raw_row(sessions, transaction["id"])["status"] == "failed"
     assert len(profits(sessions)) == 1
-    assert balance(sessions) == 5_000_000 - 5000
+    assert balance(sessions) == 5_000_000
 
 
-def test_marking_failed_twice_never_touches_accounting(client) -> None:
+def test_repeated_failure_does_not_refund_but_another_sale_does(client) -> None:
     test_client, sessions = client
     fund(test_client, amount_cents=100_000)
     first = create_transaction(test_client, amount_cents=1000)
@@ -223,7 +227,7 @@ def test_marking_failed_twice_never_touches_accounting(client) -> None:
     assert set_failed(test_client, first["id"]).status_code == 409
     assert set_failed(test_client, second["id"]).status_code == 200
 
-    assert balance(sessions) == balance_after_first
+    assert balance(sessions) == balance_after_first + second["amount_cents"]
     assert profits(sessions) == ledger_after_first
     assert [row["status"] for row in test_client.get("/api/transactions").json()] == [
         "failed",
@@ -451,4 +455,4 @@ def test_customer_accounting_is_untouched_by_status_changes(client) -> None:
     assert [row["id"] for row in customer_transactions] == [transaction["id"]]
     assert test_client.delete(f"/api/transactions/{transaction['id']}").status_code == 204
     assert test_client.get("/api/customers/lookup", params={"phone": PHONE}).json() == customer
-    assert balance(sessions) == 95_000
+    assert balance(sessions) == 100_000

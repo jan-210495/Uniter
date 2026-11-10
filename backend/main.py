@@ -20,12 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
     from .commission import get_commission_for_transaction
-    from .database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
+    from .database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from .seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from .validation import validate_syrian_phone
 else:
     from commission import get_commission_for_transaction
-    from database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
+    from database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from validation import validate_syrian_phone
 
@@ -1616,29 +1616,59 @@ async def update_transaction_status(
 
     The seller records the real-world outcome from the Transactions page. Only
     ``successful -> failed`` is allowed, the guard lives in the UPDATE itself
-    (so replays and races cannot apply twice), and no money moves: the operator
-    debit, commission and profit ledger rows are deliberately left as recorded.
+    (so replays and races cannot apply twice). The original ledger operator
+    receives exactly the stored face amount, with a unique durable refund audit
+    in the same commit. Commission/profit history is never reversed or edited.
     """
     if data.status != "failed":
         raise HTTPException(status_code=409, detail="Transactions can only be marked failed")
 
-    result = await db.execute(
-        update(Transaction)
-        .where(Transaction.id == transaction_id, Transaction.status == "successful")
-        .values(status="failed")
-    )
-    if result.rowcount != 1:
-        current = await db.scalar(
-            select(Transaction.status).where(Transaction.id == transaction_id)
+    try:
+        result = await db.execute(
+            update(Transaction)
+            .where(Transaction.id == transaction_id, Transaction.status == "successful")
+            .values(status="failed")
         )
-        if current is None:
-            raise HTTPException(status_code=404, detail="Transaction not found")
-        raise HTTPException(status_code=409, detail="Transaction is already failed")
-    await db.commit()
-    transaction = await db.get(Transaction, transaction_id)
-    if transaction is None:  # pragma: no cover - the row was just updated
-        raise HTTPException(status_code=404, detail="Transaction not found")
-    return transaction
+        if result.rowcount != 1:
+            current = await db.scalar(
+                select(Transaction.status).where(Transaction.id == transaction_id)
+            )
+            if current is None:
+                raise HTTPException(status_code=404, detail="Transaction not found")
+            raise HTTPException(status_code=409, detail="Transaction is already failed")
+        transaction = await db.get(Transaction, transaction_id)
+        operator_id = await db.scalar(
+            select(Operator.id)
+            .join(ProfitLedger, ProfitLedger.operator_code == Operator.code)
+            .where(ProfitLedger.transaction_id == transaction_id)
+        )
+        if transaction is None or operator_id is None:
+            raise HTTPException(status_code=409, detail="Original operator debit could not be resolved")
+        if type(transaction.amount_cents) is not int or not 0 <= transaction.amount_cents <= 9223372036854775807:
+            raise HTTPException(status_code=409, detail="Stored transaction amount is invalid")
+        credit = await db.execute(
+            update(OperatorBalance)
+            .where(
+                OperatorBalance.operator_id == operator_id,
+                func.typeof(OperatorBalance.balance_cents) == "integer",
+                OperatorBalance.balance_cents >= 0,
+                OperatorBalance.balance_cents <= 9223372036854775807 - transaction.amount_cents,
+            )
+            .values(balance_cents=OperatorBalance.balance_cents + transaction.amount_cents)
+        )
+        if credit.rowcount != 1:
+            raise HTTPException(status_code=409, detail="Original operator balance not found")
+        db.add(OperatorCreditRefund(
+            transaction_id=transaction.id,
+            transaction_reference=transaction.reference,
+            operator_id=operator_id,
+            amount_cents=transaction.amount_cents,
+        ))
+        await db.commit()
+        return transaction
+    except Exception:
+        await db.rollback()
+        raise
 
 
 @app.delete("/api/transactions/{transaction_id}", status_code=204, response_class=Response)
@@ -1649,7 +1679,7 @@ async def remove_failed_transaction(
 
     Only failed rows can be removed, and removal never refunds: the row keeps
     its status with ``deleted_at`` set, and its profit ledger row and the
-    operator debit stay untouched so the audit trail survives. Deleting again
+    refund audit stay untouched so the audit trail survives. Deleting again
     is safe and returns the same 204.
     """
     result = await db.execute(

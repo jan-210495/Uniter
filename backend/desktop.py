@@ -59,7 +59,10 @@ _data_dir = ensure_data_dir()
 
 import uvicorn
 from backend.main import app, templates
-from backend.database import Base, engine, SessionLocal
+from backend.database import (
+    Base, engine, SessionLocal, migrate_operator_credit_refunds,
+    validate_existing_refund_schema,
+)
 from backend.migrations import SchemaUpgradeError, migrate_transaction_lifecycle
 from backend.seed import seed_data
 
@@ -70,9 +73,11 @@ from backend.seed import seed_data
 
 async def _seed_database() -> None:
     """Create all tables, upgrade legacy schemas and seed data idempotently."""
+    await validate_existing_refund_schema(engine)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     await migrate_transaction_lifecycle(engine)
+    await migrate_operator_credit_refunds(engine)
     async with SessionLocal() as session:
         await seed_data(session)
 

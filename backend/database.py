@@ -169,6 +169,26 @@ class OperatorTopup(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class OperatorCreditRefund(Base):
+    """Append-only face-credit reversal; original profit/debit history is untouched.
+
+    The reference survives legacy customer-history deletion; the optional FK is
+    cleared by SQLite on deletion, preserving existing customer deletion policy.
+    """
+
+    __tablename__ = "operator_credit_refund"
+    __table_args__ = (CheckConstraint("amount_cents >= 0", name="refund_amount"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("transactions.id", ondelete="SET NULL"), unique=True, nullable=True
+    )
+    transaction_reference: Mapped[str] = mapped_column(String(255), unique=True)
+    operator_id: Mapped[int] = mapped_column(ForeignKey("operators.id"))
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class ProfitLedger(Base):
     """Commission profit per transaction, tracked separately from operator balances."""
 
@@ -260,6 +280,7 @@ async def _migrate_schema() -> None:
         from migrations import migrate_transaction_lifecycle
 
     await migrate_transaction_lifecycle(engine)
+    await migrate_operator_credit_refunds(engine)
 
 
 async def upgrade_existing_database() -> bool:
@@ -285,10 +306,98 @@ async def upgrade_existing_database() -> bool:
     except ImportError:  # pragma: no cover - flat module layout (PyInstaller)
         from migrations import upgrade_existing_database as _upgrade
 
-    return await _upgrade(engine, DATABASE_URL.database)
+    if DATABASE_URL.database and os.path.exists(DATABASE_URL.database):
+        await validate_existing_refund_schema(engine)
+    changed = await _upgrade(engine, DATABASE_URL.database)
+    if DATABASE_URL.database and os.path.exists(DATABASE_URL.database):
+        changed = await migrate_operator_credit_refunds(engine) or changed
+    return changed
+
+
+def _validate_refund_schema(connection) -> None:
+    """Fail closed on a preexisting audit that cannot enforce our invariants."""
+    from sqlalchemy import create_engine, inspect
+    try:
+        from .migrations import SchemaUpgradeError
+    except ImportError:  # pragma: no cover - frozen flat layout
+        from migrations import SchemaUpgradeError
+
+    def signature(inspector):
+        table = OperatorCreditRefund.__tablename__
+        columns = tuple(
+            (c['name'], str(c['type']), c['nullable'], c['default'])
+            for c in inspector.get_columns(table)
+        )
+        primary = tuple(inspector.get_pk_constraint(table)['constrained_columns'])
+        foreign = sorted(
+            (tuple(f['constrained_columns']), f['referred_table'],
+             tuple(f['referred_columns']), tuple(sorted(f['options'].items())))
+            for f in inspector.get_foreign_keys(table)
+        )
+        unique = sorted(tuple(u['column_names']) for u in inspector.get_unique_constraints(table))
+        # Unique indexes are not interchangeable with table constraints here:
+        # partial/expression indexes can silently weaken the idempotency guard.
+        unique_indexes = [i for i in inspector.get_indexes(table) if i['unique']]
+        checks = sorted(''.join(c['sqltext'].lower().split()) for c in inspector.get_check_constraints(table))
+        return columns, primary, foreign, unique, checks, unique_indexes
+
+    expected_engine = create_engine('sqlite://')
+    try:
+        with expected_engine.begin() as expected:
+            OperatorCreditRefund.__table__.create(expected)
+            if signature(inspect(connection)) != signature(inspect(expected)):
+                raise SchemaUpgradeError('operator_credit_refund schema is incompatible; refusing startup')
+    finally:
+        expected_engine.dispose()
+
+
+async def validate_existing_refund_schema(target_engine) -> None:
+    """Read-only preflight before any other startup migration or seeding."""
+    async with target_engine.connect() as connection:
+        exists = (await connection.exec_driver_sql(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='operator_credit_refund'"
+        )).scalar()
+        if exists:
+            await connection.run_sync(_validate_refund_schema)
+
+
+async def migrate_operator_credit_refunds(target_engine) -> bool:
+    """Add the versioned reversal audit under a write lock; never backfill refunds.
+
+    Kept separate from the transaction rebuild so earlier lifecycle migrations
+    retain their no-op contract. Missing/uninitialised files stay untouched.
+    """
+    async with target_engine.connect() as connection:
+        await connection.exec_driver_sql("BEGIN IMMEDIATE")
+        try:
+            tables = set((await connection.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )).scalars())
+            if "transactions" not in tables:
+                await connection.rollback()
+                return False
+            changed = "operator_credit_refund" not in tables
+            await connection.run_sync(
+                lambda sync: OperatorCreditRefund.__table__.create(sync, checkfirst=True)
+            )
+            await connection.run_sync(_validate_refund_schema)
+            await connection.exec_driver_sql(
+                "CREATE TABLE IF NOT EXISTS schema_migrations "
+                "(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            )
+            await connection.exec_driver_sql(
+                "INSERT OR IGNORE INTO schema_migrations(version) "
+                "VALUES ('slice-2.3c-operator-credit-refund')"
+            )
+            await connection.commit()
+            return changed
+        except Exception:
+            await connection.rollback()
+            raise
 
 
 async def init_db() -> None:
+    await validate_existing_refund_schema(engine)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
         statement = sqlite_insert(Setting).values(
