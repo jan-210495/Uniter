@@ -7,7 +7,8 @@ from uuid import uuid4
 import sys
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import case, func, or_, select, update
@@ -38,6 +39,13 @@ if getattr(sys, "_MEIPASS", None):
     if _meipass_templates.is_dir():
         _template_dir = _meipass_templates
 templates = Jinja2Templates(directory=str(_template_dir))
+_static_dir = _template_dir.parent / "static"
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+def web_app_manifest() -> FileResponse:
+    return FileResponse(_static_dir / "manifest.webmanifest", media_type="application/manifest+json")
 
 Code = Annotated[str, Field(min_length=1, max_length=50)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]

@@ -8,6 +8,7 @@ ROOT = Path.cwd()
 
 datas = [
     (str(ROOT / "backend" / "templates"), "backend/templates"),
+    (str(ROOT / "backend" / "static"), "backend/static"),
 ]
 
 hiddenimports = [
