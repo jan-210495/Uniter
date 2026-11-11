@@ -20,126 +20,83 @@
         [dir="ltr"] .text-start { text-align: left; }
         [dir="rtl"] .text-end { text-align: left; }
         [dir="ltr"] .text-end { text-align: right; }
-        /* Mobile drawer: slides in from the start edge, hidden when closed. */
-        #app-drawer { transition: transform 0.2s ease, visibility 0.2s ease; }
-        #app-drawer.drawer-closed { transform: translateX(-100%); visibility: hidden; }
-        [dir="rtl"] #app-drawer.drawer-closed { transform: translateX(100%); }
-        @media (prefers-reduced-motion: reduce) { #app-drawer { transition: none; } }
     </style>
+    <link rel="stylesheet" href="/static/navigation.css">
+    <script src="/static/navigation.js" defer></script>
+    <noscript><style>
+        #nav-toggle, #app-drawer-close { display: none; }
+        @media (max-width: 1023px) {
+            #app-drawer.drawer-closed { position: static; transform: none; visibility: visible; inline-size: 100%; block-size: auto; }
+        }
+    </style></noscript>
     {% block head_extra %}{% endblock %}
 </head>
 <body class="min-h-screen overflow-x-hidden bg-slate-50 text-start text-slate-900">
-    <header class="border-b border-slate-200 bg-white">
-        <nav class="mx-auto max-w-6xl px-4 py-4 sm:px-6 lg:px-8" aria-label="Main navigation">
-            <!-- Mobile header (below sm): burger on the far left, centered logo. -->
-            <div class="grid grid-cols-3 items-center sm:hidden">
+    <a class="skip-link" href="#app-main">{{ 'انتقل إلى المحتوى' if lang|default('en') == 'ar' else 'Skip to content' }}</a>
+    <header id="app-header" class="border-b border-slate-200 bg-white">
+        <nav class="shell-topbar" aria-label="{{ 'شريط التطبيق' if lang|default('en') == 'ar' else 'Application toolbar' }}">
+            <!-- Compact toolbar; the same side list serves both viewport modes. -->
+            <div class="shell-mobile-bar">
                 <button id="nav-toggle" type="button" class="inline-flex justify-self-start rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-700 transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700" aria-expanded="false" aria-controls="app-drawer" aria-label="{{ 'فتح القائمة' if lang|default('en') == 'ar' else 'Open menu' }}">
                     <svg width="20" height="14" viewBox="0 0 20 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M1 1h18M1 7h18M1 13h18"/></svg>
                 </button>
                 <a href="/" class="justify-self-center text-lg font-bold text-blue-950">Uniter</a>
                 <span aria-hidden="true"></span>
             </div>
-            <!-- Desktop header (sm and up): logo left, inline nav, search and language. -->
-            <div class="hidden items-center justify-between gap-3 sm:flex">
+            <!-- Desktop toolbar keeps global search separate from the side list. -->
+            <div class="shell-desktop-bar">
                 <a href="/" class="text-lg font-bold text-blue-950">Uniter</a>
                 <div class="flex flex-wrap items-center gap-4 text-sm font-semibold text-slate-600 sm:gap-5">
                 <div id="global-search-anchor" class="relative">
                     <input id="global-search" type="search" dir="auto" autocomplete="off" maxlength="255" placeholder="{{ 'البحث عن العملاء والمعاملات والمشغّلين' if lang|default('en') == 'ar' else 'Search customers, transactions, operators' }}" aria-label="{{ 'بحث عام' if lang|default('en') == 'ar' else 'Global search' }}" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="global-search-results" aria-autocomplete="list" class="w-44 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100 lg:w-56">
                     <ul id="global-search-results" role="listbox" aria-label="{{ 'نتائج البحث' if lang|default('en') == 'ar' else 'Search results' }}" class="absolute inset-x-0 top-full z-30 mt-1 hidden max-h-80 min-w-[16rem] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg"></ul>
                 </div>
-                <div class="flex flex-wrap items-center gap-4" aria-label="Pages">
-                    <a href="/pos" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'pos' %} aria-current="page"{% endif %}>{{ 'نقطة البيع' if lang|default('en') == 'ar' else 'POS' }}</a>
-                    <a href="/settlement" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'settlement' %} aria-current="page"{% endif %}>{{ 'تسوية الديون' if lang|default('en') == 'ar' else 'Settlement' }}</a>
-                    <a href="/transactions" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'transactions' %} aria-current="page"{% endif %}>{{ 'المعاملات' if lang|default('en') == 'ar' else 'Transactions' }}</a>
-                    <a href="/customers" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'customers' %} aria-current="page"{% endif %}>{{ 'العملاء' if lang|default('en') == 'ar' else 'Customers' }}</a>
-                    <a href="/settings" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'settings' %} aria-current="page"{% endif %}>{{ 'الإعدادات' if lang|default('en') == 'ar' else 'Settings' }}</a>
-                    <a href="/topup" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'topup' %} aria-current="page"{% endif %}>{{ 'تعبئة الرصيد' if lang|default('en') == 'ar' else 'Top-up' }}</a>
-                    <a href="/stats" class="hover:text-blue-800"{% if nav_page is defined and nav_page == 'stats' %} aria-current="page"{% endif %}>{{ 'الإحصائيات' if lang|default('en') == 'ar' else 'Stats' }}</a>
-                </div>
-                <div class="flex flex-wrap items-center gap-3" aria-label="Language">
-                    <a href="?lang=en" lang="en" class="hover:text-blue-800"{% if lang|default('en') == 'en' %} aria-current="true"{% endif %}>English</a>
-                    <span aria-hidden="true" class="text-slate-300">|</span>
-                    <a href="?lang=ar" lang="ar" class="hover:text-blue-800"{% if lang == 'ar' %} aria-current="true"{% endif %}>العربية</a>
-                    <span id="header-timezone" dir="ltr" hidden class="text-xs font-semibold text-slate-400"></span>
-                </div>
+                <span id="header-timezone" dir="ltr" hidden class="text-xs font-semibold text-slate-400"></span>
                 </div>
             </div>
         </nav>
     </header>
     <div id="app-drawer-backdrop" class="fixed inset-0 z-40 bg-slate-900/50 hidden"></div>
-    <nav id="app-drawer" class="drawer-closed fixed inset-y-0 start-0 z-50 flex w-72 flex-col border-e border-slate-200 bg-white shadow-xl" role="navigation" aria-modal="true" aria-label="{{ 'قائمة التنقل' if lang|default('en') == 'ar' else 'Navigation menu' }}">
-        <div class="flex items-center justify-between border-b border-slate-100 px-4 py-4">
+    <nav id="app-drawer" class="drawer-closed" role="navigation" aria-label="{{ 'قائمة التنقل' if lang|default('en') == 'ar' else 'Navigation menu' }}">
+        <div class="drawer-heading flex items-center justify-between border-b border-slate-100 px-4 py-4">
             <span class="text-sm font-bold text-blue-950">Uniter</span>
             <button id="app-drawer-close" type="button" aria-label="{{ 'إغلاق' if lang|default('en') == 'ar' else 'Close' }}" class="rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">✕</button>
         </div>
-        <div class="border-b border-slate-100 px-3 py-3">
+        <div class="drawer-search border-b border-slate-100 px-3 py-3">
             <div id="drawer-search-anchor" class="relative">
                 <input id="drawer-global-search" type="search" dir="auto" autocomplete="off" maxlength="255" placeholder="{{ 'البحث عن العملاء والمعاملات والمشغّلين' if lang|default('en') == 'ar' else 'Search customers, transactions, operators' }}" aria-label="{{ 'بحث عام' if lang|default('en') == 'ar' else 'Global search' }}" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="global-search-results" aria-autocomplete="list" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
             </div>
         </div>
-        <div class="flex flex-col gap-1 px-3 py-4">
+        <div class="nav-pages flex flex-col gap-1 px-3 py-4" aria-label="Pages">
             <a href="/pos" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'pos' %} aria-current="page"{% endif %}>{{ 'نقطة البيع' if lang|default('en') == 'ar' else 'POS' }}</a>
-            <a href="/settlement" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'settlement' %} aria-current="page"{% endif %}>{{ 'تسوية الديون' if lang|default('en') == 'ar' else 'Settlement' }}</a>
+            <a href="/topup" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'topup' %} aria-current="page"{% endif %}>{{ 'تعبئة الرصيد' if lang|default('en') == 'ar' else 'Top-up' }}</a>
             <a href="/transactions" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'transactions' %} aria-current="page"{% endif %}>{{ 'المعاملات' if lang|default('en') == 'ar' else 'Transactions' }}</a>
             <a href="/customers" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'customers' %} aria-current="page"{% endif %}>{{ 'العملاء' if lang|default('en') == 'ar' else 'Customers' }}</a>
-            <a href="/settings" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'settings' %} aria-current="page"{% endif %}>{{ 'الإعدادات' if lang|default('en') == 'ar' else 'Settings' }}</a>
-            <a href="/topup" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'topup' %} aria-current="page"{% endif %}>{{ 'تعبئة الرصيد' if lang|default('en') == 'ar' else 'Top-up' }}</a>
+            <a href="/settlement" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'settlement' %} aria-current="page"{% endif %}>{{ 'تسوية الديون' if lang|default('en') == 'ar' else 'Settlement' }}</a>
             <a href="/stats" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'stats' %} aria-current="page"{% endif %}>{{ 'الإحصائيات' if lang|default('en') == 'ar' else 'Stats' }}</a>
+            <a href="/settings" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'settings' %} aria-current="page"{% endif %}>{{ 'الإعدادات' if lang|default('en') == 'ar' else 'Settings' }}</a>
         </div>
-        <div class="mt-auto flex flex-wrap items-center gap-3 border-t border-slate-100 px-4 py-4 text-sm font-semibold text-slate-600">
+        <div class="nav-languages flex flex-wrap items-center gap-3 border-t border-slate-100 px-4 py-4 text-sm font-semibold text-slate-600">
             <span class="text-xs font-bold uppercase tracking-widest text-slate-400">{{ 'اللغة' if lang|default('en') == 'ar' else 'Language' }}</span>
             <a href="?lang=en" lang="en" class="hover:text-blue-800"{% if lang|default('en') == 'en' %} aria-current="true"{% endif %}>English</a>
             <span aria-hidden="true" class="text-slate-300">|</span>
             <a href="?lang=ar" lang="ar" class="hover:text-blue-800"{% if lang == 'ar' %} aria-current="true"{% endif %}>العربية</a>
         </div>
     </nav>
-    <main class="mx-auto max-w-6xl break-words px-4 py-8 sm:px-6 lg:px-8">
+    <div class="shell-content">
+    <main id="app-main" tabindex="-1" class="mx-auto max-w-6xl break-words px-4 py-8 sm:px-6 lg:px-8">
         {% block content %}{% endblock %}
     </main>
+    </div>
     {% block scripts %}{% endblock %}
     <script>
     (() => {
         'use strict';
-        // --- Mobile burger menu ---
-        const navToggle = document.getElementById('nav-toggle');
-        const drawer = document.getElementById('app-drawer');
-        const backdrop = document.getElementById('app-drawer-backdrop');
-        const drawerClose = document.getElementById('app-drawer-close');
-        let lastFocused = null;
-
+        // Navigation owns focus/layout; search keeps its existing behavior.
         function setDrawer(open) {
-            drawer.classList.toggle('drawer-closed', !open);
-            backdrop.classList.toggle('hidden', !open);
-            navToggle.setAttribute('aria-expanded', String(open));
-            if (open) {
-                lastFocused = document.activeElement;
-                if (drawerClose) drawerClose.focus();
-            } else {
-                if (typeof closeGlobalSearch === 'function') closeGlobalSearch();
-                if (lastFocused && typeof lastFocused.focus === 'function') {
-                    lastFocused.focus();
-                    lastFocused = null;
-                }
-            }
+            if (window.uniterNavigation) window.uniterNavigation.setOpen(open);
         }
-
-        if (navToggle && drawer && backdrop) {
-            navToggle.addEventListener('click', () => {
-                setDrawer(navToggle.getAttribute('aria-expanded') !== 'true');
-            });
-            if (drawerClose) drawerClose.addEventListener('click', () => setDrawer(false));
-            backdrop.addEventListener('click', () => setDrawer(false));
-            // Navigating from the drawer closes it first.
-            drawer.querySelectorAll('a').forEach((link) => {
-                link.addEventListener('click', () => setDrawer(false));
-            });
-            document.addEventListener('keydown', (event) => {
-                if (event.key === 'Escape' && navToggle.getAttribute('aria-expanded') === 'true') {
-                    event.preventDefault();
-                    setDrawer(false);
-                }
-            });
-        }
+        document.addEventListener('navigation:closed', () => closeGlobalSearch());
 
         // --- Global search (customers, transactions, operators) ---
         const searchMessages = {{ {
