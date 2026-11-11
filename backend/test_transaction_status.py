@@ -1,8 +1,9 @@
-"""Slice 2, part C: recording the real-world result of a POS transaction.
+"""Slice 2.3, part C: marking a sale failed and removing failed rows.
 
-A transaction is created ``pending``; only the explicit operator confirmation
-moves it to ``completed`` or ``failed``. The state machine, the absence of
-money movement and the existing reporting surfaces are all covered here.
+A committed sale is ``successful``. The seller can record the real-world outcome
+on the Transactions page (successful -> failed) and may remove failed rows from
+the reporting views. Marking failed refunds the stored face debit once;
+removal moves no money. Commission and the original profit history survive.
 """
 
 import asyncio
@@ -11,13 +12,13 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import URL, event, select, update
+from sqlalchemy import URL, event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.database import (
     Base,
     Customer,
-    DebtLedger,
+    Operator,
     OperatorBalance,
     ProfitLedger,
     Transaction,
@@ -32,7 +33,6 @@ PHONE = "0944123456"
 
 @pytest.fixture
 def client(tmp_path) -> Iterator[tuple[TestClient, async_sessionmaker]]:
-    """A test client plus the session factory, for direct ledger checks."""
     engine = create_async_engine(URL.create("sqlite+aiosqlite", database=str(tmp_path / "status.db")))
     event.listen(engine.sync_engine, "connect", enable_sqlite_foreign_keys)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
@@ -75,6 +75,9 @@ def fund(client: TestClient, operator_code: str = "mtn", amount_cents: int = 5_0
     )
 
 
+_KEYS = 0
+
+
 def create_transaction(
     client: TestClient,
     *,
@@ -82,7 +85,10 @@ def create_transaction(
     operator_code: str = "mtn",
     service_code: str = "prepaid",
     amount_cents: int = 5000,
+    customer_name: str | None = "Ahmad",
 ) -> dict[str, Any]:
+    # Commit keys live on the client side; one per deliberate sale.
+    client.commit_keys = getattr(client, "commit_keys", 0) + 1
     response = client.post(
         "/api/transactions",
         json={
@@ -90,269 +96,363 @@ def create_transaction(
             "operator_code": operator_code,
             "service_code": service_code,
             "amount_cents": amount_cents,
+            "commit_key": f"statuskey{client.commit_keys:022d}",
+            **({"customer_name": customer_name} if customer_name else {}),
         },
     )
     assert response.status_code == 200, response.text
     return response.json()
 
 
-def set_status(client: TestClient, transaction_id: int, status: str):
-    return client.patch(f"/api/transactions/{transaction_id}/status", json={"status": status})
+def balance(sessions: async_sessionmaker, operator_code: str = "mtn") -> int:
+    async def read(session: AsyncSession) -> int:
+        value = await session.scalar(
+            select(OperatorBalance.balance_cents)
+            .join(Operator, OperatorBalance.operator_id == Operator.id)
+            .where(Operator.code == operator_code)
+        )
+        return int(value or 0)
+
+    return run_db(sessions, read)
 
 
-def ledger_snapshot(sessions: async_sessionmaker, transaction_id: int) -> dict[str, Any]:
-    async def snapshot(session: AsyncSession) -> dict[str, Any]:
-        transaction = await session.get(Transaction, transaction_id)
-        profit = await session.scalar(
-            select(ProfitLedger).where(ProfitLedger.transaction_id == transaction_id)
-        )
-        balance = await session.scalar(select(OperatorBalance).order_by(OperatorBalance.id))
-        customer = await session.scalar(select(Customer).where(Customer.phone == PHONE))
-        debt_rows = await session.scalars(
-            select(DebtLedger).where(DebtLedger.customer_id == customer.id)
-        )
+def profits(sessions: async_sessionmaker) -> list[tuple[int, int, int]]:
+    async def read(session: AsyncSession):
+        rows = (await session.execute(select(ProfitLedger).order_by(ProfitLedger.id))).scalars()
+        return [(row.transaction_id, row.commission_cents, row.profit_cents) for row in rows]
+
+    return run_db(sessions, read)
+
+
+def raw_row(sessions: async_sessionmaker, transaction_id: int) -> dict | None:
+    async def read(session: AsyncSession):
+        row = await session.get(Transaction, transaction_id)
+        if row is None:
+            return None
         return {
-            "status": transaction.status,
-            "amount_cents": transaction.amount_cents,
-            "reference": transaction.reference,
-            "ussd_string": transaction.ussd_string,
-            "created_at": transaction.created_at,
-            "profit": (profit.amount_cents, profit.commission_cents, profit.profit_cents),
-            "balance_cents": balance.balance_cents,
-            "customer_balance_cents": customer.balance_cents,
-            "customer_debt_rows": len(debt_rows.all()),
+            "id": row.id,
+            "status": row.status,
+            "amount_cents": row.amount_cents,
+            "reference": row.reference,
+            "ussd_string": row.ussd_string,
+            "deleted_at": row.deleted_at,
+            "idempotency_key": row.idempotency_key,
         }
 
-    return run_db(sessions, snapshot)
+    return run_db(sessions, read)
 
 
-# --- Creation stays pending ------------------------------------------------
+def set_failed(client: TestClient, transaction_id: int):
+    return client.patch(f"/api/transactions/{transaction_id}/status", json={"status": "failed"})
 
 
-def test_new_transaction_is_pending_and_reporting_says_so(client) -> None:
-    test_client, _ = client
+# --- Marking a successful sale failed ------------------------------------
+
+
+@pytest.mark.parametrize("customer_name", ["Ahmad", "   "])
+def test_marking_successful_as_failed_refunds_the_stored_face_amount(client, customer_name) -> None:
+    test_client, sessions = client
+    fund(test_client, amount_cents=100_000)
+    transaction = create_transaction(test_client, customer_name=customer_name)
+    assert transaction["status"] == "successful"
+    profit_before = profits(sessions)
+    balance_before = balance(sessions)
+
+    response = set_failed(test_client, transaction["id"])
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["reference"] == transaction["reference"]
+
+    # Refund only the stored face debit, never the separately recorded commission.
+    assert balance(sessions) == balance_before + transaction["amount_cents"]
+    assert profits(sessions) == profit_before
+    async def audit(session):
+        from sqlalchemy import text
+        return (await session.execute(text("SELECT transaction_id, operator_id, amount_cents FROM operator_credit_refund"))).all()
+    assert [tuple(row) for row in run_db(sessions, audit)] == [(transaction["id"], 1, 5000)]
+    assert raw_row(sessions, transaction["id"])["status"] == "failed"
+    listed = {row["id"]: row["status"] for row in test_client.get("/api/transactions").json()}
+    assert listed[transaction["id"]] == "failed"
+
+
+@pytest.mark.parametrize("payload", [{"status": "successful"}, {"status": "pending"}])
+def test_invalid_target_statuses_are_rejected(client, payload: dict) -> None:
+    test_client, sessions = client
     fund(test_client)
     transaction = create_transaction(test_client)
-    assert transaction["status"] == "pending"
-
-    listed = test_client.get("/api/transactions", params={"status": "pending"}).json()
-    assert [row["id"] for row in listed] == [transaction["id"]]
-    assert test_client.get("/api/transactions", params={"status": "completed"}).json() == []
-    assert "Pending" in test_client.get("/operators/mtn").text
-    stats = test_client.get("/api/stats/summary", params={"period": 7}).json()
-    counts = {row["status"]: row["count"] for row in stats["by_status"]}
-    assert counts == {"pending": 1, "completed": 0, "failed": 0}
+    response = test_client.patch(f"/api/transactions/{transaction['id']}/status", json=payload)
+    assert response.status_code in (409, 422)
+    assert raw_row(sessions, transaction["id"])["status"] == "successful"
 
 
-# --- Valid transitions -----------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("status", "other_status", "english", "arabic"),
-    [("completed", "failed", "Completed", "مكتملة"), ("failed", "completed", "Failed", "فاشلة")],
-)
-def test_pending_can_move_to_a_final_status(client, status, other_status, english, arabic) -> None:
-    test_client, _ = client
+@pytest.mark.parametrize("value", ["", "completed", "done", "FAILED", None, 7])
+def test_arbitrary_status_strings_are_rejected(client, value) -> None:
+    test_client, sessions = client
     fund(test_client)
     transaction = create_transaction(test_client)
+    response = test_client.patch(
+        f"/api/transactions/{transaction['id']}/status", json={"status": value}
+    )
+    assert response.status_code == 422
+    assert raw_row(sessions, transaction["id"])["status"] == "successful"
 
-    response = set_status(test_client, transaction["id"], status)
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["status"] == status
-    # Nothing about the transaction itself changes except the status.
-    assert body["reference"] == transaction["reference"]
-    assert body["amount_cents"] == transaction["amount_cents"]
-    assert body["ussd_string"] == transaction["ussd_string"]
 
-    assert [row["id"] for row in test_client.get("/api/transactions", params={"status": status}).json()] == [
-        transaction["id"]
+def test_marking_an_unknown_transaction_is_a_404(client) -> None:
+    test_client, _ = client
+    assert set_failed(test_client, 4242).status_code == 404
+    assert set_failed(test_client, 0).status_code == 422
+
+
+def test_failed_is_final(client) -> None:
+    test_client, sessions = client
+    fund(test_client)
+    transaction = create_transaction(test_client)
+    assert set_failed(test_client, transaction["id"]).status_code == 200
+    # Repeating the action changes nothing and never re-applies accounting.
+    assert set_failed(test_client, transaction["id"]).status_code == 409
+    assert raw_row(sessions, transaction["id"])["status"] == "failed"
+    assert len(profits(sessions)) == 1
+    assert balance(sessions) == 5_000_000
+
+
+def test_repeated_failure_does_not_refund_but_another_sale_does(client) -> None:
+    test_client, sessions = client
+    fund(test_client, amount_cents=100_000)
+    first = create_transaction(test_client, amount_cents=1000)
+    second = create_transaction(test_client, amount_cents=2000)
+    assert set_failed(test_client, first["id"]).status_code == 200
+    balance_after_first = balance(sessions)
+    ledger_after_first = profits(sessions)
+
+    assert set_failed(test_client, first["id"]).status_code == 409
+    assert set_failed(test_client, second["id"]).status_code == 200
+
+    assert balance(sessions) == balance_after_first + second["amount_cents"]
+    assert profits(sessions) == ledger_after_first
+    assert [row["status"] for row in test_client.get("/api/transactions").json()] == [
+        "failed",
+        "failed",
     ]
-    assert test_client.get("/api/transactions", params={"status": other_status}).json() == []
-    # Operator page and statistics read the stored status.
-    assert english in test_client.get("/operators/mtn").text
-    assert arabic in test_client.get("/operators/mtn", params={"lang": "ar"}).text
-    stats = test_client.get("/api/stats/summary", params={"period": 7}).json()
-    counts = {row["status"]: row["count"] for row in stats["by_status"]}
-    assert counts[status] == 1 and counts[other_status] == 0
-    volumes = {row["status"]: row["volume_cents"] for row in stats["by_status"]}
-    assert volumes[status] == transaction["amount_cents"]
 
 
-# --- Accounting is untouched ----------------------------------------------
+# --- Removing failed rows -------------------------------------------------
 
 
-@pytest.mark.parametrize("status", ["completed", "failed"])
-def test_recording_a_result_moves_no_money(client, status: str) -> None:
+def test_successful_transactions_cannot_be_removed(client) -> None:
     test_client, sessions = client
-    fund(test_client, amount_cents=200_000)
-    transaction = create_transaction(test_client, amount_cents=5000)
-    before = ledger_snapshot(sessions, transaction["id"])
-
-    assert set_status(test_client, transaction["id"], status).status_code == 200
-    after = ledger_snapshot(sessions, transaction["id"])
-    assert after.pop("status") == status
-    before.pop("status")
-    assert after == before
-    # The creation-time deduction and commission stay exactly as recorded.
-    assert after["balance_cents"] == 200_000 - 5000
-    assert after["profit"] == (5000, 250, 250)
-    assert after["customer_balance_cents"] == 0
-    assert after["customer_debt_rows"] == 0
+    fund(test_client)
+    transaction = create_transaction(test_client)
+    response = test_client.delete(f"/api/transactions/{transaction['id']}")
+    assert response.status_code == 409
+    assert raw_row(sessions, transaction["id"])["deleted_at"] is None
+    assert [row["id"] for row in test_client.get("/api/transactions").json()] == [transaction["id"]]
 
 
-def test_a_rejected_transition_changes_nothing(client) -> None:
-    test_client, sessions = client
-    fund(test_client, amount_cents=200_000)
-    transaction = create_transaction(test_client, amount_cents=5000)
-    assert set_status(test_client, transaction["id"], "completed").status_code == 200
-    settled = ledger_snapshot(sessions, transaction["id"])
-    assert set_status(test_client, transaction["id"], "failed").status_code == 409
-    assert ledger_snapshot(sessions, transaction["id"]) == settled
-
-
-def test_a_failed_charge_is_not_refunded_automatically(client) -> None:
-    """Documented open business decision: no implicit refund on failure."""
+def test_removing_a_failed_transaction_tombstones_it_without_refunding(client) -> None:
     test_client, sessions = client
     fund(test_client, amount_cents=100_000)
     transaction = create_transaction(test_client, amount_cents=5000)
-    assert set_status(test_client, transaction["id"], "failed").status_code == 200
-    balance = {
-        row["operator_code"]: row["balance_cents"]
-        for row in test_client.get("/api/operators/balance").json()
+    assert set_failed(test_client, transaction["id"]).status_code == 200
+    profit_before = profits(sessions)
+    balance_before = balance(sessions)
+    customer_before = test_client.get("/api/customers/lookup", params={"phone": PHONE}).json()
+
+    response = test_client.delete(f"/api/transactions/{transaction['id']}")
+    assert response.status_code == 204
+    assert response.content == b""
+
+    # Hidden from every live view, but the row and its ledger row still exist.
+    assert test_client.get("/api/transactions").json() == []
+    assert transaction["id"] not in {
+        row["id"] for row in test_client.get("/api/search", params={"q": PHONE}).json()["transactions"]
     }
-    assert balance["mtn"] == 95_000
-    assert ledger_snapshot(sessions, transaction["id"])["profit"] == (5000, 250, 250)
+    assert not any(
+        transaction["reference"] in row
+        for row in [test_client.get("/operators/mtn").text]
+    )
+    row = raw_row(sessions, transaction["id"])
+    assert row["deleted_at"] is not None
+    assert row["status"] == "failed"
+    assert row["amount_cents"] == 5000
+    assert row["idempotency_key"] == f"statuskey{test_client.commit_keys:022d}"
+
+    # No refund, no commission reversal, no customer balance change.
+    assert profits(sessions) == profit_before
+    assert balance(sessions) == balance_before
+    assert test_client.get("/api/customers/lookup", params={"phone": PHONE}).json() == customer_before
 
 
-def test_register_summary_counts_only_completed_transactions(client) -> None:
-    test_client, _ = client
+def test_removal_is_safe_to_repeat(client) -> None:
+    test_client, sessions = client
     fund(test_client)
+    transaction = create_transaction(test_client)
+    assert set_failed(test_client, transaction["id"]).status_code == 200
+    assert test_client.delete(f"/api/transactions/{transaction['id']}").status_code == 204
+    tombstone = raw_row(sessions, transaction["id"])["deleted_at"]
+    assert test_client.delete(f"/api/transactions/{transaction['id']}").status_code == 204
+    # The original removal time is preserved.
+    assert raw_row(sessions, transaction["id"])["deleted_at"] == tombstone
+
+
+def test_removing_an_unknown_transaction_is_a_404(client) -> None:
+    test_client, _ = client
+    assert test_client.delete("/api/transactions/4242").status_code == 404
+
+
+def test_removed_failed_rows_still_block_a_replay(client) -> None:
+    """Replaying a commit whose sale was removed returns it, never recharges."""
+    test_client, sessions = client
+    fund(test_client, amount_cents=100_000)
+    transaction = create_transaction(test_client, amount_cents=5000)
+    key = raw_row(sessions, transaction["id"])["idempotency_key"]
+    assert set_failed(test_client, transaction["id"]).status_code == 200
+    assert test_client.delete(f"/api/transactions/{transaction['id']}").status_code == 204
+    balance_before = balance(sessions)
+
+    replay = test_client.post(
+        "/api/transactions",
+        json={
+            "customer_phone": PHONE,
+            "operator_code": "mtn",
+            "service_code": "prepaid",
+            "amount_cents": 5000,
+            "commit_key": key,
+        },
+    )
+    assert replay.status_code == 200
+    assert replay.json()["id"] == transaction["id"]
+    assert replay.json()["status"] == "failed"
+    assert balance(sessions) == balance_before
+    assert len(profits(sessions)) == 1
+
+
+# --- Reporting consistency ------------------------------------------------
+
+
+def test_filters_reflect_the_two_persisted_statuses(client) -> None:
+    test_client, sessions = client
+    fund(test_client, amount_cents=500_000)
+    first = create_transaction(test_client, amount_cents=1000)
+    second = create_transaction(test_client, amount_cents=2000)
+    create_transaction(test_client, amount_cents=3000)
+    assert set_failed(test_client, second["id"]).status_code == 200
+
+    successful = test_client.get("/api/transactions", params={"status": "successful"}).json()
+    failed = test_client.get("/api/transactions", params={"status": "failed"}).json()
+    assert {row["id"] for row in successful} == {
+        first["id"],
+        # third sale
+        sorted(row["id"] for row in test_client.get("/api/transactions").json())[-1],
+    }
+    assert [row["id"] for row in failed] == [second["id"]]
+    for legacy in ("pending", "completed"):
+        assert test_client.get("/api/transactions", params={"status": legacy}).status_code == 422
+
+    # Removing the failed one drops it from the failed filter too.
+    assert test_client.delete(f"/api/transactions/{second['id']}").status_code == 204
+    assert test_client.get("/api/transactions", params={"status": "failed"}).json() == []
+    assert set(test_client.get("/api/transactions", params={"status": "successful"}).json()[0]) == set(
+        successful[0]
+    )
+
+
+def test_stats_count_failed_sales_but_drop_removed_ones(client) -> None:
+    test_client, sessions = client
+    fund(test_client, amount_cents=500_000)
+    first = create_transaction(test_client, amount_cents=10_000)
+    second = create_transaction(test_client, amount_cents=4000)
+    third = create_transaction(test_client, amount_cents=1000)
+
+    summary = test_client.get("/api/stats/summary").json()
+    assert summary["totals"]["transaction_count"] == 3
+    assert summary["totals"]["volume_cents"] == 15_000
+    assert summary["totals"]["profit_cents"] == 750  # 500 + 200 + 50
+    assert summary["by_status"] == [
+        {"status": "successful", "count": 3, "volume_cents": 15_000},
+        {"status": "failed", "count": 0, "volume_cents": 0},
+    ]
+
+    # A failed sale still counts as a sale that happened.
+    assert set_failed(test_client, third["id"]).status_code == 200
+    summary = test_client.get("/api/stats/summary").json()
+    assert summary["totals"]["transaction_count"] == 3
+    assert summary["totals"]["volume_cents"] == 15_000
+    assert summary["by_status"] == [
+        {"status": "successful", "count": 2, "volume_cents": 14_000},
+        {"status": "failed", "count": 1, "volume_cents": 1000},
+    ]
+    assert summary["totals"]["profit_cents"] == 750  # no automatic reversal
+
+    # Removal is a reporting tombstone: volume and profit both go.
+    assert test_client.delete(f"/api/transactions/{third['id']}").status_code == 204
+    summary = test_client.get("/api/stats/summary").json()
+    assert summary["totals"]["transaction_count"] == 2
+    assert summary["totals"]["volume_cents"] == 14_000
+    assert summary["totals"]["profit_cents"] == 700
+    assert summary["by_status"] == [
+        {"status": "successful", "count": 2, "volume_cents": 14_000},
+        {"status": "failed", "count": 0, "volume_cents": 0},
+    ]
+    daily_total = sum(row["transaction_count"] for row in summary["daily"])
+    assert daily_total == 2
+
+
+def test_register_summary_counts_successful_cash_only(client) -> None:
+    test_client, sessions = client
+    fund(test_client, amount_cents=500_000)
     assert test_client.post("/api/register/open", json={"opening_balance_cents": 0}).status_code == 200
-    completed = create_transaction(test_client, amount_cents=5000)
-    failed = create_transaction(test_client, amount_cents=7000)
-    assert set_status(test_client, completed["id"], "completed").status_code == 200
-    assert set_status(test_client, failed["id"], "failed").status_code == 200
+    first = create_transaction(test_client, amount_cents=5000)
+    second = create_transaction(test_client, amount_cents=3000)
+    create_transaction(test_client, amount_cents=2000)
+
     summary = test_client.get("/api/register/summary").json()
-    assert summary["cash_collected_cents"] == 5000
-    assert summary["transaction_count"] == 1
+    assert summary["cash_collected_cents"] == 10_000
+    assert summary["transaction_count"] == 3
+
+    assert set_failed(test_client, second["id"]).status_code == 200
+    summary = test_client.get("/api/register/summary").json()
+    assert summary["cash_collected_cents"] == 7000
+    assert summary["transaction_count"] == 2
+
+    assert test_client.delete(f"/api/transactions/{second['id']}").status_code == 204
+    assert test_client.get("/api/register/summary").json()["cash_collected_cents"] == 7000
+    assert raw_row(sessions, first["id"])["status"] == "successful"
 
 
-# --- Invalid transitions ---------------------------------------------------
-
-
-def test_a_final_status_cannot_change_again(client) -> None:
+def test_operator_page_shows_both_statuses_in_both_languages(client) -> None:
     test_client, _ = client
     fund(test_client)
-    transaction = create_transaction(test_client)
-    assert set_status(test_client, transaction["id"], "completed").status_code == 200
+    failed = create_transaction(test_client, amount_cents=1000)
+    create_transaction(test_client, amount_cents=2000)
+    assert set_failed(test_client, failed["id"]).status_code == 200
 
-    for target in ("failed", "completed"):
-        response = set_status(test_client, transaction["id"], target)
-        assert response.status_code == 409
-        assert response.json()["detail"] == "Transaction is already completed"
-    assert [row["status"] for row in test_client.get("/api/transactions").json()] == ["completed"]
+    english = test_client.get("/operators/mtn").text
+    assert "Successful" in english and "Failed" in english
+    arabic = test_client.get("/operators/mtn", params={"lang": "ar"}).text
+    assert "ناجحة" in arabic and "فاشلة" in arabic
 
-
-def test_failed_transaction_cannot_be_completed_later(client) -> None:
-    test_client, _ = client
-    fund(test_client)
-    transaction = create_transaction(test_client)
-    assert set_status(test_client, transaction["id"], "failed").status_code == 200
-    assert set_status(test_client, transaction["id"], "completed").status_code == 409
-    assert test_client.get("/api/transactions").json()[0]["status"] == "failed"
+    # Removed rows leave the operator history.
+    assert test_client.delete(f"/api/transactions/{failed['id']}").status_code == 204
+    english = test_client.get("/operators/mtn").text
+    assert "Failed" not in english
+    assert "Successful" in english
 
 
-@pytest.mark.parametrize("target", ["pending", "done", "COMPLETED", "", "completed ", "null"])
-def test_arbitrary_status_strings_are_rejected(client, target: str) -> None:
-    test_client, _ = client
-    fund(test_client)
-    transaction = create_transaction(test_client)
-    response = test_client.patch(
-        f"/api/transactions/{transaction['id']}/status", json={"status": target}
-    )
-    assert response.status_code == 422
-    assert test_client.get("/api/transactions").json()[0]["status"] == "pending"
-
-
-def test_missing_status_field_is_rejected(client) -> None:
-    test_client, _ = client
-    fund(test_client)
-    transaction = create_transaction(test_client)
-    response = test_client.patch(f"/api/transactions/{transaction['id']}/status", json={})
-    assert response.status_code == 422
-    assert test_client.get("/api/transactions").json()[0]["status"] == "pending"
-
-
-def test_missing_transaction_returns_404(client) -> None:
-    test_client, _ = client
-    response = set_status(test_client, 9999, "completed")
-    assert response.status_code == 404
-    assert response.json()["detail"] == "Transaction not found"
-
-
-@pytest.mark.parametrize("transaction_id", [0, -1])
-def test_invalid_transaction_id_is_rejected(client, transaction_id: int) -> None:
-    test_client, _ = client
-    assert set_status(test_client, transaction_id, "completed").status_code == 422
-
-
-def test_non_numeric_transaction_id_is_rejected(client) -> None:
-    test_client, _ = client
-    response = test_client.patch("/api/transactions/not-an-id/status", json={"status": "completed"})
-    assert response.status_code == 422
-
-
-def test_status_update_requires_a_json_body(client) -> None:
-    """A cross-site HTML form cannot perform this PATCH/JSON update."""
-    test_client, _ = client
-    fund(test_client)
-    transaction = create_transaction(test_client)
-    response = test_client.patch(
-        f"/api/transactions/{transaction['id']}/status", data={"status": "completed"}
-    )
-    assert response.status_code == 422
-    assert test_client.get("/api/transactions").json()[0]["status"] == "pending"
-
-
-# --- Duplicate and concurrent requests ------------------------------------
-
-
-def test_duplicate_requests_only_apply_once(client) -> None:
+def test_customer_accounting_is_untouched_by_status_changes(client) -> None:
     test_client, sessions = client
-    fund(test_client)
-    transaction = create_transaction(test_client)
-    assert set_status(test_client, transaction["id"], "completed").status_code == 200
-    assert set_status(test_client, transaction["id"], "completed").status_code == 409
+    fund(test_client, amount_cents=100_000)
+    transaction = create_transaction(test_client, amount_cents=5000)
+    customer = test_client.get("/api/customers/lookup", params={"phone": PHONE}).json()
 
-    async def count(session: AsyncSession) -> int:
-        rows = await session.scalars(
-            select(ProfitLedger).where(ProfitLedger.transaction_id == transaction["id"])
-        )
-        return len(rows.all())
-
-    assert run_db(sessions, count) == 1
-
-
-def test_concurrent_updates_have_exactly_one_winner(client) -> None:
-    test_client, sessions = client
-    fund(test_client)
-    transaction = create_transaction(test_client)
-
-    async def attempt(status: str) -> int:
-        async with sessions() as session:
-            result = await session.execute(
-                update(Transaction)
-                .where(Transaction.id == transaction["id"], Transaction.status == "pending")
-                .values(status=status)
-            )
-            await session.commit()
-            return result.rowcount
-
-    async def race() -> list[int]:
-        return sorted(await asyncio.gather(attempt("completed"), attempt("failed")))
-
-    assert asyncio.run(race()) == [0, 1]
-    final = test_client.get("/api/transactions").json()[0]["status"]
-    assert final in {"completed", "failed"}
-    assert ledger_snapshot(sessions, transaction["id"])["profit"] == (5000, 250, 250)
+    assert set_failed(test_client, transaction["id"]).status_code == 200
+    assert test_client.get("/api/customers/lookup", params={"phone": PHONE}).json() == customer
+    balance_payload = test_client.get(f"/api/customers/{customer['id']}/balance").json()
+    assert balance_payload["total_debt_cents"] == 0
+    # The customer keeps their (now failed) transaction history.
+    customer_transactions = test_client.get(
+        "/api/transactions", params={"customer_phone": PHONE}
+    ).json()
+    assert [row["id"] for row in customer_transactions] == [transaction["id"]]
+    assert test_client.delete(f"/api/transactions/{transaction['id']}").status_code == 204
+    assert test_client.get("/api/customers/lookup", params={"phone": PHONE}).json() == customer
+    assert balance(sessions) == 100_000

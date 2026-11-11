@@ -2,7 +2,6 @@
 {% set ar = lang|default('en') == 'ar' %}
 
 {% block head_extra %}
-    <meta name="theme-color" content="#f8fafc">
 {% endblock %}
 
 {% block content %}
@@ -137,34 +136,19 @@
             <section id="result" hidden class="rounded-2xl border border-blue-200 bg-blue-50 p-5 sm:p-6" aria-labelledby="result-title" aria-live="polite">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                     <h2 id="result-title" class="text-sm font-bold text-blue-950">{{ 'رمز USSD' if ar else 'USSD code' }}</h2>
-                    <span id="result-status-badge" class="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">{{ 'قيد الانتظار' if ar else 'Pending' }}</span>
+                    <span id="result-badge" class="rounded-full border border-blue-200 bg-white px-2.5 py-1 text-xs font-semibold text-blue-900">{{ 'لم تُسجَّل بعد' if ar else 'Not recorded yet' }}</span>
                 </div>
-                <p class="mt-1 hidden text-xs leading-5 text-slate-600 md:block">{{ 'تم إنشاء معاملة قيد الانتظار وخصمها من رصيد المشغّل. استخدم الرمز لإتمام الشحن عبر هاتف المتجر.' if ar else 'A pending transaction was created and deducted from the operator balance. Use the code to complete the charge from the shop phone.' }}</p>
+                <p id="result-hint" class="mt-1 hidden text-xs leading-5 text-slate-600 md:block">{{ 'لم تُسجَّل المعاملة بعد ولم يُخصم أي مبلغ. اضغط نسخ أو افتح لوحة الاتصال لتسجيل البيع وخصمه مرة واحدة.' if ar else 'Nothing is recorded yet and no balance has moved. Tap Copy or open the phone dialer to record the sale and apply the charge once.' }}</p>
                 <div class="mt-4 flex flex-wrap items-stretch gap-2">
                     <input id="ussd-output" type="text" dir="ltr" readonly aria-label="{{ 'رمز USSD' if ar else 'USSD code' }}" class="min-w-0 flex-1 rounded-lg border border-blue-200 bg-white px-3 py-3 font-mono text-sm font-semibold text-blue-950">
-                    <button id="copy-ussd" type="button" class="rounded-lg border border-blue-800 bg-white px-4 py-3 text-sm font-bold text-blue-900 hover:bg-blue-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'نسخ' if ar else 'Copy' }}</button>
+                    <button id="copy-ussd" type="button" class="rounded-lg border border-blue-800 bg-white px-4 py-3 text-sm font-bold text-blue-900 hover:bg-blue-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'نسخ وتسجيل' if ar else 'Copy & record' }}</button>
                 </div>
                 <p id="copy-status" role="status" aria-live="polite" class="mt-2 text-xs text-slate-600"></p>
                 <div id="dial-actions" hidden class="mt-3">
-                    <a id="dial-ussd" href="#dial-ussd" aria-describedby="dial-hint" class="inline-flex items-center rounded-lg border border-blue-800 bg-white px-4 py-3 text-sm font-bold text-blue-900 hover:bg-blue-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'فتح لوحة الاتصال' if ar else 'Open phone dialer' }}</a>
-                    <p id="dial-hint" class="mt-2 text-xs leading-5 text-slate-500">{{ 'يفتح هذا الزر لوحة الاتصال في هاتفك مع الرمز فقط. يختلف دعم الأجهزة والمتصفحات، فراجع الرمز وأكّد الاتصال بنفسك. النسخ يبقى الخيار الموثوق.' if ar else 'This only opens your phone dialer with the code. Device and browser support varies, so check the code and confirm the call yourself. Copy stays the reliable option.' }}</p>
+                    <a id="dial-ussd" href="#dial-ussd" aria-describedby="dial-hint" class="inline-flex items-center rounded-lg border border-blue-800 bg-white px-4 py-3 text-sm font-bold text-blue-900 hover:bg-blue-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'فتح لوحة الاتصال وتسجيل البيع' if ar else 'Open dialer & record' }}</a>
+                    <p id="dial-hint" class="mt-2 text-xs leading-5 text-slate-500">{{ 'يفتح لوحة الاتصال في هاتفك مع الرمز ويسجّل البيع. يختلف دعم الأجهزة والمتصفحات، فراجع الرمز وأكّد الاتصال بنفسك. النسخ يبقى الخيار الموثوق.' if ar else 'Opens your phone dialer with the code and records the sale. Device and browser support varies, so check the code and confirm the call yourself. Copy stays the reliable option.' }}</p>
                 </div>
-                <div class="mt-5 border-t border-blue-200 pt-4">
-                    <h3 class="text-sm font-bold text-blue-950">{{ 'نتيجة الشحن' if ar else 'Charge result' }}</h3>
-                    <p class="mt-1 text-xs leading-5 text-slate-600">{{ 'سجّل نتيجة محاولة USSD بعد إتمامها على هاتف المتجر. هذا الإجراء لا يغيّر رصيد المشغّل ولا العمولة.' if ar else 'Record the USSD result after finishing it on the shop phone. This step does not change the operator balance or the commission.' }}</p>
-                    <div id="status-actions" class="mt-3 flex flex-wrap gap-2">
-                        <button id="status-completed" type="button" data-status-action="completed" class="rounded-lg border border-blue-900 bg-blue-950 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تم الشحن بنجاح' if ar else 'Charge succeeded' }}</button>
-                        <button id="status-failed" type="button" data-status-action="failed" class="rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm font-bold text-red-700 transition hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700">{{ 'فشل الشحن' if ar else 'Charge failed' }}</button>
-                    </div>
-                    <div id="status-confirm" hidden class="mt-3 rounded-xl border border-slate-200 bg-white p-3">
-                        <p id="status-confirm-text" class="text-xs font-semibold leading-5 text-slate-800"></p>
-                        <div class="mt-2 flex flex-wrap gap-2">
-                            <button id="status-confirm-yes" type="button" class="rounded-lg bg-blue-950 px-3 py-2 text-xs font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تأكيد' if ar else 'Confirm' }}</button>
-                            <button id="status-confirm-no" type="button" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'إلغاء' if ar else 'Cancel' }}</button>
-                        </div>
-                    </div>
-                    <p id="status-feedback" role="status" aria-live="polite" class="mt-3 min-h-[1.25rem] text-xs font-medium text-slate-700"></p>
-                </div>
+                <p id="commit-status" role="status" aria-live="polite" class="mt-4 min-h-[1.25rem] border-t border-blue-200 pt-3 text-xs font-semibold text-slate-700"></p>
             </section>
         </aside>
     </form>
@@ -184,9 +168,10 @@
         'searchError': 'تعذر البحث عن العملاء. حاول مرة أخرى.' if ar else 'Could not search customers. Try again.',
         'customerSelected': 'تم اختيار العميل.' if ar else 'Customer selected.',
         'customerFound': 'تم العثور على العميل:' if ar else 'Customer found:',
-        'customerRegistered': 'تم تسجيل العميل:' if ar else 'Customer registered:',
-        'duplicatePhone': 'رقم الهاتف مسجل مسبقاً لعميل آخر.' if ar else 'That phone number is already registered to another customer.',
-        'registerError': 'تعذر تسجيل العميل. حاول مرة أخرى.' if ar else 'Could not register the customer. Try again.',
+        'willRegister': 'سيُسجَّل عميل دائم عند تسجيل البيع.' if ar else 'A regular customer will be registered when the sale is recorded.',
+        'oneTimeSale': 'بيع لمرة واحدة بلا حساب عميل.' if ar else 'One-time sale with no customer account.',
+        'registerError': 'تعذر البحث عن العميل. حاول مرة أخرى.' if ar else 'Could not look up the customer. Try again.',
+        'namePhoneMismatch': 'هذا الاسم مسجل برقم آخر. تحقق من الاسم أو الرقم.' if ar else 'That name is registered under a different number. Check the name or the number.',
         'balance': 'الرصيد' if ar else 'Balance',
         'debt': 'الدين' if ar else 'Debt',
         'currency': 'ل.س' if ar else 'SYP',
@@ -194,19 +179,13 @@
         'rateError': 'تعذر تحميل نسبة العمولة. حاول التحديث.' if ar else 'Could not load the commission rate. Try refreshing.',
         'copied': 'تم نسخ الرمز.' if ar else 'Code copied.',
         'copyError': 'تعذر النسخ تلقائياً. حدد الرمز وانسخه يدوياً.' if ar else 'Could not copy automatically. Select the code and copy it manually.',
-        'transactionError': 'تعذر إنشاء المعاملة. حاول مرة أخرى.' if ar else 'Could not create the transaction. Try again.',
+        'previewError': 'تعذر تجهيز الرمز. حاول مرة أخرى.' if ar else 'Could not prepare the code. Try again.',
+        'transactionError': 'تعذر تسجيل البيع. حاول مرة أخرى.' if ar else 'Could not record the sale. Try again.',
         'insufficientBalance': 'رصيد المشغّل غير كافٍ.' if ar else 'Insufficient operator balance.',
-        'statusPending': 'قيد الانتظار' if ar else 'Pending',
-        'statusCompleted': 'مكتملة' if ar else 'Completed',
-        'statusFailed': 'فاشلة' if ar else 'Failed',
-        'confirmCompleted': 'تأكيد نجاح الشحن لهذه المعاملة؟' if ar else 'Confirm that this charge succeeded?',
-        'confirmFailed': 'تأكيد فشل هذه المعاملة؟' if ar else 'Confirm that this charge failed?',
-        'statusSavedCompleted': 'تم تسجيل المعاملة كمكتملة.' if ar else 'Transaction recorded as completed.',
-        'statusSavedFailed': 'تم تسجيل المعاملة كفاشلة.' if ar else 'Transaction recorded as failed.',
-        'statusCancelled': 'لم يتم حفظ أي نتيجة.' if ar else 'No result was saved.',
-        'statusConflict': 'تم تسجيل حالة هذه المعاملة نهائياً بالفعل.' if ar else 'This transaction already has a final status.',
-        'statusMissing': 'لم يتم العثور على المعاملة.' if ar else 'Transaction not found.',
-        'statusError': 'تعذر حفظ النتيجة. حاول مرة أخرى.' if ar else 'Could not save the result. Try again.'
+        'statusOpen': 'لم تُسجَّل بعد' if ar else 'Not recorded yet',
+        'statusSuccessful': 'مسجّلة' if ar else 'Recorded',
+        'saleRecorded': 'تم تسجيل البيع وخصمه من رصيد المشغّل.' if ar else 'Sale recorded and charged to the operator balance.',
+        'copyNotRecorded': 'لم يُسجَّل أي شيء: انسخ الرمز يدوياً ثم أرسله للعميل.' if ar else 'Nothing was recorded: copy the code by hand and send it to the customer.'
     }|tojson }};
     const form = document.getElementById('charge-form');
     const phone = document.getElementById('phone');
@@ -233,28 +212,13 @@
     const copyStatus = document.getElementById('copy-status');
     const dialActions = document.getElementById('dial-actions');
     const dialLink = document.getElementById('dial-ussd');
-    const resultStatusBadge = document.getElementById('result-status-badge');
-    const statusActions = document.getElementById('status-actions');
-    const statusConfirm = document.getElementById('status-confirm');
-    const statusConfirmText = document.getElementById('status-confirm-text');
-    const statusConfirmYes = document.getElementById('status-confirm-yes');
-    const statusConfirmNo = document.getElementById('status-confirm-no');
-    const statusFeedback = document.getElementById('status-feedback');
-    const statusButtons = [...document.querySelectorAll('[data-status-action]')];
-    const STATUS_LABELS = {
-        pending: messages.statusPending,
-        completed: messages.statusCompleted,
-        failed: messages.statusFailed
-    };
-    const STATUS_BADGE_CLASSES = {
-        pending: ['bg-amber-100', 'text-amber-800'],
-        completed: ['bg-green-100', 'text-green-800'],
-        failed: ['bg-red-100', 'text-red-700']
-    };
-    const STATUS_BADGE_ALL = ['bg-amber-100', 'text-amber-800', 'bg-green-100', 'text-green-800', 'bg-red-100', 'text-red-700'];
-    // The transaction behind the visible code; only ever a server response.
-    let activeTransaction = null;
-    let pendingResult = null;
+    const resultBadge = document.getElementById('result-badge');
+    const commitStatus = document.getElementById('commit-status');
+    const BADGE_OPEN_CLASSES = ['bg-white', 'text-blue-900'];
+    const BADGE_DONE_CLASSES = ['bg-green-100', 'text-green-800'];
+    // The previewed sale behind the visible code: nothing exists server-side
+    // until the seller copies or dials it, and then it exists exactly once.
+    let pendingSale = null;
     const rateStatus = document.getElementById('rate-status');
     const summaryAmount = document.getElementById('summary-amount');
     const summaryRate = document.getElementById('summary-rate');
@@ -351,37 +315,10 @@
             group.hidden = !prepaid || group.dataset.voucherOperator !== operator.value;
         });
     }
-    function clearResult() {
-        result.hidden = true;
-        output.value = '';
-        copyStatus.textContent = '';
-        dialActions.hidden = true;
-        dialLink.removeAttribute('href');
-        activeTransaction = null;
-        resetStatusPanel();
-    }
-    // --- Generated code: copy, optional dialer handoff and final result -----
-    function setStatusBadge(status) {
-        resultStatusBadge.classList.remove(...STATUS_BADGE_ALL);
-        resultStatusBadge.classList.add(...(STATUS_BADGE_CLASSES[status] || STATUS_BADGE_CLASSES.pending));
-        resultStatusBadge.textContent = STATUS_LABELS[status] || STATUS_LABELS.pending;
-    }
-    function renderStatusActions() {
-        const pending = activeTransaction !== null && activeTransaction.status === 'pending';
-        statusActions.hidden = !pending;
-        if (!pending) {
-            statusConfirm.hidden = true;
-            pendingResult = null;
-        }
-    }
-    function resetStatusPanel() {
-        pendingResult = null;
-        statusConfirm.hidden = true;
-        statusFeedback.textContent = '';
-        statusConfirmYes.disabled = false;
-        statusButtons.forEach((button) => { button.disabled = false; });
-        setStatusBadge(activeTransaction ? activeTransaction.status : 'pending');
-        renderStatusActions();
+    function setBadge(recorded) {
+        resultBadge.classList.remove(...BADGE_OPEN_CLASSES, ...BADGE_DONE_CLASSES);
+        resultBadge.classList.add(...(recorded ? BADGE_DONE_CLASSES : BADGE_OPEN_CLASSES));
+        resultBadge.textContent = recorded ? messages.statusSuccessful : messages.statusOpen;
     }
     // The dialer handoff is a plain "tel:" link the operator taps themselves.
     // It is offered only on coarse-pointer (phone/tablet) devices, and the
@@ -399,56 +336,65 @@
         dialLink.setAttribute('href', 'tel:' + code.replace(/#/g, '%23'));
         dialActions.hidden = false;
     }
-    function askStatus(status) {
-        if (!activeTransaction || activeTransaction.status !== 'pending') return;
-        pendingResult = status;
-        const question = status === 'completed' ? messages.confirmCompleted : messages.confirmFailed;
-        statusConfirmText.textContent = question + ' ' + activeTransaction.reference;
-        statusConfirm.hidden = false;
-        statusActions.hidden = true;
-        statusFeedback.textContent = '';
-        statusConfirmYes.focus();
+    function clearResult() {
+        result.hidden = true;
+        output.value = '';
+        copyStatus.textContent = '';
+        commitStatus.textContent = '';
+        dialActions.hidden = true;
+        dialLink.removeAttribute('href');
+        pendingSale = null;
+        setBadge(false);
     }
-    function cancelStatus() {
-        pendingResult = null;
-        statusConfirm.hidden = true;
-        statusActions.hidden = false;
-        statusFeedback.textContent = messages.statusCancelled;
-    }
-    async function saveStatus() {
-        if (!activeTransaction || !pendingResult) return;
-        const target = pendingResult;
-        const transaction = activeTransaction;
-        statusConfirmYes.disabled = true;
-        try {
-            // The server owns the state machine: only pending rows can move to
-            // a final status, and every final status is accepted exactly once.
-            const response = await fetch('/api/transactions/' + transaction.id + '/status', {
-                method: 'PATCH',
+    // --- Commit: the copy/dialer tap persists the sale exactly once --------
+    // POST /api/transactions/preview only renders a code. POST /api/transactions
+    // is the commit, and the preview's commit key makes it idempotent: a double
+    // tap, a retry or a flaky network can never charge the sale twice. The
+    // server applies the operator debit, commission and profit ledger in one
+    // database transaction, so a commit is all-or-nothing.
+    async function commitSale() {
+        if (!pendingSale) return null;
+        if (pendingSale.transaction) return pendingSale.transaction;
+        if (pendingSale.inFlight) return pendingSale.inFlight;
+        const sale = pendingSale;
+        const request = (async () => {
+            const response = await fetch('/api/transactions', {
+                method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: target })
+                body: JSON.stringify({
+                    customer_phone: sale.customer_phone,
+                    customer_name: sale.customer_name,
+                    operator_code: sale.operator_code,
+                    service_code: sale.service_code,
+                    amount_cents: sale.amount_cents,
+                    commit_key: sale.commit_key
+                })
             });
             const data = await response.json().catch(() => null);
             if (!response.ok) {
-                if (response.status === 409) throw new Error(messages.statusConflict);
-                if (response.status === 404) throw new Error(messages.statusMissing);
-                throw new Error(messages.statusError);
+                const detail = data && data.detail;
+                throw new Error(
+                    detail === 'Insufficient operator balance'
+                        ? messages.insufficientBalance
+                        : (detail || messages.transactionError)
+                );
             }
-            transaction.status = data && data.status ? data.status : target;
-            setStatusBadge(transaction.status);
-            statusConfirm.hidden = true;
-            statusFeedback.textContent = transaction.status === 'completed'
-                ? messages.statusSavedCompleted
-                : messages.statusSavedFailed;
+            return data;
+        })();
+        sale.inFlight = request;
+        try {
+            const data = await request;
+            sale.transaction = data;
+            setBadge(true);
+            commitStatus.textContent = messages.saleRecorded + ' ' + (data.reference || '');
+            return data;
         } catch (error) {
-            // Keep the actions reachable so the operator can retry or cancel.
-            statusConfirm.hidden = true;
-            statusActions.hidden = false;
-            statusFeedback.textContent = String(error.message || messages.statusError);
+            // Nothing was recorded. The key is kept, so a retry cannot double-charge.
+            setBadge(false);
+            commitStatus.textContent = String(error.message || messages.transactionError);
+            throw error;
         } finally {
-            pendingResult = null;
-            statusConfirmYes.disabled = false;
-            renderStatusActions();
+            sale.inFlight = null;
         }
     }
     async function copyUssdCode() {
@@ -469,13 +415,20 @@
         if (!copied) copied = copyWithHiddenField(code);
         if (copied) {
             copyStatus.textContent = messages.copied;
+            // The tap that actually copied the code is the commit event.
+            try {
+                await commitSale();
+            } catch (_) {
+                // commitSale already announced why nothing was recorded.
+            }
             return;
         }
-        // Truthful failure path: never claim success, select the code so the
-        // operator can copy it by hand.
+        // Truthful failure path: never claim success, never record a sale that
+        // the shop has to finish by hand, and select the code for manual copy.
         output.focus();
         output.select();
         copyStatus.textContent = messages.copyError;
+        commitStatus.textContent = messages.copyNotRecorded;
     }
     function copyWithHiddenField(code) {
         // Legacy fallback for browsers without the async Clipboard API (plain
@@ -764,13 +717,22 @@
         clearResult();
     });
     document.getElementById('refresh-rate').addEventListener('click', loadRate);
-    // --- Auto-register on Generate USSD ---
-    // With a name filled: an exact name match reuses that customer's phone;
-    // otherwise the customer is registered with the typed phone, operator and
-    // service before the preview is generated.
-    async function ensureCustomer() {
+    // --- Named customer recognition on Generate USSD ---
+    // Preparing a code never writes anything: no customer, no transaction, no
+    // accounting. A typed name only resolves which customer this sale belongs
+    // to — the same exact-name match the API uses — so the charge goes to that
+    // person's canonical number. Registration of a new named regular happens
+    // on the commit call (Copy / dialer), never here; a blank or
+    // whitespace-only name is a one-time sale with no customer record at all.
+    // Returns whether the sale may go ahead: false means the seller must fix
+    // the name or the number first, and nothing is previewed or recorded.
+    async function resolveNamedCustomer() {
         const name = nameInput.value.trim();
-        if (!name) return;
+        if (!name) {
+            // No name: this is a one-time sale, so no customer is registered.
+            registerStatus.textContent = messages.oneTimeSale;
+            return true;
+        }
         try {
             const response = await fetch(
                 '/api/customers/lookup-by-name?name=' + encodeURIComponent(name),
@@ -778,48 +740,51 @@
             );
             if (response.ok) {
                 const customer = await response.json();
+                const typed = normalizePhone(phone.value);
+                // The server resolves a name to that person's registered number,
+                // but a number the seller typed for somebody else is never
+                // silently replaced: the seller has to confirm which is right.
+                if (typed && typed !== customer.phone) {
+                    registerStatus.textContent = messages.namePhoneMismatch;
+                    return false;
+                }
                 phone.value = customer.phone;
                 phone.setCustomValidity('');
+                showCustomerInfo(customer);
                 registerStatus.textContent = messages.customerFound + ' ' + customer.name;
-                return;
+                return true;
             }
             if (response.status !== 404) throw new Error('lookup failed');
-            const normalized = normalizePhone(phone.value);
-            if (!normalized) return; // the regular validation reports the invalid phone
-            const payload = { phone: normalized, name };
-            if (operator.value) payload.operator_code = operator.value;
-            if (service.value) payload.service_code = service.value;
-            const create = await fetch('/api/customers', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            if (create.ok) {
-                phone.value = normalized;
-                registerStatus.textContent = messages.customerRegistered + ' ' + name;
-            } else if (create.status === 409) {
-                // Phone already belongs to another customer; keep the typed phone.
-                registerStatus.textContent = messages.duplicatePhone;
-            } else {
-                throw new Error('register failed');
-            }
+            // A new name is registered by the commit; the typed number stands.
+            registerStatus.textContent = messages.willRegister;
+            return true;
         } catch (_) {
+            // Which customer this name belongs to is unknown, so nothing is
+            // previewed or recorded until the lookup works again.
             registerStatus.textContent = messages.registerError;
+            return false;
         }
     }
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         registerStatus.textContent = '';
-        await ensureCustomer();
+        if (!(await resolveNamedCustomer())) {
+            clearResult();
+            return;
+        }
         const normalized = normalizePhone(phone.value);
         const cents = parseAmount(amount.value);
         phone.setCustomValidity(normalized ? '' : messages.invalidPhone);
         amount.setCustomValidity(cents === null ? messages.invalidAmount : '');
         if (!form.reportValidity()) { clearResult(); return; }
-        // Create the real transaction server-side: the row is stored, the
-        // operator balance is deducted and the profit ledger is recorded.
+        // Blank (or whitespace-only) means a one-time sale: the name is sent
+        // as null and no customer record is created.
+        const saleName = nameInput.value.trim() || null;
+        // Prepare only: this previews the USSD code and nothing is stored.
+        // No row, no debit and no commission exist until the seller copies or
+        // dials the code, which is the commit event below.
         try {
-            const response = await fetch('/api/transactions', {
+            const response = await fetch('/api/transactions/preview', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -835,28 +800,51 @@
                 throw new Error(
                     detail === 'Insufficient operator balance'
                         ? messages.insufficientBalance
-                        : (detail || messages.transactionError)
+                        : (detail || messages.previewError)
                 );
+            }
+            if (!data || !data.ussd_string || !data.commit_key) {
+                throw new Error(messages.previewError);
             }
             output.value = data.ussd_string;
             copyStatus.textContent = '';
-            // Generating a code only creates a pending transaction; the result
-            // is recorded later, by an explicit, confirmed operator action.
-            activeTransaction = { id: data.id, reference: data.reference, status: 'pending' };
-            resetStatusPanel();
+            commitStatus.textContent = '';
+            pendingSale = {
+                ussd_string: data.ussd_string,
+                commit_key: data.commit_key,
+                customer_phone: normalized,
+                customer_name: saleName,
+                operator_code: operator.value,
+                service_code: service.value,
+                amount_cents: Number(cents),
+                transaction: null,
+                inFlight: null
+            };
+            setBadge(false);
             updateDialAction();
             result.hidden = false;
         } catch (error) {
             clearResult();
-            registerStatus.textContent = String(error.message || messages.transactionError);
+            registerStatus.textContent = String(error.message || messages.previewError);
         }
     });
     copyButton.addEventListener('click', copyUssdCode);
-    statusButtons.forEach((button) => button.addEventListener('click', () => {
-        askStatus(button.dataset.statusAction);
-    }));
-    statusConfirmYes.addEventListener('click', saveStatus);
-    statusConfirmNo.addEventListener('click', cancelStatus);
+    // The dialer handoff commits the sale first, then hands the code to the
+    // phone. The call is never blocked for long: navigation happens as soon as
+    // the commit settles, or after 1.2s at the latest.
+    dialLink.addEventListener('click', (event) => {
+        const href = dialLink.getAttribute('href');
+        if (!href || href === '#dial-ussd' || !pendingSale) return;
+        event.preventDefault();
+        const deadline = new Promise((resolve) => { setTimeout(resolve, 1200); });
+        Promise.race([commitSale().catch(() => null), deadline]).then(() => {
+            openDialer(href);
+        });
+    });
+    function openDialer(href) {
+        if (window.location && typeof window.location.assign === 'function') window.location.assign(href);
+        else if (window.location) window.location.href = href;
+    }
     syncVoucherVisibility();
     syncButtons();
     updateSummary();

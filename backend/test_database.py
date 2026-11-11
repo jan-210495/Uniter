@@ -22,7 +22,7 @@ def test_models_and_relationships(tmp_path, monkeypatch) -> None:
             assert set(database.Base.metadata.tables) == {
                 "operators", "services", "customers", "transactions", "settings",
                 "debt_ledger", "cash_register", "operator_balance",
-                "operator_topup", "profit_ledger", "currency_denomination",
+                "operator_topup", "operator_credit_refund", "profit_ledger", "currency_denomination",
             }
             sessions = async_sessionmaker(engine, expire_on_commit=False)
             async with sessions() as session:
@@ -34,7 +34,7 @@ def test_models_and_relationships(tmp_path, monkeypatch) -> None:
                 customer = database.Customer(phone="123", name="Customer")
                 transaction = database.Transaction(
                     customer=customer, service=service, amount_cents=125,
-                    status="pending", ussd_string="*123*123#", reference="ref-1",
+                    status="successful", ussd_string="*123*123#", reference="ref-1",
                 )
                 session.add(transaction)
                 await session.commit()

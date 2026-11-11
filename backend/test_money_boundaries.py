@@ -1,4 +1,5 @@
 """SYP input boundaries, running actual rendered JavaScript and isolated APIs."""
+import itertools
 import json
 import re
 import shutil
@@ -22,12 +23,14 @@ def run_form(client, page, steps):
 
 
 def test_ussd_absence_can_be_balance_rejection_not_generator_failure(client):
-    payload={'customer_phone':'0944123456','operator_code':'mtn','service_code':'prepaid','amount_cents':50_000}
+    payload={'customer_phone':'0944123456','operator_code':'mtn','service_code':'prepaid','amount_cents':50_000,
+             'commit_key':new_commit_key()}
     rejected=client.post('/api/transactions',json=payload)
     assert rejected.status_code == 400
     assert rejected.json()['detail'] == 'Insufficient operator balance'
     assert client.get('/api/transactions').json() == []
     client.post('/api/operators/topup',json={'operator_code':'mtn','amount_cents':5_000_000})
+    payload['commit_key']=new_commit_key()
     generated=client.post('/api/transactions',json=payload)
     assert generated.status_code == 200
     assert generated.json()['ussd_string'] == '*150*65477*0944123456*500#'
@@ -46,7 +49,8 @@ def test_topup_50000_syp_survives_refresh_reload_and_funds_500_charge(client):
     assert client.post('/api/operators/topup', json=payload).status_code == 200
     assert '>50,000</span>' in client.get('/topup').text
     charge = client.post('/api/transactions', json={'customer_phone': '0944123456',
-        'operator_code': 'mtn', 'service_code': 'prepaid', 'amount_cents': 50_000})
+        'operator_code': 'mtn', 'service_code': 'prepaid', 'amount_cents': 50_000,
+        'commit_key': new_commit_key()})
     assert charge.status_code == 200
     assert charge.json()['ussd_string'].endswith('*500#')
     assert client.get('/api/operators/balance').json()[0]['balance_cents'] == 4_950_000
@@ -55,10 +59,12 @@ def test_topup_50000_syp_survives_refresh_reload_and_funds_500_charge(client):
 
 def test_exact_face_balance_never_goes_negative(client):
     client.post('/api/operators/topup', json={'operator_code': 'mtn', 'amount_cents': 50_000})
-    payload = {'customer_phone':'0944123456','operator_code':'mtn','service_code':'prepaid','amount_cents':50_000}
+    payload = {'customer_phone':'0944123456','operator_code':'mtn','service_code':'prepaid','amount_cents':50_000,
+               'commit_key':new_commit_key()}
     assert client.post('/api/transactions', json=payload).status_code == 200
     assert client.get('/api/operators/balance').json()[0]['balance_cents'] == 0
     payload['amount_cents'] = 1
+    payload['commit_key'] = new_commit_key()
     assert client.post('/api/transactions', json=payload).status_code == 400
 
 
@@ -66,7 +72,7 @@ def test_pos_500_summary_matches_customer_total_api(client):
     result = run_form(client, '/pos', [{'values':{'amount':'500','phone':'0944123456','operator':'mtn','service':'prepaid'},'id':'amount','event':'input'},
                                      {'id':'charge-form','event':'submit'}])
     assert result['elements']['summary-net']['text'] == '525'
-    payload = next(r['body'] for r in result['requests'] if r['url']=='/api/transactions')
+    payload = next(r['body'] for r in result['requests'] if r['url']=='/api/transactions/preview')
     assert payload['amount_cents'] == 50_000
     calculation=client.get('/api/commission/calculate', params={'amount_cents':50_000,'operator_code':'mtn','service_code':'prepaid'}).json()
     assert calculation['total_cents'] == 52_500
@@ -122,7 +128,7 @@ def test_invalid_whole_syp_never_posts(client,page,value):
 @pytest.mark.parametrize('phone', ['0944123456', '+963 944-123-456', '00963 944-123-456'])
 def test_pos_real_handler_accepts_normalized_phone(client,phone):
     result=run_form(client,'/pos',[{'values':{'phone':phone,'amount':'500','operator':'mtn','service':'prepaid'},'id':'charge-form','event':'submit'}])
-    posts=[r for r in result['requests'] if r['url']=='/api/transactions']
+    posts=[r for r in result['requests'] if r['url']=='/api/transactions/preview']
     assert len(posts)==1
     assert posts[0]['body']['customer_phone']=='0944123456'
 
@@ -131,3 +137,11 @@ def test_pos_real_handler_accepts_normalized_phone(client,phone):
 def test_pos_invalid_or_unsafe_amount_does_not_post(client,value):
     result=run_form(client,'/pos',[{'values':{'phone':'0944123456','amount':value},'id':'charge-form','event':'submit'}])
     assert not [r for r in result['requests'] if r['method']=='POST']
+
+
+_COMMIT_KEYS = itertools.count(1)
+
+
+def new_commit_key() -> str:
+    """A fresh commit key: every call is a deliberate, distinct sale."""
+    return f"boundarykey{next(_COMMIT_KEYS):021d}"

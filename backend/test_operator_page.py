@@ -1,3 +1,4 @@
+import itertools
 import asyncio
 from collections.abc import AsyncIterator, Iterator
 from contextlib import aclosing
@@ -52,6 +53,7 @@ def post_transaction(client: TestClient, phone: str, operator: str, service: str
             "operator_code": operator,
             "service_code": service,
             "amount_cents": amount,
+            "commit_key": new_commit_key(),
         },
     )
     assert response.status_code == 200
@@ -178,3 +180,10 @@ def test_base_template_renders_global_search(client: TestClient) -> None:
     assert "البحث عن العملاء والمعاملات والمشغّلين" in client.get(
         "/pos", params={"lang": "ar"}
     ).text
+
+_COMMIT_KEYS = itertools.count(1)
+
+
+def new_commit_key() -> str:
+    """A fresh commit key: every call is a deliberate, distinct sale."""
+    return f"testkey{next(_COMMIT_KEYS):022d}"

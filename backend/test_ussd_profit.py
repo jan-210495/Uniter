@@ -1,3 +1,4 @@
+import itertools
 import asyncio
 from collections.abc import AsyncIterator, Iterator
 from contextlib import aclosing
@@ -74,6 +75,7 @@ def post_transaction(
             "operator_code": operator,
             "service_code": service,
             "amount_cents": amount_cents,
+            "commit_key": new_commit_key(),
         },
     )
 
@@ -265,3 +267,10 @@ def test_zero_amount_transaction_needs_no_balance(client: TestClient) -> None:
             assert (entry.amount_cents, entry.commission_cents, entry.profit_cents) == (0, 0, 0)
 
     asyncio.run(check_zero_profit())
+
+_COMMIT_KEYS = itertools.count(1)
+
+
+def new_commit_key() -> str:
+    """A fresh commit key: every call is a deliberate, distinct sale."""
+    return f"testkey{next(_COMMIT_KEYS):022d}"

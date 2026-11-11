@@ -6,6 +6,7 @@ prepaid voucher list, keeps the custom amount for both services, and proves the
 voucher values reach the summary and the transaction payload as exact cents.
 """
 
+import itertools
 import json
 import re
 import shutil
@@ -75,7 +76,7 @@ def run_pos(steps, lang: str = "en"):
 
 
 def posted_amount_cents(result) -> int:
-    return next(request for request in result["requests"] if request["url"] == "/api/transactions")[
+    return next(request for request in result["requests"] if request["url"] == "/api/transactions/preview")[
         "body"
     ]["amount_cents"]
 
@@ -250,7 +251,7 @@ def test_voucher_selection_fills_custom_amount_summary_and_payload() -> None:
     ]
     assert "bg-blue-950" in pressed[0]["classes"]
     assert "bg-white" not in pressed[0]["classes"]
-    payload = next(r for r in result["requests"] if r["url"] == "/api/transactions")["body"]
+    payload = next(r for r in result["requests"] if r["url"] == "/api/transactions/preview")["body"]
     assert payload == {
         "customer_phone": "0933123456",
         "operator_code": "syriatel",
@@ -302,7 +303,7 @@ def test_postpaid_hides_vouchers_and_keeps_the_custom_amount_editable() -> None:
     # The custom amount is neither cleared nor disabled.
     assert result["elements"]["amount"]["value"] == "75"
     assert result["elements"]["summary-amount"]["text"] == "75"
-    payload = next(r for r in result["requests"] if r["url"] == "/api/transactions")["body"]
+    payload = next(r for r in result["requests"] if r["url"] == "/api/transactions/preview")["body"]
     assert payload == {
         "customer_phone": "0933123456",
         "operator_code": "syriatel",
@@ -351,6 +352,7 @@ def test_voucher_cents_reach_the_transaction_api(
             "operator_code": operator_code,
             "service_code": "prepaid",
             "amount_cents": amount_cents,
+            "commit_key": new_commit_key(),
         },
     )
     assert response.status_code == 200
@@ -372,8 +374,17 @@ def test_postpaid_custom_amount_still_posts(client) -> None:
             "operator_code": "syriatel",
             "service_code": "postpaid",
             "amount_cents": 12_345,
+            "commit_key": new_commit_key(),
         },
     )
     assert response.status_code == 200
     assert response.json()["amount_cents"] == 12_345
     assert response.json()["ussd_string"] == "*150*1*67858*5*123.45*0933123456*0933123456#"
+
+
+_COMMIT_KEYS = itertools.count(1)
+
+
+def new_commit_key() -> str:
+    """A fresh commit key: every call is a deliberate, distinct sale."""
+    return f"voucherkey{next(_COMMIT_KEYS):021d}"

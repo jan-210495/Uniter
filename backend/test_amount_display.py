@@ -85,7 +85,7 @@ def _transaction_item(amount_cents: int) -> SimpleNamespace:
         reference=f"TXN-{amount_cents}",
         created_at=datetime.now(timezone.utc),
         amount_cents=amount_cents,
-        status="pending",
+        status="successful",
         ussd_string="*150*65477*0933123456*500#",
         customer_name="Ahmad",
         customer_phone="0933123456",

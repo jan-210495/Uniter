@@ -7,10 +7,12 @@ from uuid import uuid4
 import sys
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import case, func, or_, select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy import delete as sql_delete
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.selectable import Subquery
@@ -19,12 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
     from .commission import get_commission_for_transaction
-    from .database import Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
+    from .database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from .seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from .validation import validate_syrian_phone
 else:
     from commission import get_commission_for_transaction
-    from database import Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting
+    from database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from validation import validate_syrian_phone
 
@@ -37,6 +39,13 @@ if getattr(sys, "_MEIPASS", None):
     if _meipass_templates.is_dir():
         _template_dir = _meipass_templates
 templates = Jinja2Templates(directory=str(_template_dir))
+_static_dir = _template_dir.parent / "static"
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+def web_app_manifest() -> FileResponse:
+    return FileResponse(_static_dir / "manifest.webmanifest", media_type="application/manifest+json")
 
 Code = Annotated[str, Field(min_length=1, max_length=50)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
@@ -134,16 +143,64 @@ class OperatorTopupResponse(BaseModel):
     reference: str
 
 
-class TransactionCreate(BaseModel):
+@app.on_event("startup")
+async def _upgrade_schema_on_startup() -> None:
+    """Upgrade an existing database before the first request is served.
+
+    Guarded and data-preserving; a fresh install is untouched because the file
+    does not exist yet. See ``database.upgrade_existing_database``.
+    """
+    await upgrade_existing_database()
+
+
+def normalize_customer_name(name: str | None) -> str | None:
+    """Return a usable customer name, or ``None`` when there is none.
+
+    Customer records are for repeat (named) customers. A blank or
+    whitespace-only name means the buyer is a one-time, phone-only customer:
+    no customer record is created or modified. A number is never accepted as a
+    stand-in for a name here.
+    """
+    cleaned = (name or "").strip()
+    return cleaned or None
+
+
+class TransactionRequest(BaseModel):
+    """Sale details shared by the preview and the commit call.
+
+    ``customer_name`` is optional: with a name the sale belongs to a repeat
+    customer (linked, and registered on first use); without one it is a
+    one-time sale recorded against the phone alone.
+    """
+
     customer_phone: str
     operator_code: Code
     service_code: Code
     amount_cents: int = Field(ge=0, le=9223372036854775807)
+    customer_name: str | None = Field(default=None, max_length=255)
 
     @field_validator("customer_phone")
     @classmethod
     def validate_customer_phone(cls, phone: str) -> str:
         return validate_syrian_phone(phone)
+
+    @field_validator("customer_name")
+    @classmethod
+    def validate_customer_name(cls, name: str | None) -> str | None:
+        return normalize_customer_name(name)
+
+
+class TransactionCreate(TransactionRequest):
+    """Commit a sale exactly once: ``commit_key`` is the idempotency key."""
+
+    commit_key: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class TransactionPreviewResponse(BaseModel):
+    """A rendered USSD code plus the key that will commit it."""
+
+    ussd_string: str
+    commit_key: str
 
 
 class CommissionSettingUpdate(BaseModel):
@@ -174,17 +231,21 @@ class TransactionResponse(BaseModel):
 
 
 class TransactionStatusUpdate(BaseModel):
-    """The result of the real-world USSD attempt, recorded by the POS operator.
+    """A requested status change for an existing transaction.
 
-    Only the two final outcomes are accepted; ``pending`` is the created state
-    and arbitrary status strings are rejected during request validation.
+    Arbitrary strings are rejected during request validation; the only
+    supported transition (successful -> failed) is enforced by the route.
     """
 
-    status: Literal["completed", "failed"]
+    status: Literal["successful", "failed"]
 
 
 class TransactionListItem(BaseModel):
-    """A transaction enriched with customer, operator and service labels."""
+    """A transaction enriched with customer, operator and service labels.
+
+    ``customer_id`` and ``customer_name`` are ``None`` for a one-time sale: no
+    customer record exists for it, and its phone is never repeated as a name.
+    """
 
     id: int
     reference: str
@@ -192,8 +253,9 @@ class TransactionListItem(BaseModel):
     status: str
     amount_cents: int
     created_at: datetime
+    customer_id: int | None
     customer_phone: str
-    customer_name: str
+    customer_name: str | None
     operator_code: str
     operator_name: str
     service_code: str
@@ -207,8 +269,9 @@ class SearchTransactionItem(BaseModel):
     reference: str
     amount_cents: int
     status: str
+    customer_id: int | None
     customer_phone: str
-    customer_name: str
+    customer_name: str | None
     operator_code: str
     operator_name: str
 
@@ -522,21 +585,29 @@ async def global_search(
     )
     customers = [CustomerListItem(**row._mapping) for row in customer_rows.all()]
 
+    # The customer join is an outer join and the phone match covers the row's
+    # own phone, so a one-time sale is searchable by reference and by number.
+    customer_phone_label = func.coalesce(Transaction.customer_phone, Customer.phone)
     transaction_rows = await db.execute(
         select(
             Transaction.id,
             Transaction.reference,
             Transaction.amount_cents,
             Transaction.status,
-            Customer.phone.label("customer_phone"),
+            Transaction.customer_id.label("customer_id"),
+            customer_phone_label.label("customer_phone"),
             Customer.name.label("customer_name"),
             Operator.code.label("operator_code"),
             Operator.name.label("operator_name"),
         )
-        .join(Customer, Transaction.customer_id == Customer.id)
+        .select_from(Transaction)
+        .outerjoin(Customer, Transaction.customer_id == Customer.id)
         .join(Service, Transaction.service_id == Service.id)
         .join(Operator, Service.operator_id == Operator.id)
-        .where(or_(Transaction.reference.ilike(like), Customer.phone.ilike(like)))
+        .where(
+            or_(Transaction.reference.ilike(like), customer_phone_label.ilike(like)),
+            Transaction.deleted_at.is_(None),
+        )
         .order_by(Transaction.created_at.desc(), Transaction.id.desc())
         .limit(10)
     )
@@ -570,12 +641,23 @@ async def stats_summary(
     Transaction; both cover the same UTC window and are optionally restricted
     to one operator. The daily series is zero-filled so every calendar day in
     the window has a row, oldest first.
+
+    Removed (tombstoned) transactions are excluded from both sides, so profit
+    and volume always describe the same sales. Failed rows still count in the
+    by-status breakdown, because the sale happened; removal is a reporting
+    tombstone and never reverses money.
     """
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(days=period)
 
-    profit_conditions = [ProfitLedger.created_at >= window_start]
-    transaction_conditions = [Transaction.created_at >= window_start]
+    profit_conditions = [
+        ProfitLedger.created_at >= window_start,
+        Transaction.deleted_at.is_(None),
+    ]
+    transaction_conditions = [
+        Transaction.created_at >= window_start,
+        Transaction.deleted_at.is_(None),
+    ]
     if operator_code is not None:
         profit_conditions.append(ProfitLedger.operator_code == operator_code)
         transaction_conditions.append(Operator.code == operator_code)
@@ -587,6 +669,8 @@ async def stats_summary(
             func.coalesce(func.sum(ProfitLedger.profit_cents), 0).label("profit_cents"),
             func.coalesce(func.sum(ProfitLedger.commission_cents), 0).label("commission_cents"),
         )
+        .select_from(ProfitLedger)
+        .join(Transaction, ProfitLedger.transaction_id == Transaction.id)
         .where(*profit_conditions)
         .group_by(ProfitLedger.operator_code)
     )
@@ -631,6 +715,8 @@ async def stats_summary(
             func.date(ProfitLedger.created_at).label("day"),
             func.coalesce(func.sum(ProfitLedger.profit_cents), 0).label("profit_cents"),
         )
+        .select_from(ProfitLedger)
+        .join(Transaction, ProfitLedger.transaction_id == Transaction.id)
         .where(*profit_conditions)
         .group_by(func.date(ProfitLedger.created_at))
     )
@@ -683,7 +769,7 @@ async def stats_summary(
             count=status_counts.get(status, (0, 0))[0],
             volume_cents=status_counts.get(status, (0, 0))[1],
         )
-        for status in ("pending", "completed", "failed")
+        for status in TRANSACTION_STATUSES
     ]
 
     today = now.date()
@@ -978,18 +1064,61 @@ async def update_customer(customer_id: int, data: CustomerUpdate, db: DbSession)
 
 @app.delete("/api/customers/{customer_id}", status_code=204, response_class=Response)
 async def delete_customer(customer_id: int, db: DbSession) -> Response:
-    """Remove a customer together with its transactions and debt ledger rows."""
+    """Remove a customer together with its transactions and debt ledger rows.
+
+    Removed failed rows are refused: a tombstoned transaction is the audit trail
+    of a sale the seller had already committed (its operator debit and profit
+    ledger row stay on disk), so deleting the customer — which would cascade to
+    the transaction and ledger rows — is not allowed. Nothing is deleted when
+    that guard trips.
+    """
     customer = await db.get(Customer, customer_id)
     if customer is None:
         raise HTTPException(status_code=404, detail="Customer not found")
+    tombstoned = await db.scalar(
+        select(func.count())
+        .select_from(Transaction)
+        .where(
+            Transaction.customer_id == customer_id,
+            Transaction.deleted_at.is_not(None),
+        )
+    )
+    if tombstoned:
+        raise HTTPException(
+            status_code=409,
+            detail="Customer keeps removed transactions for the audit trail",
+        )
     # Dependent rows are removed explicitly: SQLite enforces the foreign keys,
     # and the customer row owns this history once the customer is deleted.
-    customer_transactions = select(Transaction.id).where(Transaction.customer_id == customer_id)
+    #
+    # A transaction that already records its own phone (every sale committed by
+    # this build) does not have to disappear with the customer: it is a
+    # committed sale with its own accounting, so it is unlinked instead and
+    # stays in history as a one-time sale. Rows imported from an older build
+    # carry no phone of their own; their history lives on the customer record,
+    # so those are removed with it, exactly as before.
+    dropped_ids = select(Transaction.id).where(
+        Transaction.customer_id == customer_id,
+        Transaction.customer_phone.is_(None),
+    )
     await db.execute(
-        sql_delete(ProfitLedger).where(ProfitLedger.transaction_id.in_(customer_transactions))
+        sql_delete(ProfitLedger).where(ProfitLedger.transaction_id.in_(dropped_ids))
     )
     await db.execute(sql_delete(DebtLedger).where(DebtLedger.customer_id == customer_id))
-    await db.execute(sql_delete(Transaction).where(Transaction.customer_id == customer_id))
+    await db.execute(
+        sql_delete(Transaction).where(
+            Transaction.customer_id == customer_id,
+            Transaction.customer_phone.is_(None),
+        )
+    )
+    await db.execute(
+        update(Transaction)
+        .where(
+            Transaction.customer_id == customer_id,
+            Transaction.customer_phone.is_not(None),
+        )
+        .values(customer_id=None)
+    )
     await db.delete(customer)
     await db.commit()
     return Response(status_code=204)
@@ -1177,21 +1306,227 @@ async def topup_operator_balance(
     )
 
 
-@app.post("/api/transactions", response_model=TransactionResponse)
-async def create_transaction(data: TransactionCreate, db: DbSession) -> Transaction:
-    operator = await db.scalar(select(Operator).where(Operator.code == data.operator_code))
+async def _resolve_sale_configuration(
+    db: AsyncSession, operator_code: str, service_code: str
+) -> tuple[Operator, Service]:
+    """Return the active operator/service pair or raise the usual 404/400."""
+    operator = await db.scalar(select(Operator).where(Operator.code == operator_code))
     if operator is None:
         raise HTTPException(status_code=404, detail="Operator not found")
     service = await db.scalar(
         select(Service).where(
-            Service.operator_id == operator.id, Service.code == data.service_code
+            Service.operator_id == operator.id, Service.code == service_code
         )
     )
     if service is None:
         raise HTTPException(status_code=404, detail="Service not found for operator")
     if not operator.is_active or not service.is_active:
         raise HTTPException(status_code=400, detail="Operator or service is inactive")
+    return operator, service
 
+
+async def _require_operator_balance(
+    db: AsyncSession, operator: Operator, amount_cents: int
+) -> None:
+    """Reject a sale the shop cannot fund with its prepaid operator credit."""
+    balance = await db.scalar(
+        select(OperatorBalance.balance_cents).where(OperatorBalance.operator_id == operator.id)
+    )
+    if balance is None or balance < amount_cents:
+        raise HTTPException(status_code=400, detail="Insufficient operator balance")
+
+
+async def _committed_transaction(
+    db: AsyncSession, data: TransactionCreate
+) -> Transaction | None:
+    """Return the sale already stored for this commit key, if any.
+
+    The key identifies one deliberate sale, so replaying the request returns
+    that same row (whatever its current status) instead of charging again. A
+    key reused for different details is rejected rather than silently answered.
+    """
+    row = (
+        await db.execute(
+            select(
+                Transaction,
+                func.coalesce(Transaction.customer_phone, Customer.phone).label("customer_phone"),
+                Operator.code.label("operator_code"),
+                Service.code.label("service_code"),
+            )
+            .select_from(Transaction)
+            .outerjoin(Customer, Transaction.customer_id == Customer.id)
+            .join(Service, Transaction.service_id == Service.id)
+            .join(Operator, Service.operator_id == Operator.id)
+            .where(Transaction.idempotency_key == data.commit_key)
+        )
+    ).first()
+    if row is None:
+        return None
+    transaction = row[0]
+    same_sale = (
+        row.customer_phone == data.customer_phone
+        and row.operator_code == data.operator_code
+        and row.service_code == data.service_code
+        and transaction.amount_cents == data.amount_cents
+    )
+    if not same_sale:
+        raise HTTPException(
+            status_code=409,
+            detail="This commit key already belongs to a different sale",
+        )
+    return transaction
+
+
+#: Reported when several records carry the typed name and the phone cannot pick
+#: one, so the sale would have to be guessed.
+AMBIGUOUS_CUSTOMER_NAME = (
+    "More than one customer has this name; enter the phone number that belongs to this customer"
+)
+#: Reported when the typed phone already belongs to a different person.
+PHONE_BELONGS_TO_ANOTHER_CUSTOMER = (
+    "That phone number belongs to a different customer; check the name or open the customer page"
+)
+#: Reported when the name matches a customer but the typed number does not: it
+#: may be a new number for the same person or a different person entirely.
+NAME_DOES_NOT_MATCH_CUSTOMER_PHONE = (
+    "A customer with this name is registered under a different number; "
+    "check the number or open the customer page"
+)
+
+
+def _store_sale_preferences(
+    customer: Customer, operator_code: str, service_code: str
+) -> None:
+    """Remember the operator/service a named customer's sale used.
+
+    Only gaps are filled: a value the customer already has is kept, so a
+    preference the seller chose on the customer page is never overridden.
+    """
+    if customer.operator_code is None:
+        customer.operator_code = operator_code
+    if customer.service_code is None:
+        customer.service_code = service_code
+
+
+async def _resolve_sale_customer(
+    db: AsyncSession, name: str, phone: str, operator_code: str, service_code: str
+) -> tuple[Customer | None, str | None]:
+    """Link a named sale to the right customer, registering a new regular one.
+
+    Returns ``(customer, conflict)``. The seller's typed name identifies a
+    repeat customer; the typed phone is only used to register a new record,
+    never to overrule an existing person's number:
+
+    * no record with that name -> the phone is registered as a named regular
+      customer, with the sale's operator/service stored for next time
+      (race-free get-or-create);
+    * one record with that name and that phone -> reuse it and fill any gap in
+      its stored preferences;
+    * more than one record with that name -> only the row whose phone matches
+      is unambiguous; otherwise the name is ambiguous and nothing is written;
+    * the typed phone already belongs to somebody else -> the sale would be
+      attributed to the wrong person, so it is refused instead of guessed.
+
+    A conflict never writes anything: the caller gets the problem, not a
+    half-applied sale.
+    """
+    rows = (
+        await db.scalars(
+            select(Customer)
+            .where(func.lower(Customer.name) == name.lower())
+            .order_by(Customer.id)
+            .limit(2)
+        )
+    ).all()
+    if not rows:
+        holder = await db.scalar(select(Customer).where(Customer.phone == phone))
+        if holder is not None:
+            if holder.name.strip().lower() != name.lower():
+                # This number is somebody else's; the new name cannot take it.
+                return None, PHONE_BELONGS_TO_ANOTHER_CUSTOMER
+            # A concurrent commit just registered this sale's customer.
+            _store_sale_preferences(holder, operator_code, service_code)
+            return holder, None
+        await db.execute(
+            sqlite_insert(Customer)
+            .values(
+                phone=phone,
+                name=name,
+                operator_code=operator_code,
+                service_code=service_code,
+            )
+            .on_conflict_do_nothing(index_elements=[Customer.phone])
+        )
+        customer = await db.scalar(select(Customer).where(Customer.phone == phone))
+        if customer is None:  # pragma: no cover - the row exists after the insert
+            raise HTTPException(status_code=409, detail="Customer could not be resolved; retry")
+        return customer, None
+
+    if len(rows) > 1:
+        matched = [row for row in rows if row.phone == phone]
+        if len(matched) != 1:
+            return None, AMBIGUOUS_CUSTOMER_NAME
+        _store_sale_preferences(matched[0], operator_code, service_code)
+        return matched[0], None
+
+    customer = rows[0]
+    if customer.phone != phone:
+        # The name points at a record whose number is different: the typed
+        # number is either a new number for them or somebody else's. Neither
+        # can be assumed, so the sale is not attached and the record is left
+        # exactly as it is (the existing number is never overwritten).
+        return None, NAME_DOES_NOT_MATCH_CUSTOMER_PHONE
+    _store_sale_preferences(customer, operator_code, service_code)
+    return customer, None
+
+
+@app.post("/api/transactions/preview", response_model=TransactionPreviewResponse)
+async def preview_transaction(
+    data: TransactionRequest, db: DbSession
+) -> TransactionPreviewResponse:
+    """Render the USSD code for a sale without persisting anything.
+
+    Generating a code is not a sale: no transaction row, no operator debit and
+    no commission entry are created here. The returned ``commit_key`` is what
+    the commit call uses to make the seller's tap idempotent.
+    """
+    operator, _service = await _resolve_sale_configuration(
+        db, data.operator_code, data.service_code
+    )
+    await _require_operator_balance(db, operator, data.amount_cents)
+    try:
+        ussd_string = await generate_ussd(
+            db, data.operator_code, data.service_code, data.customer_phone, data.amount_cents
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return TransactionPreviewResponse(ussd_string=ussd_string, commit_key=uuid4().hex)
+
+
+@app.post("/api/transactions", response_model=TransactionResponse)
+async def create_transaction(data: TransactionCreate, db: DbSession) -> Transaction:
+    """Commit a sale: persist it as successful and apply accounting once.
+
+    The seller's copy/dialer tap is the commit event. The operator balance is
+    debited with a single conditional UPDATE and the transaction row plus its
+    profit ledger row are written in the same database transaction, so a sale
+    is either fully recorded or not recorded at all. Replaying the same
+    ``commit_key`` returns the stored sale without touching the ledger again.
+
+    Customer records are for repeat customers only. A sale with a name is
+    linked to (or registers) that named regular customer; a sale with a blank
+    or whitespace-only name is a one-time sale: it commits and is accounted for
+    normally, keeps its phone on the row, and no customer record is created or
+    modified. A number is never used as a name.
+    """
+    replay = await _committed_transaction(db, data)
+    if replay is not None:
+        return replay
+
+    operator, service = await _resolve_sale_configuration(
+        db, data.operator_code, data.service_code
+    )
+    await _require_operator_balance(db, operator, data.amount_cents)
     try:
         ussd_string = await generate_ussd(
             db, data.operator_code, data.service_code, data.customer_phone, data.amount_cents
@@ -1199,40 +1534,61 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    # The shop must hold enough prepaid credit with the operator; rejecting
-    # before anything is written keeps the request atomic.
-    balance = await db.scalar(
-        select(OperatorBalance).where(OperatorBalance.operator_id == operator.id)
-    )
-    if balance is None or balance.balance_cents < data.amount_cents:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail="Insufficient operator balance")
-
     try:
         commission = await get_commission_for_transaction(db, data.amount_cents)
     except ValueError as exc:
         raise HTTPException(status_code=500, detail="Invalid stored commission rate") from exc
     commission_cents = int(commission["commission_cents"])
 
-    customer = await db.scalar(select(Customer).where(Customer.phone == data.customer_phone))
-    is_new_customer = customer is None
-    if customer is None:
-        # The transaction request has no customer name; use the phone as a placeholder.
-        customer = Customer(phone=data.customer_phone, name=data.customer_phone)
-        db.add(customer)
-
-    transaction = Transaction(
-        customer=customer,
-        service=service,
-        amount_cents=data.amount_cents,
-        status="pending",
-        ussd_string=ussd_string,
-        reference=f"TXN-{uuid4().hex}",
-    )
-    db.add(transaction)
-    # Commission is collected from the customer, not spent as operator credit.
-    balance.balance_cents -= data.amount_cents
+    transaction: Transaction | None = None
     try:
+        customer: Customer | None = None
+        if data.customer_name is not None:
+            # A named sale belongs to a repeat customer: link an existing
+            # record (by exact name) or register this one as a named regular.
+            # An ambiguous name aborts before anything is written.
+            customer, conflict = await _resolve_sale_customer(
+                db,
+                data.customer_name,
+                data.customer_phone,
+                data.operator_code,
+                data.service_code,
+            )
+            if conflict is not None:
+                await db.rollback()
+                raise HTTPException(status_code=409, detail=conflict)
+        # A blank name is a one-time sale: no customer record is created,
+        # modified or linked, and the phone is kept on the transaction row.
+
+        # Atomic, non-negative debit: two concurrent commits can never overdraw.
+        debit = await db.execute(
+            update(OperatorBalance)
+            .where(
+                OperatorBalance.operator_id == operator.id,
+                OperatorBalance.balance_cents >= data.amount_cents,
+            )
+            .values(
+                balance_cents=OperatorBalance.balance_cents - data.amount_cents,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        if debit.rowcount != 1:
+            await db.rollback()
+            raise HTTPException(status_code=400, detail="Insufficient operator balance")
+
+        transaction = Transaction(
+            customer_id=None if customer is None else customer.id,
+            service_id=service.id,
+            amount_cents=data.amount_cents,
+            status="successful",
+            ussd_string=ussd_string,
+            reference=f"TXN-{uuid4().hex}",
+            idempotency_key=data.commit_key,
+            # The charged number is on every row, linked or not, so history and
+            # filters can identify the sale without a customer record.
+            customer_phone=data.customer_phone,
+        )
+        db.add(transaction)
         await db.flush()  # assigns transaction.id for the profit ledger row
         db.add(
             ProfitLedger(
@@ -1246,11 +1602,14 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        # Concurrent requests can attempt to create the same new customer.
-        existing = await db.scalar(select(Customer).where(Customer.phone == data.customer_phone))
-        if is_new_customer and existing is not None:
-            raise HTTPException(status_code=409, detail="Customer was created concurrently; retry")
-        raise
+        # A concurrent commit with the same key won the race: answer with it
+        # instead of charging again. Nothing from this attempt survives.
+        replay = await _committed_transaction(db, data)
+        if replay is not None:
+            return replay
+        raise HTTPException(
+            status_code=409, detail="Could not commit the sale; retry with the same commit key"
+        ) from None
     await db.refresh(transaction)
     return transaction
 
@@ -1261,55 +1620,139 @@ async def update_transaction_status(
     data: TransactionStatusUpdate,
     db: DbSession,
 ) -> Transaction:
-    """Record the real-world result of one pending transaction.
+    """Mark a successful sale as failed.
 
-    A transaction is created ``pending`` when its USSD code is generated and
-    only its operator may confirm or reject it afterwards. The state guard is
-    part of the UPDATE statement itself, so duplicate or stale requests can
-    never overwrite a final status and concurrent callers get exactly one
-    winner. Accounting is deliberately untouched: the operator balance and the
-    profit ledger keep the values captured at creation time (a failed charge
-    does not refund automatically; see the handoff note).
+    The seller records the real-world outcome from the Transactions page. Only
+    ``successful -> failed`` is allowed, the guard lives in the UPDATE itself
+    (so replays and races cannot apply twice). The original ledger operator
+    receives exactly the stored face amount, with a unique durable refund audit
+    in the same commit. Commission/profit history is never reversed or edited.
+    """
+    if data.status != "failed":
+        raise HTTPException(status_code=409, detail="Transactions can only be marked failed")
+
+    try:
+        result = await db.execute(
+            update(Transaction)
+            .where(Transaction.id == transaction_id, Transaction.status == "successful")
+            .values(status="failed")
+        )
+        if result.rowcount != 1:
+            current = await db.scalar(
+                select(Transaction.status).where(Transaction.id == transaction_id)
+            )
+            if current is None:
+                raise HTTPException(status_code=404, detail="Transaction not found")
+            raise HTTPException(status_code=409, detail="Transaction is already failed")
+        transaction = await db.get(Transaction, transaction_id)
+        operator_id = await db.scalar(
+            select(Operator.id)
+            .join(ProfitLedger, ProfitLedger.operator_code == Operator.code)
+            .where(ProfitLedger.transaction_id == transaction_id)
+        )
+        if transaction is None or operator_id is None:
+            raise HTTPException(status_code=409, detail="Original operator debit could not be resolved")
+        if type(transaction.amount_cents) is not int or not 0 <= transaction.amount_cents <= 9223372036854775807:
+            raise HTTPException(status_code=409, detail="Stored transaction amount is invalid")
+        credit = await db.execute(
+            update(OperatorBalance)
+            .where(
+                OperatorBalance.operator_id == operator_id,
+                func.typeof(OperatorBalance.balance_cents) == "integer",
+                OperatorBalance.balance_cents >= 0,
+                OperatorBalance.balance_cents <= 9223372036854775807 - transaction.amount_cents,
+            )
+            .values(balance_cents=OperatorBalance.balance_cents + transaction.amount_cents)
+        )
+        if credit.rowcount != 1:
+            raise HTTPException(status_code=409, detail="Original operator balance not found")
+        db.add(OperatorCreditRefund(
+            transaction_id=transaction.id,
+            transaction_reference=transaction.reference,
+            operator_id=operator_id,
+            amount_cents=transaction.amount_cents,
+        ))
+        await db.commit()
+        return transaction
+    except Exception:
+        await db.rollback()
+        raise
+
+
+@app.delete("/api/transactions/{transaction_id}", status_code=204, response_class=Response)
+async def remove_failed_transaction(
+    transaction_id: Annotated[int, Field(ge=1)], db: DbSession
+) -> Response:
+    """Remove a failed transaction from the reporting views (tombstone).
+
+    Only failed rows can be removed, and removal never refunds: the row keeps
+    its status with ``deleted_at`` set, and its profit ledger row and the
+    refund audit stay untouched so the audit trail survives. Deleting again
+    is safe and returns the same 204.
     """
     result = await db.execute(
         update(Transaction)
-        .where(Transaction.id == transaction_id, Transaction.status == "pending")
-        .values(status=data.status)
-    )
-    if result.rowcount != 1:
-        current = await db.scalar(
-            select(Transaction.status).where(Transaction.id == transaction_id)
+        .where(
+            Transaction.id == transaction_id,
+            Transaction.status == "failed",
+            Transaction.deleted_at.is_(None),
         )
-        if current is None:
-            raise HTTPException(status_code=404, detail="Transaction not found")
-        raise HTTPException(status_code=409, detail=f"Transaction is already {current}")
-    await db.commit()
-    transaction = await db.get(Transaction, transaction_id)
-    if transaction is None:  # pragma: no cover - the row was just updated
+        .values(deleted_at=datetime.now(timezone.utc))
+    )
+    if result.rowcount == 1:
+        await db.commit()
+        return Response(status_code=204)
+
+    row = (
+        await db.execute(
+            select(Transaction.status, Transaction.deleted_at).where(
+                Transaction.id == transaction_id
+            )
+        )
+    ).first()
+    if row is None:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    return transaction
+    if row.status != "failed":
+        raise HTTPException(status_code=409, detail="Only failed transactions can be removed")
+    return Response(status_code=204)  # already removed: repeating is safe
+
+
+#: Columns every transaction view shows, with the customer labels resolved for
+#: linked rows and for one-time (unlinked) sales alike. An unlinked sale keeps
+#: its own phone and has no name — the number is never presented as one.
+_TRANSACTION_LABELS = (
+    Transaction.id,
+    Transaction.reference,
+    Transaction.ussd_string,
+    Transaction.status,
+    Transaction.amount_cents,
+    Transaction.created_at,
+    Transaction.customer_id.label("customer_id"),
+    func.coalesce(Transaction.customer_phone, Customer.phone).label("customer_phone"),
+    Customer.name.label("customer_name"),
+    Operator.code.label("operator_code"),
+    Operator.name.label("operator_name"),
+    Service.code.label("service_code"),
+    Service.name.label("service_name"),
+)
 
 
 def _transaction_list_statement():
-    """Base select of transactions joined with customer/operator/service labels."""
+    """Base select of live transactions joined with customer/operator/service labels.
+
+    The customer join is an OUTER join: a committed one-time sale has no
+    customer record, and it must never disappear from history, filters or
+    reports because of that. Removed (tombstoned) rows are hidden from the list
+    and the operator page; the row itself and its profit ledger entry stay on
+    disk for auditing.
+    """
     return (
-        select(
-            Transaction.id,
-            Transaction.reference,
-            Transaction.ussd_string,
-            Transaction.status,
-            Transaction.amount_cents,
-            Transaction.created_at,
-            Customer.phone.label("customer_phone"),
-            Customer.name.label("customer_name"),
-            Operator.code.label("operator_code"),
-            Operator.name.label("operator_name"),
-            Service.code.label("service_code"),
-            Service.name.label("service_name"),
-        )
-        .join(Customer, Transaction.customer_id == Customer.id)
+        select(*_TRANSACTION_LABELS)
+        .select_from(Transaction)
+        .outerjoin(Customer, Transaction.customer_id == Customer.id)
         .join(Service, Transaction.service_id == Service.id)
         .join(Operator, Service.operator_id == Operator.id)
+        .where(Transaction.deleted_at.is_(None))
     )
 
 
@@ -1318,7 +1761,7 @@ async def list_transactions(
     db: DbSession,
     operator_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
     service_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
-    status: Annotated[str | None, Query(pattern="^(pending|completed|failed)$")] = None,
+    status: Annotated[str | None, Query(pattern="^(successful|failed)$")] = None,
     customer_phone: Annotated[str | None, Query(min_length=1, max_length=32)] = None,
 ) -> list[TransactionListItem]:
     """List transactions newest-first, optionally filtered by operator code,
@@ -1332,7 +1775,11 @@ async def list_transactions(
     if status is not None:
         statement = statement.where(Transaction.status == status)
     if customer_phone is not None:
-        statement = statement.where(Customer.phone.ilike(f"%{customer_phone}%"))
+        statement = statement.where(
+            func.coalesce(Transaction.customer_phone, Customer.phone).ilike(
+                f"%{customer_phone}%"
+            )
+        )
     rows = await db.execute(statement.order_by(Transaction.created_at.desc(), Transaction.id.desc()))
     return [TransactionListItem(**row._mapping) for row in rows.all()]
 
@@ -1578,12 +2025,15 @@ async def close_register(
     if register.status != "open":
         raise HTTPException(status_code=400, detail="Can only close an open register")
 
-    # Compute cash collected: sum of completed transaction amount_cents since register opened
+    # Cash collected: the amount of every committed (successful) transaction in
+    # the register window. Failed and removed rows never count as cash; a
+    # removal is a reporting tombstone and reverses nothing.
     transactions_result = await db.scalars(
         select(Transaction)
         .where(
             Transaction.created_at >= register.opened_at,
-            Transaction.status == "completed",
+            Transaction.status == "successful",
+            Transaction.deleted_at.is_(None),
         )
     )
     transactions = transactions_result.all()
@@ -1629,12 +2079,15 @@ async def get_register_summary(
     if register is None:
         raise HTTPException(status_code=404, detail="No register found")
 
-    # Compute cash collected: sum of completed transaction amount_cents since register opened
+    # Cash collected: the amount of every committed (successful) transaction in
+    # the register window. Failed and removed rows never count as cash; a
+    # removal is a reporting tombstone and reverses nothing.
     transactions_result = await db.scalars(
         select(Transaction)
         .where(
             Transaction.created_at >= register.opened_at,
-            Transaction.status == "completed",
+            Transaction.status == "successful",
+            Transaction.deleted_at.is_(None),
         )
     )
     transactions = transactions_result.all()

@@ -1,3 +1,4 @@
+import itertools
 import asyncio
 from collections.abc import AsyncIterator, Iterator
 from contextlib import aclosing
@@ -40,28 +41,35 @@ def client(tmp_path) -> Iterator[TestClient]:
 
 
 def post_transaction(
-    client: TestClient, phone: str, operator: str, service: str, amount_cents: int
+    client: TestClient,
+    phone: str,
+    operator: str,
+    service: str,
+    amount_cents: int,
+    customer_name: str | None = None,
 ) -> dict:
-    response = client.post(
-        "/api/transactions",
-        json={
-            "customer_phone": phone,
-            "operator_code": operator,
-            "service_code": service,
-            "amount_cents": amount_cents,
-        },
-    )
+    body = {
+        "customer_phone": phone,
+        "operator_code": operator,
+        "service_code": service,
+        "amount_cents": amount_cents,
+        "commit_key": new_commit_key(),
+    }
+    if customer_name is not None:
+        body["customer_name"] = customer_name
+    response = client.post("/api/transactions", json=body)
     assert response.status_code == 200
     return response.json()
 
 
-def set_status(transaction_id: int, status: str) -> None:
+def mark_failed(transaction_id: int) -> None:
+    """The only transition the app allows: a committed sale that failed."""
     async def update() -> None:
         async with aclosing(app.dependency_overrides[get_db]()) as dependency:
             session = await anext(dependency)
             transaction = await session.get(Transaction, transaction_id)
             assert transaction is not None
-            transaction.status = status
+            transaction.status = "failed"
             await session.commit()
 
     asyncio.run(update())
@@ -69,10 +77,11 @@ def set_status(transaction_id: int, status: str) -> None:
 
 @pytest.fixture
 def transactions(client: TestClient) -> dict[str, dict]:
-    """Five transactions across both customers, operators, services and statuses.
+    """Six committed transactions: two named regulars, one one-time sale.
 
-    Ahmad: mtn/prepaid pending x2, syriatel/postpaid completed.
-    Rami: syriatel/prepaid pending, mtn/postpaid failed.
+    Ahmad: mtn/prepaid x2 and syriatel/postpaid (all successful).
+    Rami: syriatel/prepaid successful, mtn/postpaid marked failed.
+    One-time: mtn/prepaid with no customer name (no customer record).
     """
     for operator_code in ("mtn", "syriatel"):
         assert client.post(
@@ -81,14 +90,24 @@ def transactions(client: TestClient) -> dict[str, dict]:
     client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
     client.post("/api/customers", json={"phone": "0944123456", "name": "Rami"})
     created = {
-        "ahmad_mtn_a": post_transaction(client, "0933123456", "mtn", "prepaid", 5000),
-        "ahmad_mtn_b": post_transaction(client, "0933123456", "mtn", "prepaid", 2500),
-        "ahmad_syriatel": post_transaction(client, "0933123456", "syriatel", "postpaid", 10000),
-        "rami_syriatel": post_transaction(client, "0944123456", "syriatel", "prepaid", 1500),
-        "rami_mtn": post_transaction(client, "0944123456", "mtn", "postpaid", 0),
+        "ahmad_mtn_a": post_transaction(
+            client, "0933123456", "mtn", "prepaid", 5000, customer_name="Ahmad"
+        ),
+        "ahmad_mtn_b": post_transaction(
+            client, "0933123456", "mtn", "prepaid", 2500, customer_name="Ahmad"
+        ),
+        "ahmad_syriatel": post_transaction(
+            client, "0933123456", "syriatel", "postpaid", 10000, customer_name="Ahmad"
+        ),
+        "rami_syriatel": post_transaction(
+            client, "0944123456", "syriatel", "prepaid", 1500, customer_name="Rami"
+        ),
+        "rami_mtn": post_transaction(
+            client, "0944123456", "mtn", "postpaid", 0, customer_name="Rami"
+        ),
+        "one_time": post_transaction(client, "0955123456", "mtn", "prepaid", 1200),
     }
-    set_status(created["ahmad_syriatel"]["id"], "completed")
-    set_status(created["rami_mtn"]["id"], "failed")
+    mark_failed(created["rami_mtn"]["id"])
     return created
 
 
@@ -116,16 +135,24 @@ def test_list_without_filters_returns_all_transactions(
     item = next(i for i in items if i["id"] == transactions["ahmad_mtn_a"]["id"])
     assert set(item) == {
         "id", "reference", "ussd_string", "status", "amount_cents", "created_at",
-        "customer_phone", "customer_name", "operator_code", "operator_name",
+        "customer_id", "customer_phone", "customer_name", "operator_code", "operator_name",
         "service_code", "service_name",
     }
     assert item["reference"] == transactions["ahmad_mtn_a"]["reference"]
     assert item["ussd_string"] == "*150*65477*0933123456*50#"
-    assert item["status"] == "pending" and item["amount_cents"] == 5000
+    assert item["status"] == "successful" and item["amount_cents"] == 5000
     assert item["created_at"]
     assert item["customer_phone"] == "0933123456" and item["customer_name"] == "Ahmad"
     assert item["operator_code"] == "mtn" and item["operator_name"] == "MTN"
     assert item["service_code"] == "prepaid" and item["service_name"] == "Pre-Paid Charging"
+
+    # The one-time sale is listed too: its phone is shown, its name is empty
+    # (a number is never presented as a customer name).
+    one_time = next(i for i in items if i["id"] == transactions["one_time"]["id"])
+    assert one_time["customer_id"] is None
+    assert one_time["customer_phone"] == "0955123456"
+    assert one_time["customer_name"] is None
+    assert one_time["amount_cents"] == 1200
 
 
 def test_list_filters_by_operator(client: TestClient, transactions: dict[str, dict]) -> None:
@@ -133,6 +160,7 @@ def test_list_filters_by_operator(client: TestClient, transactions: dict[str, di
         transactions["ahmad_mtn_a"]["id"],
         transactions["ahmad_mtn_b"]["id"],
         transactions["rami_mtn"]["id"],
+        transactions["one_time"]["id"],
     }
     assert get_ids(client, operator_code="syriatel") == {
         transactions["ahmad_syriatel"]["id"],
@@ -147,6 +175,7 @@ def test_list_filters_by_service(client: TestClient, transactions: dict[str, dic
         transactions["ahmad_mtn_a"]["id"],
         transactions["ahmad_mtn_b"]["id"],
         transactions["rami_syriatel"]["id"],
+        transactions["one_time"]["id"],
     }
     assert get_ids(client, service_code="postpaid") == {
         transactions["ahmad_syriatel"]["id"],
@@ -155,12 +184,13 @@ def test_list_filters_by_service(client: TestClient, transactions: dict[str, dic
 
 
 def test_list_filters_by_status(client: TestClient, transactions: dict[str, dict]) -> None:
-    assert get_ids(client, status="pending") == {
+    assert get_ids(client, status="successful") == {
         transactions["ahmad_mtn_a"]["id"],
         transactions["ahmad_mtn_b"]["id"],
+        transactions["ahmad_syriatel"]["id"],
         transactions["rami_syriatel"]["id"],
+        transactions["one_time"]["id"],
     }
-    assert get_ids(client, status="completed") == {transactions["ahmad_syriatel"]["id"]}
     assert get_ids(client, status="failed") == {transactions["rami_mtn"]["id"]}
 
 
@@ -182,11 +212,14 @@ def test_list_returns_empty_when_no_match(client: TestClient, transactions: dict
     assert client.get("/api/transactions", params={"customer_phone": "0999"}).json() == []
     assert client.get("/api/transactions", params={"operator_code": "unknown"}).json() == []
     assert client.get("/api/transactions", params={"service_code": "unknown"}).json() == []
-    assert get_ids(client, operator_code="mtn", status="completed") == set()
+    assert get_ids(client, operator_code="mtn", status="failed") == {
+        transactions["rami_mtn"]["id"]
+    }
+    assert get_ids(client, operator_code="syriatel", status="failed") == set()
 
 
 def test_list_combines_filters(client: TestClient, transactions: dict[str, dict]) -> None:
-    assert get_ids(client, operator_code="mtn", service_code="prepaid", status="pending",
+    assert get_ids(client, operator_code="mtn", service_code="prepaid", status="successful",
                    customer_phone="0933") == {
         transactions["ahmad_mtn_a"]["id"],
         transactions["ahmad_mtn_b"]["id"],
@@ -194,13 +227,14 @@ def test_list_combines_filters(client: TestClient, transactions: dict[str, dict]
     assert get_ids(client, operator_code="syriatel", service_code="prepaid") == {
         transactions["rami_syriatel"]["id"]
     }
-    assert get_ids(client, status="pending", customer_phone="0944") == {
+    assert get_ids(client, status="successful", customer_phone="0944") == {
         transactions["rami_syriatel"]["id"]
     }
 
 
 def test_list_rejects_invalid_status(client: TestClient) -> None:
-    assert client.get("/api/transactions", params={"status": "bogus"}).status_code == 422
+    for status in ("bogus", "pending", "completed"):
+        assert client.get("/api/transactions", params={"status": status}).status_code == 422
 
 
 def test_transactions_page_renders_in_both_languages(client: TestClient) -> None:
@@ -239,11 +273,28 @@ def test_transactions_template_markup() -> None:
         assert "new AbortController()" in rendered
         assert "fetch('/api/transactions' + buildQuery()" in rendered
         assert "fetch('/api/customers/search?q=' + encodeURIComponent(query)" in rendered
-        # All eight table columns.
-        assert rendered.count('scope="col"') == 8
+        # Nine table columns: the Slice 2.3 actions column was added.
+        assert rendered.count('scope="col"') == 9
+        assert 'id="tx-action-status" role="status" aria-live="polite"' in rendered
+        assert 'id="tx-table-title" tabindex="-1"' in rendered
     for header in ("Reference", "Date/time", "Customer", "Operator", "Service",
-                   "Amount", "Status", "USSD"):
+                   "Amount", "Status", "USSD", "Actions"):
         assert header in english
     for header in ("المرجع", "التاريخ والوقت", "العميل", "المشغّل", "الخدمة",
-                   "المبلغ", "الحالة", "USSD"):
+                   "المبلغ", "الحالة", "USSD", "إجراءات"):
         assert header in arabic
+    # Status vocabulary and the two row actions.
+    assert ">Successful<" in english and ">Failed<" in english
+    assert 'value="successful"' in english and 'value="failed"' in english
+    assert "pending" not in english.split("<table", 1)[1].split("</table>", 1)[0]
+    assert "Mark charge failed" in english and '"remove"' in english
+    assert ">ناجحة<" in arabic and ">فاشلة<" in arabic
+    assert '"remove"' in arabic and '"markFailed"' in arabic
+
+
+_COMMIT_KEYS = itertools.count(1)
+
+
+def new_commit_key() -> str:
+    """A fresh commit key: every call is a deliberate, distinct sale."""
+    return f"listkey{next(_COMMIT_KEYS):023d}"
