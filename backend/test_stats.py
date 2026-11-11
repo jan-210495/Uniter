@@ -368,7 +368,7 @@ def test_stats_page_english_and_arabic(stats_env) -> None:
     assert "<title>Stats · Uniter</title>" in english.text
     assert 'dir="ltr"' in english.text
     # Nav link is highlighted only on the stats page itself.
-    assert '<a href="/stats" class="hover:text-blue-800" aria-current="page">Stats</a>' in english.text
+    assert 'aria-current="page">Stats</a>' in english.text
     assert ">Statistics</h1>" in english.text
 
     arabic = client.get("/stats", params={"lang": "ar"})
@@ -385,8 +385,8 @@ def test_stats_nav_link_on_other_pages(stats_env) -> None:
         for lang in ("en", "ar"):
             response = client.get(f"/{page}", params={"lang": lang})
             assert response.status_code == 200, (page, lang)
-            # Present in both the header nav and the burger drawer, unhighlighted.
-            assert response.text.count('href="/stats"') == 2, (page, lang)
+            # Present once in the shared desktop/mobile side list, unhighlighted.
+            assert response.text.count('href="/stats"') == 1, (page, lang)
             assert 'aria-current="page">Stats<' not in response.text or page != "stats"
 
 

@@ -316,7 +316,7 @@ def test_customers_page_uses_shared_navigation(client: TestClient) -> None:
     assert 'aria-label="Pages"' in page
     assert '<a href="/pos"' in page
     assert '<a href="/settlement"' in page
-    assert 'href="/customers" class="hover:text-blue-800" aria-current="page"' in page
+    assert 'aria-current="page">Customers</a>' in page
 
 _COMMIT_KEYS = itertools.count(1)
 

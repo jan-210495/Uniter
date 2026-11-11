@@ -307,13 +307,13 @@ def test_base_template_renders_burger_menu_and_drawer(client: TestClient) -> Non
         for rendered in (english.text, arabic.text):
             # Burger button: small screens only, wired to the drawer.
             assert 'id="nav-toggle"' in rendered
-            assert "sm:hidden" in rendered
+            assert 'class="shell-mobile-bar"' in rendered
             assert 'aria-expanded="false"' in rendered
             assert 'aria-controls="app-drawer"' in rendered
             # Off-canvas drawer with navigation semantics.
             assert 'id="app-drawer"' in rendered
             assert 'role="navigation"' in rendered
-            assert 'aria-modal="true"' in rendered
+            assert 'id="app-drawer" class="drawer-closed" role="navigation"' in rendered
             assert 'id="app-drawer-backdrop"' in rendered
             assert 'id="app-drawer-close"' in rendered
             # Every page link plus the language switcher inside the drawer.
@@ -321,10 +321,13 @@ def test_base_template_renders_burger_menu_and_drawer(client: TestClient) -> Non
                 assert f'href="{href}"' in rendered
             assert "?lang=en" in rendered and "?lang=ar" in rendered
             # Escape closes; the drawer slides from the start edge.
-            assert "Escape" in rendered
+            script = client.get('/static/navigation.js').text
+            css = client.get('/static/navigation.css').text
+            assert "Escape" in script
             assert "drawer-closed" in rendered
-            assert "translateX(-100%)" in rendered
-            assert "translateX(100%)" in rendered
+            assert "translateX(-100%)" in css
+            assert "translateX(100%)" in css
+            assert "(min-width: 1024px)" in css
             # Header timezone slot filled by the shared script.
             assert 'id="header-timezone"' in rendered
             assert "fetch('/api/settings/timezone'" in rendered

@@ -223,15 +223,15 @@ def test_mobile_header_burger_left_centered_logo(client) -> None:
     test_client, _ = client
     for lang in ("en", "ar"):
         rendered = test_client.get("/pos", params={"lang": lang}).text
-        # Mobile row (below sm): three-column grid, burger first, centered logo.
-        assert 'grid grid-cols-3 items-center sm:hidden' in rendered
-        mobile_row = rendered.split('grid grid-cols-3 items-center sm:hidden')[1].split('</div>')[0]
+        # Mobile row (below lg): three-column grid, burger first, centered logo.
+        assert 'shell-mobile-bar' in rendered
+        mobile_row = rendered.split('shell-mobile-bar')[1].split('</div>')[0]
         assert 'id="nav-toggle"' in mobile_row
         assert 'justify-self-start' in mobile_row
         assert 'justify-self-center text-lg font-bold text-blue-950">Uniter</a>' in mobile_row
         assert mobile_row.index('nav-toggle') < mobile_row.index('justify-self-center')
-        # Desktop row (sm and up): logo left, inline nav unchanged.
-        assert 'hidden items-center justify-between gap-3 sm:flex' in rendered
+        # Desktop row (lg and up): logo and search, navigation in the sidebar.
+        assert 'shell-desktop-bar' in rendered
         assert rendered.count('id="nav-toggle"') == 1
 
 

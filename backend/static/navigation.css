@@ -1,0 +1,47 @@
+/* Shell geometry is independent of the utility CDN. Logical edges mirror RTL. */
+:root { --shell-header: 64px; --shell-sidebar: 208px; }
+html { scroll-padding-block-start: calc(var(--shell-header) + 16px); }
+#app-main :is([id], input, button, select, a, summary) { scroll-margin-block-start: calc(var(--shell-header) + 16px); }
+#app-header { position: sticky; inset-block-start: 0; z-index: 30; background: white; }
+.shell-topbar { padding-inline: 16px; }
+.shell-mobile-bar { display: grid; grid-template-columns: repeat(3, 1fr); align-items: center; min-block-size: var(--shell-header); }
+.shell-desktop-bar { display: none; }
+#nav-toggle, #app-drawer-close { min-inline-size: 44px; min-block-size: 44px; }
+#app-drawer {
+    position: fixed; inset-block: 0; inset-inline-start: 0; z-index: 45;
+    display: flex; flex-direction: column; inline-size: min(288px, calc(100% - 32px));
+    block-size: 100dvh; overflow-y: auto; overscroll-behavior: contain;
+    background: white; border-inline-end: 1px solid #e2e8f0;
+    box-shadow: 4px 0 24px #0f172a18;
+    transition: transform .2s ease;
+}
+#app-drawer.drawer-closed { transform: translateX(-100%); visibility: hidden; }
+[dir="rtl"] #app-drawer.drawer-closed { transform: translateX(100%); }
+#app-drawer > * { flex-shrink: 0; }
+#app-drawer-backdrop { z-index: 40; }
+body.navigation-open { overflow: hidden; }
+.nav-pages a { display: flex; align-items: center; min-block-size: 44px; }
+.nav-pages a[aria-current="page"] { background: #172554; color: white; }
+.nav-languages { margin-block-start: auto; }
+.nav-languages a { display: inline-flex; align-items: center; min-block-size: 44px; }
+.nav-languages a[aria-current="true"] { text-decoration: underline; text-underline-offset: 5px; color: #172554; }
+:is(#app-header, #app-drawer) :is(a, button, input):focus-visible,
+.skip-link:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 3px; }
+#app-main { min-inline-size: 0; }
+#app-main:focus { outline: none; }
+.skip-link { position: fixed; inset-block-start: 8px; inset-inline-start: 8px; z-index: 60; padding: 12px; background: white; color: #172554; transform: translateY(-150%); }
+.skip-link:focus { transform: none; }
+#drawer-search-anchor #global-search-results { min-width: 0; }
+@media (min-width: 1024px) {
+    .shell-mobile-bar { display: none; }
+    .shell-desktop-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-block-size: var(--shell-header); }
+    .shell-topbar { padding-inline: 24px; }
+    #app-drawer, #app-drawer.drawer-closed, [dir="rtl"] #app-drawer.drawer-closed {
+        inset-block-start: var(--shell-header); block-size: calc(100dvh - var(--shell-header));
+        inline-size: var(--shell-sidebar); transform: none; visibility: visible; z-index: 25; box-shadow: none;
+    }
+    #app-drawer .drawer-heading, #app-drawer .drawer-search, #app-drawer-backdrop { display: none; }
+    .shell-content { margin-inline-start: var(--shell-sidebar); }
+    #global-search { width: 320px; }
+}
+@media (prefers-reduced-motion: reduce) { #app-drawer { transition: none; } }
