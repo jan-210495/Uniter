@@ -79,9 +79,11 @@ def test_settings_page_renders_code_structure(client: TestClient) -> None:
     html = client.get("/settings").text
     for operator in ("MTN", "Syriatel"):
         assert operator in html
-    # USSD prefixes rendered in their own cells.
-    assert ">100</td>" in html
-    assert ">555</td>" in html
+    # Legacy prefixes are not presented as active POS formats.
+    assert ">100</td>" not in html
+    assert ">555</td>" not in html
+    assert 'data-ussd-pattern="mtn-prepaid"' in html
+    assert 'data-ussd-pattern="syriatel-postpaid"' in html
     for service_name in ("Pre-Paid Charging", "Post-Paid Bill Payment"):
         assert service_name in html
     for service_code in (">prepaid</td>", ">postpaid</td>"):
