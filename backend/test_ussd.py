@@ -23,9 +23,9 @@ def test_generate_ussd(tmp_path) -> None:
                 # Operator structures with the default domain settings.
                 assert await generate_ussd(session, "mtn", "prepaid", "0933123456", 5000) == "*150*65477*0933123456*50#"
                 assert await generate_ussd(session, "mtn", "postpaid", "0933123456", 5000) == "*154*65477*0933123456*50#"
-                assert await generate_ussd(session, "syriatel", "prepaid", "0944123456", 5000) == "*150*1*67858*1*50*0944123456*0944123456#"
-                assert await generate_ussd(session, "syriatel", "postpaid", "0944123456", 5000) == "*150*1*67858*5*50*0944123456*0944123456#"
-                # Amounts render in tens of cents, keeping one decimal when needed.
+                assert await generate_ussd(session, "syriatel", "prepaid", "0944123456", 5000) == "*150*1*67858*1*5000*0944123456*0944123456#"
+                assert await generate_ussd(session, "syriatel", "postpaid", "0944123456", 5000) == "*150*1*67858*5*5000*0944123456*0944123456#"
+                # MTN keeps decimal display units, including fractional cents/100.
                 assert await generate_ussd(session, "mtn", "prepaid", "0933123456", 0) == "*150*65477*0933123456*0#"
                 assert await generate_ussd(session, "mtn", "prepaid", "0933123456", 5050) == "*150*65477*0933123456*50.5#"
                 assert await generate_ussd(session, "mtn", "prepaid", "0933123456", 1) == "*150*65477*0933123456*0.01#"

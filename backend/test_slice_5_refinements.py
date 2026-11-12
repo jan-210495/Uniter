@@ -113,11 +113,11 @@ def test_generate_ussd_exact_structures_with_domains_and_fallback(client) -> Non
             )
             assert (
                 await generate_ussd(session, "syriatel", "prepaid", "0944123456", 5000)
-                == "*150*1*22222*1*50*0944123456*0944123456#"
+                == "*150*1*22222*1*5000*0944123456*0944123456#"
             )
             assert (
                 await generate_ussd(session, "syriatel", "postpaid", "0944123456", 5000)
-                == "*150*1*22222*5*50*0944123456*0944123456#"
+                == "*150*1*22222*5*5000*0944123456*0944123456#"
             )
 
             # Without stored settings the default domains apply again.
@@ -135,11 +135,11 @@ def test_generate_ussd_exact_structures_with_domains_and_fallback(client) -> Non
             )
             assert (
                 await generate_ussd(session, "syriatel", "prepaid", "0944123456", 5000)
-                == "*150*1*67858*1*50*0944123456*0944123456#"
+                == "*150*1*67858*1*5000*0944123456*0944123456#"
             )
             assert (
                 await generate_ussd(session, "syriatel", "postpaid", "0944123456", 5000)
-                == "*150*1*67858*5*50*0944123456*0944123456#"
+                == "*150*1*67858*5*5000*0944123456*0944123456#"
             )
 
     asyncio.run(check())

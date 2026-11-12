@@ -225,7 +225,7 @@ def test_syriatel_domain_put_updates_and_persists(client: TestClient) -> None:
             session = await anext(dependency)
             assert (
                 await generate_ussd(session, "syriatel", "postpaid", "0968663410", 5000)
-                == "*150*1*24680*5*50*0968663410*0968663410#"
+                == "*150*1*24680*5*5000*0968663410*0968663410#"
             )
 
     asyncio.run(check_ussd())

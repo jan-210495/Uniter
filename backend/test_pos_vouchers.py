@@ -23,17 +23,20 @@ ENV = Environment(loader=FileSystemLoader("backend/templates"), autoescape=True)
 HARNESS = Path(__file__).with_name("pos_voucher_harness.cjs")
 
 MTN_VOUCHERS = [
-    "10", "12", "15", "20", "25", "30", "35", "40", "50", "60",
-    "70", "85", "100", "170", "200", "280", "360", "400", "500",
-    "600", "750", "1000", "1500", "2000", "2500", "3000",
+    '10', '12', '15', '20', '25', '30', '35', '40',
+    '50', '60', '70', '85', '90', '100', '110', '150',
+    '170', '190', '200', '230', '260', '280', '300', '320',
+    '340', '360', '400', '420', '440', '460', '480', '500',
+    '600', '650', '700', '750', '1000', '1500', '2000', '2500',
+    '3000', '3500', '4500', '5000', '5500', '6000',
 ]
 SYRIATEL_VOUCHERS = [
-    "4.81", "20.19", "23.08", "24.04", "30.76", "40.38", "45.19",
-    "52.88", "62.50", "68.27", "72.12", "77.88", "81.73", "86.54",
-    "96.15", "100.96", "105.77", "115.38", "130.77", "144.23",
-    "160.58", "163.45", "173.08", "183.65", "192.31", "211.54",
-    "240.38", "288.46", "317.31", "370.19", "432.69", "480.77",
-    "951.92",
+    '1.92', '2.88', '3.84', '4.80', '5.76', '9.61', '20.19', '23.07',
+    '24.03', '25.96', '30.76', '40.38', '45.19', '48.07', '52.88', '62.50',
+    '68.26', '72.11', '77.88', '81.73', '86.53', '96.15', '100.96', '105.76',
+    '115.38', '130.76', '144.23', '160.57', '163.46', '173.07', '183.65', '192.30',
+    '211.53', '240.38', '288.46', '317.30', '370.30', '432.69', '480.76', '576.92',
+    '721.15', '769.23', '951.92', '1057.69', '1923.07', '2115.38', '2403.84', '3846.15',
 ]
 VOUCHERS = {"mtn": MTN_VOUCHERS, "syriatel": SYRIATEL_VOUCHERS}
 
@@ -121,13 +124,13 @@ def test_voucher_values_are_exact_per_operator(lang: str) -> None:
 def test_syriatel_decimals_keep_their_exact_strings() -> None:
     html = render()
     assert 'data-amount="62.50"' in html
-    assert 'data-amount="4.81"' in html
+    assert 'data-amount="4.80"' in html
     # No value is re-rendered through a float (62.50 -> 62.5).
     group = voucher_groups(html)["syriatel"][1]
     assert "62.5" not in group
     # Every voucher is a whole number of cents once read as a decimal string.
     assert Decimal("62.50") * 100 == 6250
-    assert Decimal("4.81") * 100 == 481
+    assert Decimal("4.80") * 100 == 480
     for value in SYRIATEL_VOUCHERS:
         cents = Decimal(value) * 100
         assert cents == cents.to_integral_value(), value
@@ -237,17 +240,17 @@ def test_voucher_selection_fills_custom_amount_summary_and_payload() -> None:
     result = run_pos(
         [
             {"values": {"operator": "syriatel"}, "id": "operator", "event": "change"},
-            {"voucher": {"operator": "syriatel", "amount": "4.81"}},
+            {"voucher": {"operator": "syriatel", "amount": "4.80"}},
             {"values": {"phone": "0933123456"}, "id": "charge-form", "event": "submit"},
         ]
     )
-    assert result["elements"]["amount"]["value"] == "4.81"
+    assert result["elements"]["amount"]["value"] == "4.80"
     assert result["elements"]["amount"]["invalid"] == ""
-    assert result["elements"]["summary-amount"]["text"] == "4.81"
-    assert result["elements"]["summary-net"]["text"] == "5.05"
+    assert result["elements"]["summary-amount"]["text"] == "4.8"
+    assert result["elements"]["summary-net"]["text"] == "5.04"
     pressed = [voucher for voucher in result["vouchers"] if voucher["pressed"] == "true"]
     assert [(voucher["operator"], voucher["amount"]) for voucher in pressed] == [
-        ("syriatel", "4.81")
+        ("syriatel", "4.80")
     ]
     assert "bg-blue-950" in pressed[0]["classes"]
     assert "bg-white" not in pressed[0]["classes"]
@@ -256,7 +259,7 @@ def test_voucher_selection_fills_custom_amount_summary_and_payload() -> None:
         "customer_phone": "0933123456",
         "operator_code": "syriatel",
         "service_code": "prepaid",
-        "amount_cents": 481,
+        "amount_cents": 480,
     }
 
 
@@ -330,8 +333,8 @@ def test_switching_service_back_to_prepaid_restores_the_operator_vouchers() -> N
 @pytest.mark.parametrize(
     ("operator_code", "phone", "amount_cents", "ussd_suffix"),
     [
-        ("syriatel", "0933123456", 481, "*4.81*0933123456*0933123456#"),
-        ("syriatel", "0933123456", 6250, "*62.5*0933123456*0933123456#"),
+        ("syriatel", "0933123456", 480, "*480*0933123456*0933123456#"),
+        ("syriatel", "0933123456", 6250, "*6250*0933123456*0933123456#"),
         ("mtn", "0944123456", 300_000, "*3000#"),
         ("mtn", "0944123456", 5000, "*50#"),
     ],
@@ -379,7 +382,7 @@ def test_postpaid_custom_amount_still_posts(client) -> None:
     )
     assert response.status_code == 200
     assert response.json()["amount_cents"] == 12_345
-    assert response.json()["ussd_string"] == "*150*1*67858*5*123.45*0933123456*0933123456#"
+    assert response.json()["ussd_string"] == "*150*1*67858*5*12345*0933123456*0933123456#"
 
 
 _COMMIT_KEYS = itertools.count(1)

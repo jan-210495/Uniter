@@ -40,7 +40,7 @@ def test_patterns_match_generator_and_configured_domains(client, lang, domains, 
             for key, pattern in found.items():
                 operator, service = key.split('-')
                 assert pattern.count('{phone}') == (1 if operator == 'mtn' else 2)
-                expected = pattern.format(phone='0944123456', amount=format(Decimal(amount) / Decimal(100), 'f'))
+                expected = pattern.format(phone='0944123456', amount=str(amount) if operator == 'syriatel' else format(Decimal(amount) / Decimal(100), 'f'))
                 assert await generate_ussd(db, operator, service, '0944123456', amount) == expected
             assert [o.ussd_prefix for o in (await db.scalars(select(Operator).order_by(Operator.code))).all()] == ['100', '555']
             assert all(s.ussd_suffix == 'amountphone#' for s in (await db.scalars(select(Service))).all())

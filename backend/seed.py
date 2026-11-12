@@ -141,8 +141,9 @@ async def generate_ussd(
     Syriatel: *150*1*{domain}*{mode}*{amount}*{phone}*{phone}#  (mode 1 prepaid / 5 postpaid)
 
     The domain segments come from the MTN_DOMAIN / SYRIATEL_DOMAIN settings and
-    fall back to the defaults when not stored. Amounts render in tens of cents
-    (5000 cents -> 500), keeping a single decimal digit when not divisible.
+    fall back to the defaults when not stored. MTN renders the decimal amount
+    (5000 cents -> 50). Syriatel serializes the integer cents as digits
+    (43269 cents -> 43269); display amounts and accounting remain unchanged.
     """
     operator = await session.scalar(select(Operator).where(Operator.code == operator_code))
     if operator is None:
@@ -172,7 +173,7 @@ async def generate_ussd(
             raise ValueError(f"Unsupported service code for USSD: {service_code}")
         domain = await get_setting(session, "SYRIATEL_DOMAIN", DEFAULT_SYRIATEL_DOMAIN)
         assert domain is not None
-        return f"*150*1*{domain}*{mode}*{amount}*{phone}*{phone}#"
+        return f"*150*1*{domain}*{mode}*{amount_cents}*{phone}*{phone}#"
 
     raise ValueError(f"Unsupported operator for USSD: {operator_code}")
 
