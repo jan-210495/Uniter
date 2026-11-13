@@ -1,6 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from pathlib import Path
+import sys
+from importlib.metadata import version
+
+# Hidden imports cannot install absent dependencies. Fail the build rather than
+# shipping a windowed executable with no way to exit it from the tray.
+for distribution in ("pystray", "Pillow"):
+    version(distribution)  # Raises PackageNotFoundError when not installed.
+
+if sys.platform == "win32":
+    from pystray import _win32  # Verify the actual Windows backend imports.
+    from PIL import Image, ImageDraw
 
 block_cipher = None
 
@@ -45,6 +56,8 @@ hiddenimports = [
     "PIL.Image",
     "PIL.ImageDraw",
 ]
+if sys.platform == "win32":
+    hiddenimports.extend(["pystray._win32", "pystray._util.win32", "PIL._imaging"])
 
 a = Analysis(
     ["backend/desktop.py"],
@@ -61,6 +74,15 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
+if sys.platform == "win32":
+    bundled_modules = {entry[0] for entry in a.pure}
+    required = {"pystray", "pystray._win32", "pystray._util.win32", "PIL.Image", "PIL.ImageDraw"}
+    missing = required - bundled_modules
+    if missing:
+        raise RuntimeError(f"Tray modules missing from Windows bundle: {sorted(missing)}")
+    if not any("_imaging" in entry[0] for entry in a.binaries):
+        raise RuntimeError("Pillow native imaging extension missing from Windows bundle")
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

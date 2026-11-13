@@ -1,0 +1,31 @@
+name: Desktop verification (no publishing)
+
+on:
+  push:
+    branches: [fix/windows-tray-lan-v1.0.3]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+      - name: Desktop regression tests (mocked UI)
+        run: python -m pytest backend/test_desktop.py -v
+      - name: Build and verify Windows tray bundle
+        run: python scripts/build_exe.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop-verification
+          path: dist/uniter-server/
+          if-no-files-found: error

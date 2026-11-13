@@ -101,7 +101,7 @@ def ensure_default_data() -> None:
 
 
 # ---------------------------------------------------------------------------
-# System tray (pystray + Pillow, degrades gracefully when unavailable)
+# System tray (required for Windows GUI launches; optional in headless mode)
 # ---------------------------------------------------------------------------
 
 try:  # Optional dependency: only required for the GUI tray icon.
@@ -324,6 +324,15 @@ class TrayLauncher:
         self.title = title
         self._icon = None
         self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+        self._startup = threading.Event()
+        self._backend_ready = False
+        self._visible = False
+        self._stopping = False
+        self._exit_called = False
+        self._icon_stop_called = False
+        self._setup_thread = None
+        self.error: Exception | None = None
 
     @property
     def available(self) -> bool:
@@ -370,67 +379,167 @@ class TrayLauncher:
         return result
 
     def request_exit(self, icon=None, item=None) -> None:
-        logger.info("Exit requested from the system tray; shutting down Uniter")
-        if self.on_exit is not None:
+        with self._lock:
+            notify = not self._exit_called
+            self._exit_called = True
+            self._stopping = True
+        if notify and self.on_exit is not None:
             try:
                 self.on_exit()
             except Exception:
                 logger.exception("on_exit callback raised during tray exit")
-        target = icon if icon is not None else self._icon
-        if target is not None:
-            try:
-                target.stop()
-            except Exception:
-                logger.exception("Failed to stop the tray icon cleanly")
+        self._stop_icon()
+
+    def _stop_icon(self) -> None:
+        # pystray.stop() before _mark_ready() is a no-op. Defer it until
+        # setup runs, and never hold our lock while it joins the setup thread.
+        with self._lock:
+            if not self._backend_ready or self._icon_stop_called:
+                return
+            self._icon_stop_called = True
+            icon = self._icon
+        try:
+            icon.stop()
+        except Exception as exc:
+            self._fail(exc)
+
+    def _fail(self, error: Exception) -> None:
+        with self._lock:
+            if self.error is None:
+                self.error = error
+                logger.error("System tray failed: %s", error)
+        self._startup.set()
+        self.request_exit()
 
     def _build_icon(self):
         image = build_icon_image()
         menu = pystray.Menu(  # type: ignore[attr-defined]
-            pystray.MenuItem(MENU_OPEN_LABEL, self.open_browser, default=True),  # type: ignore[attr-defined]
-            pystray.MenuItem(MENU_HEALTH_LABEL, self.log_health_status),  # type: ignore[attr-defined]
-            pystray.Menu.SEPARATOR,  # type: ignore[attr-defined]
-            pystray.MenuItem(MENU_EXIT_LABEL, self.request_exit),  # type: ignore[attr-defined]
+            pystray.MenuItem(MENU_OPEN_LABEL, self.open_browser, default=True),
+            pystray.MenuItem(MENU_HEALTH_LABEL, self.log_health_status),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(MENU_EXIT_LABEL, self.request_exit),
         )
-        return pystray.Icon("uniter", image, self.title, menu)  # type: ignore[attr-defined]
+        icon_class = pystray.Icon
+        if sys.platform == "win32":
+            launcher = self
 
-    def start(self) -> threading.Thread | None:
-        """Start the tray icon loop in a daemon thread."""
+            class WindowsIcon(pystray.Icon):
+                # pystray 0.19.5 dispatches WM_LBUTTONUP to self(); leave
+                # WM_RBUTTONUP untouched so it still opens the native menu.
+                def __call__(self):
+                    launcher.open_browser()
+
+                def _show(self):
+                    # 0.19.5 ignores Shell_NotifyIconW's BOOL result. Check
+                    # registration explicitly; visible=True alone is not proof.
+                    import ctypes
+                    from pystray._util import win32
+
+                    self._assert_icon_handle()
+                    if not win32.Shell_NotifyIcon(win32.NIM_ADD, win32.NOTIFYICONDATAW(
+                        cbSize=ctypes.sizeof(win32.NOTIFYICONDATAW),
+                        hWnd=self._hwnd, hID=id(self),
+                        uFlags=win32.NIF_MESSAGE | win32.NIF_ICON | win32.NIF_TIP,
+                        uCallbackMessage=win32.WM_NOTIFY,
+                        hIcon=self._icon_handle, szTip=self.title,
+                    )):
+                        raise RuntimeError("Windows could not register the Uniter tray icon")
+
+                def _on_taskbarcreated(self, wparam, lparam):
+                    try:
+                        return super()._on_taskbarcreated(wparam, lparam)
+                    except Exception as error:
+                        launcher._fail(error)
+
+            icon_class = WindowsIcon
+        return icon_class("uniter", image, self.title, menu)
+
+    def _setup(self, icon) -> None:
+        try:
+            with self._lock:
+                self._setup_thread = threading.current_thread()
+                stopping = self._stopping
+            # Native shell calls must not hold our lock: a hung shell must not
+            # prevent the startup timeout or an Exit request from taking effect.
+            if not stopping:
+                icon.visible = True
+                if not icon.visible:
+                    raise RuntimeError("System tray icon did not become visible")
+                with self._lock:
+                    self._visible = True
+        except Exception as exc:
+            self._fail(exc)
+        finally:
+            # Defer stop until visibility registration completes, so a racing
+            # Exit cannot stop the loop and then leave a newly registered icon.
+            with self._lock:
+                self._backend_ready = True
+                stopping = self._stopping
+            if stopping:
+                self._stop_icon()
+            self._startup.set()
+
+    def start(self, timeout: float = 10.0) -> threading.Thread | None:
+        """Wait for a visible icon, cancellation, or an explicit startup error."""
         if not self.available:
-            logger.info(
-                "System tray disabled (%s); continuing without tray icon",
-                self.unavailable_reason(),
-            )
+            reason = self.unavailable_reason()
+            if sys.platform == "win32":
+                error = RuntimeError(f"System tray unavailable: {reason}. Use --no-tray for server mode.")
+                self._fail(error)
+                raise error
+            logger.info("System tray disabled (%s); continuing without tray icon", reason)
             return None
-        if self._thread is not None and self._thread.is_alive():
-            return self._thread
 
         def _run() -> None:
             try:
-                self._icon = self._build_icon()
-                self._icon.run()  # type: ignore[attr-defined]
-            except Exception:
-                logger.exception("System tray loop terminated with an error")
+                icon = self._build_icon()
+                with self._lock:
+                    self._icon = icon
+                    if self._stopping:
+                        return
+                icon.run(setup=self._setup)
+                with self._lock:
+                    unexpected = not self._stopping
+                if unexpected:
+                    self._fail(RuntimeError("System tray loop exited unexpectedly"))
+            except Exception as exc:
+                self._fail(exc)
             finally:
-                self._icon = None
+                self._startup.set()
 
-        self._thread = threading.Thread(target=_run, name="uniter-tray", daemon=True)
-        self._thread.start()
-        logger.info("System tray icon started (%s)", self.url)
-        return self._thread
+        with self._lock:
+            if self._stopping:
+                return None
+            if self._thread is None:
+                self._thread = threading.Thread(target=_run, name="uniter-tray", daemon=True)
+                self._thread.start()
+            thread = self._thread
+        if not self._startup.wait(timeout):
+            self._fail(RuntimeError("Timed out waiting for the system tray icon to become visible"))
+        with self._lock:
+            error, visible, stopping = self.error, self._visible, self._stopping
+        if error is not None:
+            raise RuntimeError(f"Unable to run the system tray: {error}") from error
+        if stopping:
+            return None
+        if not visible:
+            error = RuntimeError("System tray stopped before becoming visible")
+            self._fail(error)
+            raise error
+        logger.info("System tray icon visible (%s)", self.url)
+        return thread
 
     def stop(self, timeout: float = 5.0) -> None:
-        """Stop the tray icon loop and join its thread. Never raises."""
-        icon = self._icon
-        if icon is not None:
-            try:
-                icon.stop()  # type: ignore[attr-defined]
-            except Exception:
-                pass
-        thread = self._thread
-        if thread is not None and thread.is_alive():
+        """Request a one-shot stop, including before readiness; avoid self-join."""
+        with self._lock:
+            self._stopping = True
+            thread = self._thread
+            setup_thread = self._setup_thread
+        self._stop_icon()
+        # The backend may itself wait for setup, so setup must not join it.
+        if (thread is not None and thread.is_alive()
+                and threading.current_thread() not in (thread, setup_thread)):
             thread.join(timeout=timeout)
-        self._icon = None
-        self._thread = None
 
 
 # ---------------------------------------------------------------------------
@@ -459,8 +568,8 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--host",
-        default="127.0.0.1",
-        help="Host interface to bind (default: 127.0.0.1)",
+        default="0.0.0.0",
+        help="Host interface to bind (default: 0.0.0.0, all IPv4 interfaces)",
     )
     parser.add_argument(
         "--port",
@@ -496,8 +605,10 @@ def main(args: list[str] | None = None) -> int:
         logger.error("Uniter cannot start: %s", error)
         return 1
 
-    target_host = "127.0.0.1" if parsed.host in ("0.0.0.0", "") else parsed.host
-    app_url = f"http://{target_host}:{parsed.port}"
+    bind_host = parsed.host.removeprefix("[").removesuffix("]")
+    target_host = {"0.0.0.0": "127.0.0.1", "": "127.0.0.1", "::": "::1"}.get(bind_host, bind_host)
+    url_host = f"[{target_host}]" if ":" in target_host else target_host
+    app_url = f"http://{url_host}:{parsed.port}"
 
     guard = SingleInstanceGuard()
     if not guard.acquire():
@@ -512,12 +623,7 @@ def main(args: list[str] | None = None) -> int:
             logger.error("Port %s is already in use", parsed.port)
             return 1
 
-        if not parsed.no_browser:
-            open_browser(app_url)
-
-        import uvicorn
-
-        config = uvicorn.Config(app, host=parsed.host, port=parsed.port, log_level="info")
+        config = uvicorn.Config(app, host=bind_host, port=parsed.port, log_level="info")
         server = uvicorn.Server(config)
 
         tray = None
@@ -525,14 +631,39 @@ def main(args: list[str] | None = None) -> int:
             tray = TrayLauncher(url=app_url, on_exit=lambda: request_server_stop(server))
             tray.start()
 
-        try:
+        if not server.should_exit:
+            if not parsed.no_browser:
+                open_browser(app_url)
             server.run()
-        finally:
+        if tray is not None and tray.error is not None:
+            raise RuntimeError(f"System tray failed: {tray.error}") from tray.error
+        return 0
+    except Exception as error:
+        report_desktop_error(error)
+        return 1
+    finally:
+        try:
+            request_server_stop(server)
             if tray is not None:
                 tray.stop()
-        return 0
-    finally:
-        guard.release()
+        finally:
+            guard.release()
+
+
+def report_desktop_error(error: Exception) -> None:
+    """Windowed Windows builds have no console, so make fatal errors visible."""
+    logger.error("Uniter cannot continue: %s", error, exc_info=True)
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(
+                None, f"Uniter could not continue.\n\n{error}\n\n"
+                "If you deliberately want server-only mode, launch with --no-tray.",
+                "Uniter — Desktop error", 0x10,
+            )
+        except Exception:
+            logger.exception("Could not display the desktop error dialog")
 
 
 def request_server_stop(server) -> None:
@@ -545,9 +676,11 @@ def is_port_in_use(host: str, port: int, timeout: float = 0.5) -> bool:
     """Return True if a process is already accepting TCP connections on host:port."""
     import socket
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(timeout)
-        return sock.connect_ex((host, port)) == 0
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 if __name__ == "__main__":
