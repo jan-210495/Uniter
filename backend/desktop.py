@@ -445,6 +445,12 @@ class TrayLauncher:
                     )):
                         raise RuntimeError("Windows could not register the Uniter tray icon")
 
+                def _on_display_change(self, wparam, lparam):
+                    try:
+                        return super()._on_display_change(wparam, lparam)
+                    except Exception as error:
+                        launcher._fail(error)
+
                 def _on_taskbarcreated(self, wparam, lparam):
                     try:
                         return super()._on_taskbarcreated(wparam, lparam)

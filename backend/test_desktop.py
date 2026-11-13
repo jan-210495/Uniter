@@ -380,15 +380,16 @@ def test_windows_shell_registration_result_is_checked(desktop, monkeypatch, acce
     assert fields.call_args.kwargs["hIcon"] == 456
 
 
-def test_explorer_restart_registration_failure_requests_shutdown(desktop, monkeypatch):
+@pytest.mark.parametrize("event", ["_on_taskbarcreated", "_on_display_change"])
+def test_shell_event_registration_failure_requests_shutdown(desktop, monkeypatch, event):
     def restart(icon, wparam, lparam):
-        raise RuntimeError("Explorer registration failed")
-    monkeypatch.setattr(FakeIcon, "_on_taskbarcreated", restart, raising=False)
+        raise RuntimeError("Shell registration failed")
+    monkeypatch.setattr(FakeIcon, event, restart, raising=False)
     callback = Mock()
     launcher = desktop.TrayLauncher(on_exit=callback)
     icon = launcher._build_icon()
-    icon._on_taskbarcreated(0, 0)
-    assert str(launcher.error) == "Explorer registration failed"
+    getattr(icon, event)(0, 0)
+    assert str(launcher.error) == "Shell registration failed"
     callback.assert_called_once_with()
 
 
