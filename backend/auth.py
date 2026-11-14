@@ -16,11 +16,14 @@ Design notes
   cookie. A cross-origin ``Origin`` header is always rejected.
 * A single app-wide dependency (:func:`authorize_request`) classifies every
   routed request, so new routes are protected by default.
-* The bootstrap ``admin``/``admin`` account is created exactly once, under a
-  write lock, the first time an initialised database is opened. A marker row
-  in ``schema_migrations`` makes the bootstrap permanent history: it is never
-  recreated or reset on later startups, and the temporary password must be
-  replaced before anything else is reachable.
+* There is no shared default credential. A database with no account and no
+  initialisation marker shows a one-time ``/setup`` page where the first
+  person to open the app chooses the ``admin`` password. Setup runs under a
+  write lock (``BEGIN IMMEDIATE``) and records ``INITIALIZED_MARKER`` in
+  ``schema_migrations`` in the same transaction as the account, so it happens
+  exactly once and can never be reopened. An initialised database without an
+  active admin fails closed (503) instead of reopening setup; recovery needs
+  local access to the database (see the README).
 """
 from __future__ import annotations
 
@@ -73,17 +76,27 @@ PASSWORD_MAX_LENGTH = 256
 _SUBMITTED_SECRET_MAX_LENGTH = 1024
 _FORM_BODY_MAX_BYTES = 16 * 1024
 
-#: The documented first-run credential. It only ever exists as a hash with
-#: ``must_change_password`` set, and the bootstrap runs once per database.
-BOOTSTRAP_USERNAME = "admin"
-BOOTSTRAP_PASSWORD = "admin"
+#: Username of the account created by first-run setup (fixed in this slice).
+INITIAL_ADMIN_USERNAME = "admin"
 AUTH_SCHEMA_VERSION = "v1.0.4-auth-foundation"
-BOOTSTRAP_MARKER = "v1.0.4-auth-bootstrap-admin"
+#: Recorded when the database is initialised: by ``/setup`` (with the first
+#: account, atomically) or at startup when accounts already exist. Once
+#: present, setup never opens again, even if every account later disappears.
+INITIALIZED_MARKER = "v1.0.4-auth-initialized"
+#: Written by earlier v1.0.4 review builds that created a bootstrap account.
+#: Only read: such a database counts as initialised and keeps its accounts.
+LEGACY_BOOTSTRAP_MARKER = "v1.0.4-auth-bootstrap-admin"
+_INITIALISED_MARKERS = (INITIALIZED_MARKER, LEGACY_BOOTSTRAP_MARKER)
+
+#: First-run states, see :func:`setup_state`.
+SETUP_REQUIRED = "setup-required"
+SETUP_READY = "ready"
+SETUP_LOCKED = "locked"
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 #: Routed paths reachable without a session. ``/static`` is a mounted
 #: sub-application and never passes through route dependencies.
-PUBLIC_PATHS = frozenset({"/", "/api/health", "/manifest.webmanifest", "/login", "/logout"})
+PUBLIC_PATHS = frozenset({"/", "/api/health", "/manifest.webmanifest", "/login", "/logout", "/setup"})
 #: Paths a session that must change its password may still use.
 PENDING_CHANGE_PATHS = frozenset({"/change-password"})
 
@@ -162,35 +175,61 @@ def normalize_username(raw: str) -> str:
     return unicodedata.normalize("NFKC", raw).strip().casefold()
 
 
-def password_problem(user: User, current: str, new: str, confirm: str) -> str | None:
-    """Return a message key for an unacceptable new password, else ``None``."""
+def new_password_problem(username: str, new: str, confirm: str) -> str | None:
+    """Message key for an unacceptable new password (length, match, username)."""
     if len(new) < PASSWORD_MIN_LENGTH:
         return "too_short"
     if len(new) > PASSWORD_MAX_LENGTH:
         return "too_long"
     if new != confirm:
         return "mismatch"
-    if new == current:
-        return "unchanged"
-    if normalize_username(new) in {BOOTSTRAP_PASSWORD, user.username}:
+    if normalize_username(new) == username:
         return "too_weak"
     return None
 
 
+def password_problem(user: User, current: str, new: str, confirm: str) -> str | None:
+    """Return a message key for an unacceptable new password, else ``None``."""
+    problem = new_password_problem(user.username, new, confirm)
+    if problem in {"too_short", "too_long", "mismatch"}:
+        return problem
+    if new == current:
+        return "unchanged"
+    return problem
+
+
 # ---------------------------------------------------------------------------
-# Schema + one-time bootstrap
+# Schema, initialisation state and one-time setup
 # ---------------------------------------------------------------------------
 
 _AUTH_TABLES = (User.__table__, UserSession.__table__, LoginAttempt.__table__)
+_SCHEMA_MIGRATIONS_DDL = (
+    "CREATE TABLE IF NOT EXISTS schema_migrations "
+    "(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+)
+
+
+async def _has_marker(connection, versions=_INITIALISED_MARKERS) -> bool:
+    has_table = (await connection.execute(text(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
+    ))).scalar() is not None
+    if not has_table:
+        return False
+    placeholders = ", ".join(f":v{index}" for index in range(len(versions)))
+    return (await connection.execute(
+        text(f"SELECT 1 FROM schema_migrations WHERE version IN ({placeholders}) LIMIT 1"),
+        {f"v{index}": version for index, version in enumerate(versions)},
+    )).scalar() is not None
 
 
 async def migrate_auth_schema(target_engine) -> bool:
-    """Install auth tables and the one-time bootstrap admin under a write lock.
+    """Install the auth tables under a write lock; never create an account.
 
     Follows the guarded-migration contract of the other startup steps: an
     uninitialised file (no ``transactions`` table) is left untouched, and the
-    whole step commits atomically or not at all. The bootstrap admin is only
-    created when no account exists *and* no bootstrap has ever been recorded.
+    whole step commits atomically or not at all. A database that already has
+    accounts (or was bootstrapped by an earlier v1.0.4 build) is recorded as
+    initialised, so first-run setup can never open on it.
     """
     async with target_engine.connect() as connection:
         await connection.exec_driver_sql("BEGIN IMMEDIATE")
@@ -205,37 +244,88 @@ async def migrate_auth_schema(target_engine) -> bool:
             await connection.run_sync(
                 lambda sync: User.metadata.create_all(sync, tables=list(_AUTH_TABLES), checkfirst=True)
             )
-            await connection.exec_driver_sql(
-                "CREATE TABLE IF NOT EXISTS schema_migrations "
-                "(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-            )
+            await connection.exec_driver_sql(_SCHEMA_MIGRATIONS_DDL)
             await connection.execute(
                 text("INSERT OR IGNORE INTO schema_migrations(version) VALUES (:version)"),
                 {"version": AUTH_SCHEMA_VERSION},
             )
-            bootstrapped = (await connection.execute(
-                text("SELECT 1 FROM schema_migrations WHERE version = :version"),
-                {"version": BOOTSTRAP_MARKER},
-            )).scalar() is not None
-            if not bootstrapped:
+            if not await _has_marker(connection, (INITIALIZED_MARKER,)):
                 accounts = (await connection.execute(select(func.count()).select_from(User))).scalar_one()
-                if accounts == 0:
-                    await connection.execute(User.__table__.insert().values(
-                        username=BOOTSTRAP_USERNAME,
-                        password_hash=hash_password(BOOTSTRAP_PASSWORD),
-                        role="admin",
-                        is_active=True,
-                        must_change_password=True,
-                    ))
+                if accounts or await _has_marker(connection, (LEGACY_BOOTSTRAP_MARKER,)):
+                    await connection.execute(
+                        text("INSERT INTO schema_migrations(version) VALUES (:version)"),
+                        {"version": INITIALIZED_MARKER},
+                    )
                     changed = True
-                # Recorded even when accounts already exist, so the bootstrap
-                # can never run later on this database.
-                await connection.execute(
-                    text("INSERT OR IGNORE INTO schema_migrations(version) VALUES (:version)"),
-                    {"version": BOOTSTRAP_MARKER},
-                )
             await connection.commit()
             return changed
+        except Exception:
+            await connection.rollback()
+            raise
+
+
+async def setup_state(db: AsyncSession) -> str:
+    """Classify the database for first-run handling (read-only).
+
+    * ``SETUP_READY`` — at least one active admin exists;
+    * ``SETUP_REQUIRED`` — no account and no initialisation marker: ``/setup``;
+    * ``SETUP_LOCKED`` — initialised (accounts or a marker) but no active admin:
+      fail closed; setup is never reopened as an unauthenticated takeover.
+    """
+    active_admin = await db.scalar(
+        select(User.id).where(User.role == "admin", User.is_active.is_(True)).limit(1)
+    )
+    if active_admin is not None:
+        return SETUP_READY
+    if await db.scalar(select(User.id).limit(1)) is not None:
+        return SETUP_LOCKED
+    connection = await db.connection()
+    return SETUP_LOCKED if await _has_marker(connection) else SETUP_REQUIRED
+
+
+async def initialize_admin(target_engine, password_hash: str) -> str | None:
+    """Create the first admin and its session atomically, exactly once.
+
+    Runs under ``BEGIN IMMEDIATE`` and re-checks inside the lock, so of two
+    concurrent submissions exactly one succeeds. Returns the new session
+    token, or ``None`` (writing nothing) when the database is already
+    initialised. Only the given hash is stored; the password never reaches
+    this function.
+    """
+    async with target_engine.connect() as connection:
+        await connection.exec_driver_sql("BEGIN IMMEDIATE")
+        try:
+            accounts = (await connection.execute(select(func.count()).select_from(User))).scalar_one()
+            if accounts or await _has_marker(connection):
+                await connection.rollback()
+                return None
+            now = utc_now()
+            result = await connection.execute(User.__table__.insert().values(
+                username=INITIAL_ADMIN_USERNAME,
+                password_hash=password_hash,
+                role="admin",
+                is_active=True,
+                must_change_password=False,
+                password_changed_at=now,
+                created_at=now,
+                updated_at=now,
+            ))
+            user_id = result.inserted_primary_key[0]
+            await connection.exec_driver_sql(_SCHEMA_MIGRATIONS_DDL)
+            await connection.execute(
+                text("INSERT INTO schema_migrations(version) VALUES (:version)"),
+                {"version": INITIALIZED_MARKER},
+            )
+            token = secrets.token_urlsafe(32)
+            await connection.execute(UserSession.__table__.insert().values(
+                token_hash=_digest(token),
+                user_id=user_id,
+                created_at=now,
+                last_seen_at=now,
+                expires_at=now + SESSION_ABSOLUTE_LIFETIME,
+            ))
+            await connection.commit()
+            return token
         except Exception:
             await connection.rollback()
             raise
@@ -351,6 +441,14 @@ def _tokens_match(supplied: str | None, expected: str | None) -> bool:
     if not supplied or not expected:
         return False
     return hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
+
+
+def _form_token(request: Request, *, rotate: bool = False) -> str:
+    """Double-submit token for the pre-session forms (sign-in and setup)."""
+    existing = request.cookies.get(LOGIN_CSRF_COOKIE)
+    if existing and 32 <= len(existing) <= 64 and not rotate:
+        return existing
+    return secrets.token_urlsafe(32)
 
 
 def _origin_allowed(request: Request) -> bool:
@@ -469,6 +567,19 @@ async def authorize_request(request: Request, db: AsyncSession = Depends(get_db)
         return
     unsafe = request.method not in SAFE_METHODS
     api = path.startswith("/api/")
+    state = await setup_state(db)
+    if state != SETUP_READY:
+        await db.commit()
+        if state == SETUP_LOCKED:
+            # Initialised but no active admin: fail closed for everyone, even
+            # existing sessions, until access is recovered locally.
+            if api or unsafe:
+                raise HTTPException(status_code=503, detail="Service unavailable")
+            raise AuthRedirect(_with_lang("/setup", _language(request)))
+        # Before setup no account exists, so nobody can be signed in.
+        if api or unsafe:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        raise AuthRedirect(_with_lang("/setup", _language(request)))
     context = await load_session(db, request.cookies.get(SESSION_COOKIE))
     # End the gate's read transaction so the route starts on a clean session.
     await db.commit()
@@ -559,10 +670,21 @@ PASSWORD_MESSAGES = {
         "يجب أن تختلف كلمة المرور الجديدة عن الحالية.",
     ),
     "too_weak": (
-        "Choose a password that is not the username or the temporary password.",
-        "اختر كلمة مرور مختلفة عن اسم المستخدم وعن كلمة المرور المؤقتة.",
+        "Choose a password that is not the username.",
+        "اختر كلمة مرور مختلفة عن اسم المستخدم.",
     ),
     "throttled": LOGIN_MESSAGES["throttled"],
+}
+
+SETUP_MESSAGES = {
+    "expired": (
+        "This setup form expired. Please try again.",
+        "انتهت صلاحية نموذج الإعداد. يرجى المحاولة مجدداً.",
+    ),
+    "too_short": PASSWORD_MESSAGES["too_short"],
+    "too_long": PASSWORD_MESSAGES["too_long"],
+    "mismatch": PASSWORD_MESSAGES["mismatch"],
+    "too_weak": PASSWORD_MESSAGES["too_weak"],
 }
 
 
@@ -580,8 +702,7 @@ def create_router(templates: Jinja2Templates) -> APIRouter:
         request: Request, lang: str, *, status: int = 200, error: str | None = None,
         username: str = "", next_path: str | None = None,
     ) -> Response:
-        existing = request.cookies.get(LOGIN_CSRF_COOKIE)
-        token = existing if existing and 32 <= len(existing) <= 64 and error != "expired" else secrets.token_urlsafe(32)
+        token = _form_token(request, rotate=error == "expired")
         response = templates.TemplateResponse(
             request=request,
             name="login.html",
@@ -597,6 +718,40 @@ def create_router(templates: Jinja2Templates) -> APIRouter:
         )
         _set_cookie(response, request, LOGIN_CSRF_COOKIE, token, LOGIN_FORM_LIFETIME)
         return response
+
+    def render_setup(
+        request: Request, lang: str, *, mode: str = "form", status: int = 200, error: str | None = None,
+    ) -> Response:
+        """``mode``: ``form`` (choose the password), ``done`` (already set up)
+        or ``locked`` (initialised without an active admin; fail closed)."""
+        token = _form_token(request, rotate=error == "expired") if mode == "form" else ""
+        response = templates.TemplateResponse(
+            request=request,
+            name="setup.html",
+            status_code=status,
+            context={
+                "lang": lang,
+                "mode": mode,
+                "csrf_token": token,
+                "username": INITIAL_ADMIN_USERNAME,
+                "error": _message(SETUP_MESSAGES, error, lang),
+                "min_length": PASSWORD_MIN_LENGTH,
+                "max_length": PASSWORD_MAX_LENGTH,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+        if mode == "form":
+            _set_cookie(response, request, LOGIN_CSRF_COOKIE, token, LOGIN_FORM_LIFETIME)
+        return response
+
+    async def first_run_redirect(request: Request, db: AsyncSession, lang: str) -> Response | None:
+        """Send every sign-in to ``/setup`` until the database is ready."""
+        state = await setup_state(db)
+        await db.commit()
+        if state == SETUP_READY:
+            return None
+        return RedirectResponse(_with_lang("/setup", lang), status_code=303,
+                                headers={"Cache-Control": "no-store"})
 
     def render_change(
         request: Request, context: AuthContext, lang: str, *, status: int = 200, error: str | None = None,
@@ -625,6 +780,8 @@ def create_router(templates: Jinja2Templates) -> APIRouter:
     @router.get("/login", response_class=HTMLResponse)
     async def login_page(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
         lang = _language(request)
+        if (redirect := await first_run_redirect(request, db, lang)) is not None:
+            return redirect
         next_path = safe_next(request.query_params.get("next"))
         context = await load_session(db, request.cookies.get(SESSION_COOKIE))
         if context is not None:
@@ -639,6 +796,8 @@ def create_router(templates: Jinja2Templates) -> APIRouter:
     async def login_submit(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
         form = await read_form(request)
         lang = _language(request, form)
+        if (redirect := await first_run_redirect(request, db, lang)) is not None:
+            return redirect  # nothing to sign in to yet (or locked): never processed
         next_path = safe_next(form.get("next"))
         raw_username = form.get("username", "")
         if not _origin_allowed(request) or not _tokens_match(
@@ -662,6 +821,11 @@ def create_router(templates: Jinja2Templates) -> APIRouter:
         if len(password) > _SUBMITTED_SECRET_MAX_LENGTH:
             password = ""
             user = None
+        if len(password) < PASSWORD_MIN_LENGTH:
+            # Every password the app accepts meets the minimum, so a shorter
+            # one can only be the retired shared bootstrap default of an
+            # earlier review build: refuse it like any wrong password.
+            password = ""
         if user is not None and password and verify_password(password, user.password_hash):
             await db.execute(delete(LoginAttempt).where(
                 LoginAttempt.scope == "username", LoginAttempt.key_hash == username_key
@@ -678,12 +842,52 @@ def create_router(templates: Jinja2Templates) -> APIRouter:
             await db.commit()
             return signed_in_redirect(request, token, location)
 
-        if user is None:
+        if user is None or not password:
             _burn_password_check(password)
         await _record_failure(db, username_key, address_key, now)
         await db.commit()
         return render_login(request, lang, status=401, error="invalid",
                             username=raw_username, next_path=next_path)
+
+    @router.get("/setup", response_class=HTMLResponse)
+    async def setup_page(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+        lang = _language(request)
+        state = await setup_state(db)
+        await db.commit()
+        if state == SETUP_READY:
+            return RedirectResponse(_with_lang("/login", lang), status_code=303,
+                                    headers={"Cache-Control": "no-store"})
+        if state == SETUP_LOCKED:
+            return render_setup(request, lang, mode="locked", status=503)
+        return render_setup(request, lang)
+
+    @router.post("/setup", response_class=HTMLResponse)
+    async def setup_submit(request: Request, db: AsyncSession = Depends(get_db)) -> Response:
+        form = await read_form(request)
+        lang = _language(request, form)
+        state = await setup_state(db)
+        await db.commit()
+        if state == SETUP_READY:
+            return render_setup(request, lang, mode="done", status=409)
+        if state == SETUP_LOCKED:
+            return render_setup(request, lang, mode="locked", status=503)
+        if not _origin_allowed(request) or not _tokens_match(
+            form.get(CSRF_FIELD), request.cookies.get(LOGIN_CSRF_COOKIE)
+        ):
+            return render_setup(request, lang, status=403, error="expired")
+
+        new = form.get("new_password", "")
+        confirm = form.get("confirm_password", "")
+        problem = new_password_problem(INITIAL_ADMIN_USERNAME, new, confirm)
+        if problem is not None:
+            return render_setup(request, lang, status=400, error=problem)
+
+        # Hash outside the write lock; the lock itself is held only for the
+        # re-check and the three inserts.
+        token = await initialize_admin(db.bind, hash_password(new))
+        if token is None:  # another submission initialised the database first
+            return render_setup(request, lang, mode="done", status=409)
+        return signed_in_redirect(request, token, _with_lang("/pos", lang))
 
     @router.post("/logout")
     async def logout(request: Request, db: AsyncSession = Depends(get_db)) -> Response:

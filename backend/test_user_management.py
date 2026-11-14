@@ -120,6 +120,8 @@ def seller(admin, seller_account) -> Iterator[TestClient]:
 # ---------------------------------------------------------------------------
 
 def test_anonymous_cannot_reach_user_management(fresh):
+    with TestClient(app) as owner:  # an initialised system with its admin
+        complete_bootstrap(owner)
     with TestClient(app) as anonymous:
         page = anonymous.get("/users", follow_redirects=False)
         assert page.status_code == 303 and page.headers["location"].startswith("/login")

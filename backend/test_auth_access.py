@@ -5,6 +5,7 @@ contract: protected HTML pages redirect to the sign-in page, protected APIs
 answer 401, and only the minimal public surface stays reachable.
 """
 import asyncio
+import secrets
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
@@ -12,7 +13,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import URL, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from backend.database import Base, enable_sqlite_foreign_keys, get_db
+from backend.auth import hash_password
+from backend.database import Base, User, enable_sqlite_foreign_keys, get_db
 from backend.main import app
 from backend.seed import seed_data
 
@@ -63,6 +65,12 @@ def anonymous(tmp_path) -> Iterator[TestClient]:
             await connection.run_sync(Base.metadata.create_all)
         async with sessions() as session:
             await seed_data(session)
+            # An installed system: its admin exists (password random and
+            # unused), so this is the anonymous-visitor contract, not first-run
+            # setup (covered by test_initial_setup).
+            session.add(User(username="admin", password_hash=hash_password(secrets.token_urlsafe(16)),
+                             role="admin", is_active=True, must_change_password=False))
+            await session.commit()
 
     async def override_db() -> AsyncIterator[AsyncSession]:
         async with sessions() as session:

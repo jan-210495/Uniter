@@ -1,4 +1,4 @@
-"""Authentication foundation: bootstrap, sessions, CSRF and throttling.
+"""Authentication foundation: first-run setup, sessions, CSRF and throttling.
 
 Every scenario drives the real entry points (``seed.main``/``init_db``, the
 desktop seed and the web startup upgrade) against a temporary database, then
@@ -7,6 +7,7 @@ talks to the app over HTTP exactly as a browser would.
 import asyncio
 import logging
 import re
+import secrets
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from datetime import timedelta
@@ -22,6 +23,8 @@ from backend.database import LoginAttempt, User, UserSession, get_db
 from backend.main import app
 
 NEW_PASSWORD = "Correct-Horse-42"
+#: Generated per run: the one-time password of a provisioned pending account.
+TEMPORARY = "Temp-" + secrets.token_urlsafe(12)
 CSRF_FIELD = re.compile(r'name="csrf_token" value="([^"]+)"')
 CSRF_META = re.compile(r'<meta name="csrf-token" content="([^"]+)"')
 LOGIN_ERROR = re.compile(r'<p id="login-error"[^>]*>(.*?)</p>', re.S)
@@ -82,6 +85,20 @@ def fresh(env) -> Env:
 
 
 @pytest.fixture
+def pending(fresh) -> Env:
+    """``fresh`` plus an ``admin`` account that must replace its one-time
+    password at first sign-in (the state an admin reset or the documented
+    local recovery leaves behind). Drives the forced-change machinery now that
+    there is no shared bootstrap credential."""
+    async def add(session):
+        session.add(User(username="admin", password_hash=auth.hash_password(TEMPORARY), role="admin",
+                         is_active=True, must_change_password=True))
+        await session.commit()
+    fresh.run(add)
+    return fresh
+
+
+@pytest.fixture
 def client(fresh) -> Iterator[TestClient]:
     with TestClient(app) as test_client:
         yield test_client
@@ -131,8 +148,15 @@ def logout(client: TestClient, token: str):
 
 
 def complete_bootstrap(client: TestClient) -> None:
-    assert login(client, "admin", "admin").headers["location"] == "/change-password"
-    response = change_password(client, "admin", NEW_PASSWORD)
+    """First-run setup: create ``admin`` with NEW_PASSWORD and stay signed in."""
+    page = client.get("/setup")
+    assert page.status_code == 200, page.status_code
+    token = CSRF_FIELD.search(page.text).group(1)
+    response = client.post(
+        "/setup",
+        data={"new_password": NEW_PASSWORD, "confirm_password": NEW_PASSWORD, "csrf_token": token},
+        follow_redirects=False,
+    )
     assert response.status_code == 303 and response.headers["location"] == "/pos"
 
 
@@ -157,7 +181,8 @@ def error_text(response) -> str:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("entry", ["source", "desktop"])
-def test_fresh_initialisation_creates_exactly_one_bootstrap_admin(env, entry):
+def test_fresh_initialisation_creates_no_account(env, entry):
+    """No shared default: the first admin is created by one-time setup only."""
     from backend import desktop
 
     if entry == "source":
@@ -165,19 +190,7 @@ def test_fresh_initialisation_creates_exactly_one_bootstrap_admin(env, entry):
     else:
         asyncio.run(desktop._seed_database())
 
-    users = env.users()
-    assert len(users) == 1
-    admin = users[0]
-    assert admin.username == "admin"
-    assert admin.role == "admin"
-    assert admin.is_active is True
-    assert admin.must_change_password is True
-    # Hashed, salted and never the plaintext.
-    assert admin.password_hash != "admin"
-    assert "admin" not in admin.password_hash
-    assert admin.password_hash.startswith("scrypt$")
-    assert auth.verify_password("admin", admin.password_hash)
-    assert not any(user.role == "seller" for user in users)
+    assert env.users() == []
     assert env.count(UserSession) == 0
 
 
@@ -202,11 +215,11 @@ def test_password_hashes_are_salted_and_verified_in_constant_form():
 
 
 # ---------------------------------------------------------------------------
-# 2 + 7. bootstrap login and the forced password change
+# 2 + 7. a one-time password forces an immediate password change
 # ---------------------------------------------------------------------------
 
-def test_bootstrap_login_forces_an_immediate_password_change(client):
-    response = login(client, "admin", "admin")
+def test_pending_login_forces_an_immediate_password_change(client, pending):
+    response = login(client, "admin", TEMPORARY)
     assert response.status_code == 303
     assert response.headers["location"] == "/change-password"
     assert session_cookie(client)
@@ -235,29 +248,32 @@ def test_bootstrap_login_forces_an_immediate_password_change(client):
     assert client.get("/api/health").status_code == 200
 
 
-def test_forced_change_rejects_weak_or_unchanged_passwords(client, fresh):
-    login(client, "admin", "admin")
+def test_forced_change_rejects_weak_or_unchanged_passwords(client, pending):
+    fresh = pending
+    login(client, "admin", TEMPORARY)
     for current, new, confirm in (
         ("wrong-password", NEW_PASSWORD, NEW_PASSWORD),  # current must be proven
-        ("admin", "admin", "admin"),                    # bootstrap value cannot be kept
-        ("admin", "short", "short"),                    # minimum length
-        ("admin", NEW_PASSWORD, NEW_PASSWORD + "x"),    # confirmation mismatch
+        (TEMPORARY, TEMPORARY, TEMPORARY),              # one-time value cannot be kept
+        (TEMPORARY, "admin", "admin"),                  # the username / minimum length
+        (TEMPORARY, "short", "short"),                  # minimum length
+        (TEMPORARY, NEW_PASSWORD, NEW_PASSWORD + "x"),  # confirmation mismatch
     ):
         response = change_password(client, current, new, confirm)
         assert response.status_code == 400
         assert client.get("/pos", follow_redirects=False).headers["location"].startswith("/change-password")
     assert fresh.users()[0].must_change_password is True
-    assert auth.verify_password("admin", fresh.users()[0].password_hash)
+    assert auth.verify_password(TEMPORARY, fresh.users()[0].password_hash)
 
 
 # ---------------------------------------------------------------------------
-# 3. the bootstrap password is retired once changed
+# 3. the one-time password is retired once changed
 # ---------------------------------------------------------------------------
 
-def test_changing_password_retires_bootstrap_credential(client, fresh):
-    login(client, "admin", "admin")
+def test_changing_password_retires_one_time_credential(client, pending):
+    fresh = pending
+    login(client, "admin", TEMPORARY)
     before_change = session_cookie(client)
-    response = change_password(client, "admin", NEW_PASSWORD)
+    response = change_password(client, TEMPORARY, NEW_PASSWORD)
     assert response.status_code == 303 and response.headers["location"] == "/pos"
     after_change = session_cookie(client)
     assert after_change and after_change != before_change  # rotated, no fixation
@@ -266,13 +282,13 @@ def test_changing_password_retires_bootstrap_credential(client, fresh):
     assert client.get("/api/customers").status_code == 200
     admin = fresh.users()[0]
     assert admin.must_change_password is False
-    assert not auth.verify_password("admin", admin.password_hash)
+    assert not auth.verify_password(TEMPORARY, admin.password_hash)
 
     # The pre-change session id is dead server-side.
     assert with_cookie(client, before_change, "/pos").status_code == 303
 
     client.cookies.clear()
-    failed = login(client, "admin", "admin")
+    failed = login(client, "admin", TEMPORARY)
     assert failed.status_code == 401
     assert session_cookie(client) is None
     ok = login(client, "admin", NEW_PASSWORD)
@@ -280,11 +296,11 @@ def test_changing_password_retires_bootstrap_credential(client, fresh):
     assert client.get("/pos").status_code == 200
 
 
-def test_password_change_signs_out_other_sessions(fresh):
+def test_password_change_signs_out_other_sessions(pending):
     with TestClient(app) as first, TestClient(app) as second:
-        login(first, "admin", "admin")
-        login(second, "admin", "admin")
-        change_password(first, "admin", NEW_PASSWORD)
+        login(first, "admin", TEMPORARY)
+        login(second, "admin", TEMPORARY)
+        change_password(first, TEMPORARY, NEW_PASSWORD)
         assert first.get("/pos").status_code == 200
         assert second.get("/pos", follow_redirects=False).headers["location"].startswith("/login")
 
@@ -301,10 +317,10 @@ def test_login_redirects_only_to_local_paths(client):
 
 
 # ---------------------------------------------------------------------------
-# 4. later startups never recreate or reset the bootstrap account
+# 4. later startups never create or reset an account
 # ---------------------------------------------------------------------------
 
-def test_later_startups_do_not_recreate_or_reset_bootstrap(client, fresh):
+def test_later_startups_do_not_create_or_reset_the_admin(client, fresh):
     from backend import desktop
 
     complete_bootstrap(client)
@@ -321,11 +337,11 @@ def test_later_startups_do_not_recreate_or_reset_bootstrap(client, fresh):
     assert users[0].password_hash == changed_hash
     assert users[0].must_change_password is False
     client.cookies.clear()
-    assert login(client, "admin", "admin").status_code == 401
+    assert login(client, "admin", "admin").status_code == 401  # the retired shared default
     assert login(client, "admin", NEW_PASSWORD).status_code == 303
 
 
-def test_bootstrap_is_never_recreated_even_if_users_disappear(fresh):
+def test_no_account_is_created_even_if_users_disappear(fresh):
     from backend import desktop
 
     async def wipe(session):
@@ -339,8 +355,9 @@ def test_bootstrap_is_never_recreated_even_if_users_disappear(fresh):
     assert fresh.users() == []
 
 
-def test_existing_pre_auth_database_gets_bootstrap_on_upgrade(env):
-    """A v1.0.3 database (no auth tables) gains the one-time admin on startup."""
+def test_existing_pre_auth_database_gets_auth_tables_but_no_account_on_upgrade(env):
+    """A v1.0.3 database (no auth tables) gains the auth schema, not an account:
+    it had no accounts, so its owner chooses the admin password at /setup."""
     async def legacy():
         async with env.engine.begin() as connection:
             await connection.run_sync(database.Base.metadata.create_all)
@@ -348,10 +365,11 @@ def test_existing_pre_auth_database_gets_bootstrap_on_upgrade(env):
                 await connection.exec_driver_sql(f"DROP TABLE {table}")
     asyncio.run(legacy())
     asyncio.run(database.upgrade_existing_database())
-    users = env.users()
-    assert [(u.username, u.role, u.must_change_password) for u in users] == [("admin", "admin", True)]
+    assert env.users() == []
     asyncio.run(database.upgrade_existing_database())
-    assert len(env.users()) == 1
+    assert env.users() == []
+    with TestClient(app) as browser:
+        assert browser.get("/", follow_redirects=True).url.path == "/setup"
 
 
 def test_uninitialised_databases_are_not_bootstrapped(env, tmp_path):
@@ -392,8 +410,9 @@ def test_logout_requires_csrf_token(client, fresh):
     assert fresh.count(UserSession) == 1
 
 
-def test_forced_change_session_can_sign_out(client, fresh):
-    login(client, "admin", "admin")
+def test_forced_change_session_can_sign_out(client, pending):
+    fresh = pending
+    login(client, "admin", TEMPORARY)
     token = form_token(client, "/change-password")
     assert logout(client, token).status_code == 303
     assert fresh.count(UserSession) == 0
@@ -454,31 +473,32 @@ def test_csrf_token_is_bound_to_its_session(fresh):
         assert second.post("/api/customers", json=body, headers={auth.CSRF_HEADER: own}).status_code == 200
 
 
-def test_csrf_rotates_with_the_session(client):
-    login(client, "admin", "admin")
+def test_csrf_rotates_with_the_session(client, pending):
+    login(client, "admin", TEMPORARY)
     before = form_token(client, "/change-password")
-    change_password(client, "admin", NEW_PASSWORD)
+    change_password(client, TEMPORARY, NEW_PASSWORD)
     after = page_token(client)
     assert before != after
     body = {"phone": "0933123456", "name": "Customer"}
     assert client.post("/api/customers", json=body, headers={auth.CSRF_HEADER: before}).status_code == 403
 
 
-def test_login_and_password_forms_require_csrf(client, fresh):
+def test_login_and_password_forms_require_csrf(client, pending):
+    fresh = pending
     client.get("/login")
-    missing = client.post("/login", data={"username": "admin", "password": "admin"}, follow_redirects=False)
+    missing = client.post("/login", data={"username": "admin", "password": TEMPORARY}, follow_redirects=False)
     assert missing.status_code == 403
     forged = client.post(
-        "/login", data={"username": "admin", "password": "admin", "csrf_token": "forged"},
+        "/login", data={"username": "admin", "password": TEMPORARY, "csrf_token": "forged"},
         follow_redirects=False,
     )
     assert forged.status_code == 403
     assert session_cookie(client) is None
 
-    login(client, "admin", "admin")
+    login(client, "admin", TEMPORARY)
     response = client.post(
         "/change-password",
-        data={"current_password": "admin", "new_password": NEW_PASSWORD, "confirm_password": NEW_PASSWORD},
+        data={"current_password": TEMPORARY, "new_password": NEW_PASSWORD, "confirm_password": NEW_PASSWORD},
         follow_redirects=False,
     )
     assert response.status_code == 403
@@ -569,8 +589,9 @@ def _set_cookie(response, name: str) -> str:
     return next(h for h in response.headers.get_list("set-cookie") if h.startswith(f"{name}="))
 
 
-def test_session_cookie_flags_over_http(client, fresh):
-    response = login(client, "admin", "admin")
+def test_session_cookie_flags_over_http(client, pending):
+    fresh = pending
+    response = login(client, "admin", TEMPORARY)
     header = _set_cookie(response, auth.SESSION_COOKIE).lower()
     assert "httponly" in header
     assert "samesite=lax" in header
@@ -583,24 +604,25 @@ def test_session_cookie_flags_over_http(client, fresh):
     assert session_cookie(client) not in fresh.run(hashes)
 
 
-def test_session_cookie_is_secure_over_https(fresh):
+def test_session_cookie_is_secure_over_https(pending):
     with TestClient(app, base_url="https://testserver") as secure:
-        response = login(secure, "admin", "admin")
+        response = login(secure, "admin", TEMPORARY)
         assert response.status_code == 303
         assert "secure" in _set_cookie(response, auth.SESSION_COOKIE).lower()
         assert secure.get("/change-password").status_code == 200
 
 
-def test_secrets_never_reach_the_logs(client, caplog):
+def test_secrets_never_reach_the_logs(client, pending, caplog):
     caplog.set_level(logging.DEBUG)
-    login(client, "admin", "admin")
+    login(client, "admin", TEMPORARY)
     cookie = session_cookie(client)
     token = form_token(client, "/change-password")
-    change_password(client, "admin", NEW_PASSWORD)
+    change_password(client, TEMPORARY, NEW_PASSWORD)
     client.cookies.clear()
     login(client, "admin", "Wrong-Secret-99")
-    for secret in (NEW_PASSWORD, "Wrong-Secret-99", cookie, token):
-        assert secret not in caplog.text
+    leaked = [secret for secret in (TEMPORARY, NEW_PASSWORD, "Wrong-Secret-99", cookie, token)
+              if secret in caplog.text]
+    assert not leaked, f"{len(leaked)} secret(s) reached the logs"
 
 
 def test_no_hardcoded_signing_secret_or_default_password_in_auth_module():

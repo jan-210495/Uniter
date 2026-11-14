@@ -253,8 +253,8 @@ class Setting(Base):
     )
 
 
-#: The only account roles the system supports. Seller accounts are created by
-#: a later slice; this one only bootstraps the initial admin.
+#: The only account roles the system supports. The first admin is created by
+#: one-time setup (``/setup``); admins create sellers on the Users page.
 USER_ROLES = ("admin", "seller")
 
 
@@ -354,7 +354,7 @@ async def _migrate_schema() -> None:
 
 
 async def _migrate_auth(target_engine) -> bool:
-    """Install the auth tables and the one-time bootstrap admin (guarded)."""
+    """Install the auth tables and record initialisation (guarded; never creates accounts)."""
     try:
         from .auth import migrate_auth_schema
     except ImportError:  # pragma: no cover - flat module layout (PyInstaller)
@@ -392,7 +392,7 @@ async def upgrade_existing_database() -> bool:
     if DATABASE_URL.database and os.path.exists(DATABASE_URL.database):
         changed = await migrate_operator_credit_refunds(engine) or changed
         # Runs only after every schema safety check above has passed; it is a
-        # no-op for uninitialised files and never recreates the bootstrap.
+        # no-op for uninitialised files and never creates or changes accounts.
         changed = await _migrate_auth(engine) or changed
     return changed
 

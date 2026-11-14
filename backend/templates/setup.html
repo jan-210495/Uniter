@@ -1,0 +1,50 @@
+{% extends "auth_base.html" %}
+{% set ar = lang == 'ar' %}
+
+{% block title %}{{ 'إعداد Uniter' if ar else 'Set up Uniter' }} · Uniter{% endblock %}
+
+{% block content %}
+{% if mode == 'locked' %}
+<div id="setup-locked">
+    <h1 class="mb-3 text-xl font-bold text-slate-900">{{ 'تسجيل الدخول غير متاح' if ar else 'Sign-in is unavailable' }}</h1>
+    <p role="alert" class="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">{{ 'لا تحتوي قاعدة البيانات هذه على حساب مدير نشط، لذا لا يمكن استخدام Uniter أو إعداده من المتصفح.' if ar else 'This database has no active administrator account, so Uniter cannot be used or set up from the browser.' }}</p>
+    <p class="text-sm leading-6 text-slate-600">{{ 'تتطلب الاستعادة وصولاً محلياً إلى قاعدة البيانات. راجع قسم «Recovering administrator access» في ملف README.' if ar else 'Recovery requires local access to the database. See “Recovering administrator access” in the README.' }}</p>
+</div>
+{% elif mode == 'done' %}
+<div id="setup-done">
+    <h1 class="mb-3 text-xl font-bold text-slate-900">{{ 'إعداد Uniter' if ar else 'Set up Uniter' }}</h1>
+    <p role="status" class="mb-5 text-sm text-slate-600">{{ 'تم إعداد Uniter مسبقاً. يرجى تسجيل الدخول.' if ar else 'Uniter is already set up. Please sign in.' }}</p>
+    <a href="/login{{ '?lang=ar' if ar else '' }}" class="block w-full rounded-lg bg-blue-900 px-4 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تسجيل الدخول' if ar else 'Sign in' }}</a>
+</div>
+{% else %}
+<h1 class="mb-2 text-xl font-bold text-slate-900">{{ 'إعداد Uniter' if ar else 'Set up Uniter' }}</h1>
+<p class="mb-4 text-sm leading-6 text-slate-600">{{ 'اختر كلمة مرور حساب المدير. ستستخدمها لتسجيل الدخول وإدارة حسابات البائعين.' if ar else 'Choose the password for the administrator account. You will use it to sign in and manage seller accounts.' }}</p>
+{% if error %}
+<p id="setup-error" role="alert" class="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-800">{{ error }}</p>
+{% endif %}
+<form id="setup-form" method="post" action="/setup" class="space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="lang" value="{{ lang }}">
+    <div>
+        <label for="setup-username" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'اسم مستخدم المدير' if ar else 'Administrator username' }}</label>
+        <input id="setup-username" type="text" dir="ltr" value="{{ username }}" readonly autocomplete="username" class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-slate-700 outline-none">
+    </div>
+    <div>
+        <label for="setup-password" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'كلمة المرور الجديدة' if ar else 'New password' }}</label>
+        <input id="setup-password" name="new_password" type="password" dir="ltr" required minlength="{{ min_length }}" maxlength="{{ max_length }}" autocomplete="new-password" autofocus aria-describedby="setup-password-help" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+        <p id="setup-password-help" class="mt-1 text-xs text-slate-500">{{ ('%d أحرف على الأقل، ومختلفة عن اسم المستخدم.' if ar else 'At least %d characters, and not the username.')|format(min_length) }}</p>
+    </div>
+    <div>
+        <label for="setup-confirm" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'تأكيد كلمة المرور' if ar else 'Confirm password' }}</label>
+        <input id="setup-confirm" name="confirm_password" type="password" dir="ltr" required minlength="{{ min_length }}" maxlength="{{ max_length }}" autocomplete="new-password" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+    </div>
+    <button type="submit" class="w-full rounded-lg bg-blue-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'إنشاء حساب المدير' if ar else 'Create administrator' }}</button>
+</form>
+{% endif %}
+{% endblock %}
+
+{% block languages %}
+<a href="/setup?lang=en" lang="en" class="hover:text-blue-800"{% if not ar %} aria-current="true"{% endif %}>English</a>
+<span aria-hidden="true" class="text-slate-300">|</span>
+<a href="/setup?lang=ar" lang="ar" class="hover:text-blue-800"{% if ar %} aria-current="true"{% endif %}>العربية</a>
+{% endblock %}
