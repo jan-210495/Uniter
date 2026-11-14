@@ -12,7 +12,7 @@
         <div>
             <p class="mb-2 text-xs font-bold uppercase tracking-widest text-blue-800">{{ 'سجل المعاملات' if ar else 'Transaction history' }}</p>
             <h1 class="text-3xl font-bold tracking-tight text-blue-950 sm:text-4xl">{{ 'المعاملات' if ar else 'Transactions' }}</h1>
-            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{{ 'استعرض المعاملات وصفِّها حسب المشغّل والخدمة والحالة ورقم العميل.' if ar else 'Browse charging and billing transactions, filtered by operator, service, status and customer phone.' }}</p>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{{ 'استعرض المعاملات وصفِّها حسب المشغّل والخدمة والحالة والبائع ورقم العميل.' if ar else 'Browse charging and billing transactions, filtered by operator, service, status, seller and customer phone.' }}</p>
         </div>
         <span id="tx-count" class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">—</span>
     </header>
@@ -27,7 +27,7 @@
             </div>
             <button id="tx-reset" type="button" class="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'مسح التصفية' if ar else 'Clear filters' }}</button>
         </div>
-        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <div>
                 <label for="filter-operator" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'المشغّل' if ar else 'Operator' }}</label>
                 <select id="filter-operator" name="operator" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
@@ -50,6 +50,18 @@
                     <option value="">{{ 'كل الحالات' if ar else 'All statuses' }}</option>
                     <option value="successful">{{ 'ناجحة' if ar else 'Successful' }}</option>
                     <option value="failed">{{ 'فاشلة' if ar else 'Failed' }}</option>
+                </select>
+            </div>
+            {# Every account (admins and sellers, including deactivated ones) so
+               past sales stay findable. A view filter only: all signed-in
+               accounts see all transactions. "All sellers" includes legacy rows. #}
+            <div>
+                <label for="filter-performer" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'نفّذها' if ar else 'Performed by' }}</label>
+                <select id="filter-performer" name="performed_by" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                    <option value="">{{ 'كل البائعين' if ar else 'All sellers' }}</option>
+                    {% for performer in performers|default([]) %}
+                    <option value="{{ performer.id }}">{{ performer.username }}</option>
+                    {% endfor %}
                 </select>
             </div>
             <div>
@@ -76,7 +88,7 @@
         </div>
         <div class="overflow-x-auto">
             <table class="w-full min-w-[64rem] text-sm">
-                <caption class="sr-only">{{ 'المعاملات مع تفاصيل العميل والمشغّل والخدمة' if ar else 'Transactions with customer, operator and service details' }}</caption>
+                <caption class="sr-only">{{ 'المعاملات مع تفاصيل العميل والمشغّل والخدمة والبائع' if ar else 'Transactions with customer, operator, service and seller details' }}</caption>
                 <thead class="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
                     <tr>
                         <th scope="col" class="px-4 py-3 text-start">{{ 'المرجع' if ar else 'Reference' }}</th>
@@ -86,6 +98,7 @@
                         <th scope="col" class="px-4 py-3 text-start">{{ 'الخدمة' if ar else 'Service' }}</th>
                         <th scope="col" class="px-4 py-3 text-start">{{ 'المبلغ' if ar else 'Amount' }}</th>
                         <th scope="col" class="px-4 py-3 text-start">{{ 'الحالة' if ar else 'Status' }}</th>
+                        <th scope="col" class="px-4 py-3 text-start">{{ 'نفّذها' if ar else 'Performed by' }}</th>
                         <th scope="col" class="px-4 py-3 text-start">USSD</th>
                         <th scope="col" class="px-4 py-3 text-end">{{ 'إجراءات' if ar else 'Actions' }}</th>
                     </tr>
@@ -136,7 +149,8 @@
         'actionError': 'تعذر تنفيذ الإجراء. حاول مرة أخرى.' if ar else 'Could not apply the action. Try again.',
         'servicePrepaid': 'مسبق الدفع' if ar else 'Pre-Paid',
         'servicePostpaid': 'لاحق الدفع' if ar else 'Post-Paid',
-        'oneTimeCustomer': 'بيع لمرة واحدة' if ar else 'One-time sale'
+        'oneTimeCustomer': 'بيع لمرة واحدة' if ar else 'One-time sale',
+        'legacyPerformer': 'قديمة / غير معروف' if ar else 'Legacy / unknown'
     }|tojson }};
     const pageLang = {{ lang|default('en')|tojson }};
     const filterForm = document.getElementById('tx-filters');
@@ -144,6 +158,7 @@
     const serviceFilter = document.getElementById('filter-service');
     const statusFilter = document.getElementById('filter-status');
     const phoneFilter = document.getElementById('filter-phone');
+    const performerFilter = document.getElementById('filter-performer');
     const suggestions = document.getElementById('tx-customer-suggestions');
     const rowsBody = document.getElementById('tx-rows');
     const statusEl = document.getElementById('tx-status');
@@ -324,6 +339,7 @@
         if (statusFilter.value) params.set('status', statusFilter.value);
         const phone = phoneFilter.value.trim();
         if (phone) params.set('customer_phone', phone);
+        if (performerFilter.value) params.set('performed_by', performerFilter.value);
         const query = params.toString();
         return query ? '?' + query : '';
     }
@@ -427,17 +443,27 @@
         badge.textContent = STATUS_LABELS[transaction.status] || transaction.status;
         status.appendChild(badge);
 
+        // Who committed the sale. Rows from before v1.0.4 have no performer
+        // and get a neutral label instead of a guess.
+        const performer = makeCell('px-4 py-3 text-slate-700');
+        if (transaction.performed_by_username) {
+            performer.textContent = transaction.performed_by_username;
+        } else {
+            performer.className = 'px-4 py-3 text-xs text-slate-500';
+            performer.textContent = messages.legacyPerformer;
+        }
+
         const ussd = makeCell('px-4 py-3 font-mono text-xs text-slate-700');
         ussd.dir = 'ltr';
         ussd.textContent = transaction.ussd_string;
 
-        tr.append(reference, created, customer, operator, service, amount, status, ussd, renderActions(transaction));
+        tr.append(reference, created, customer, operator, service, amount, status, performer, ussd, renderActions(transaction));
         return tr;
     }
     function renderEmpty() {
         const tr = document.createElement('tr');
         const td = makeCell('px-4 py-10 text-center text-sm text-slate-500');
-        td.colSpan = 9;
+        td.colSpan = 10;
         td.textContent = messages.empty;
         tr.appendChild(td);
         return tr;
@@ -543,7 +569,7 @@
         listTimer = setTimeout(fetchTransactions, DEBOUNCE_MS);
     }
     filterForm.addEventListener('submit', (event) => event.preventDefault());
-    [operatorFilter, serviceFilter, statusFilter].forEach((filter) => {
+    [operatorFilter, serviceFilter, statusFilter, performerFilter].forEach((filter) => {
         filter.addEventListener('change', queueList);
     });
     document.getElementById('tx-refresh').addEventListener('click', () => {
@@ -554,6 +580,7 @@
         operatorFilter.value = '';
         serviceFilter.value = '';
         statusFilter.value = '';
+        performerFilter.value = '';
         phoneFilter.value = '';
         closeSuggestions();
         clearTimeout(listTimer);

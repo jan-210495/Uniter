@@ -122,6 +122,14 @@ class Transaction(Base):
     # one-time (unlinked) sale is still identifiable in history, filters and
     # search, and so history always shows the number that was actually charged.
     customer_phone: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
+    # The signed-in account that committed the sale, taken from the server-side
+    # session only (never from the request). NULL for rows recorded before
+    # v1.0.4: they are never back-filled. RESTRICT keeps history intact, since
+    # accounts are deactivated rather than deleted. Declared last so a fresh
+    # table matches one upgraded by ``ALTER TABLE ... ADD COLUMN``.
+    performed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, default=None
+    )
 
     customer: Mapped[Customer | None] = relationship(back_populates="transactions")
     service: Mapped[Service] = relationship(back_populates="transactions")

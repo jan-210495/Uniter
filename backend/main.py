@@ -22,14 +22,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 if __package__:
     from . import auth, users
     from .commission import get_commission_for_transaction
-    from .database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
+    from .database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, User, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from .seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from .validation import validate_syrian_phone
 else:
     import auth
     import users
     from commission import get_commission_for_transaction
-    from database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
+    from database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, User, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from validation import validate_syrian_phone
 
@@ -207,7 +207,15 @@ class TransactionRequest(BaseModel):
 
 
 class TransactionCreate(TransactionRequest):
-    """Commit a sale exactly once: ``commit_key`` is the idempotency key."""
+    """Commit a sale exactly once: ``commit_key`` is the idempotency key.
+
+    Unknown fields are rejected (422) rather than ignored: the performer is
+    always the signed-in account of the server-side session, so a body that
+    tries to name one (``user_id``, ``performed_by_user_id``, ``seller_id``,
+    ``created_by``, ...) is refused before anything is written.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     commit_key: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
 
@@ -244,6 +252,8 @@ class TransactionResponse(BaseModel):
     status: str
     amount_cents: int
     created_at: datetime
+    #: The account that committed the sale; ``None`` for legacy rows.
+    performed_by_user_id: int | None = None
 
 
 class TransactionStatusUpdate(BaseModel):
@@ -276,6 +286,10 @@ class TransactionListItem(BaseModel):
     operator_name: str
     service_code: str
     service_name: str
+    #: Who committed the sale (id and username only); both are ``None`` for
+    #: rows recorded before v1.0.4, which are never back-filled.
+    performed_by_user_id: int | None
+    performed_by_username: str | None
 
 
 class SearchTransactionItem(BaseModel):
@@ -449,12 +463,19 @@ async def settlement_page(request: Request, db: DbSession, lang: str = "en") -> 
 
 
 @app.get("/transactions", response_class=HTMLResponse)
-async def transactions_page(request: Request, lang: str = "en") -> HTMLResponse:
+async def transactions_page(request: Request, db: DbSession, lang: str = "en") -> HTMLResponse:
     language = lang if lang in {"en", "ar"} else "en"
+    # "Performed by" choices: every account, admins and sellers, active or
+    # deactivated (their history still exists). Only id and username leave the
+    # database; the filter itself is applied by /api/transactions.
+    performers = [
+        {"id": row.id, "username": row.username}
+        for row in (await db.execute(select(User.id, User.username).order_by(User.username, User.id))).all()
+    ]
     return templates.TemplateResponse(
         request=request,
         name="transactions.html",
-        context={"lang": language, "nav_page": "transactions"},
+        context={"lang": language, "nav_page": "transactions", "performers": performers},
     )
 
 
@@ -1521,8 +1542,18 @@ async def preview_transaction(
     return TransactionPreviewResponse(ussd_string=ussd_string, commit_key=uuid4().hex)
 
 
+def _session_user_id(request: Request) -> int:
+    """The signed-in account of the server-side session (never the request)."""
+    context = getattr(request.state, "auth", None)
+    if context is None:  # the app-wide gate always sets it; fail closed anyway
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return context.user_id
+
+
 @app.post("/api/transactions", response_model=TransactionResponse)
-async def create_transaction(data: TransactionCreate, db: DbSession) -> Transaction:
+async def create_transaction(
+    request: Request, data: TransactionCreate, db: DbSession
+) -> Transaction:
     """Commit a sale: persist it as successful and apply accounting once.
 
     The seller's copy/dialer tap is the commit event. The operator balance is
@@ -1536,7 +1567,11 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
     or whitespace-only name is a one-time sale: it commits and is accounted for
     normally, keeps its phone on the row, and no customer record is created or
     modified. A number is never used as a name.
+
+    The performer is the session's account. A replay returns the stored row
+    unchanged, so it keeps the account that originally committed it.
     """
+    performer_id = _session_user_id(request)
     replay = await _committed_transaction(db, data)
     if replay is not None:
         return replay
@@ -1605,6 +1640,7 @@ async def create_transaction(data: TransactionCreate, db: DbSession) -> Transact
             # The charged number is on every row, linked or not, so history and
             # filters can identify the sale without a customer record.
             customer_phone=data.customer_phone,
+            performed_by_user_id=performer_id,
         )
         db.add(transaction)
         await db.flush()  # assigns transaction.id for the profit ledger row
@@ -1752,6 +1788,8 @@ _TRANSACTION_LABELS = (
     Operator.name.label("operator_name"),
     Service.code.label("service_code"),
     Service.name.label("service_name"),
+    Transaction.performed_by_user_id.label("performed_by_user_id"),
+    User.username.label("performed_by_username"),
 )
 
 
@@ -1762,12 +1800,14 @@ def _transaction_list_statement():
     customer record, and it must never disappear from history, filters or
     reports because of that. Removed (tombstoned) rows are hidden from the list
     and the operator page; the row itself and its profit ledger entry stay on
-    disk for auditing.
+    disk for auditing. The performer join is an OUTER join too: legacy rows
+    have no performer and stay listed.
     """
     return (
         select(*_TRANSACTION_LABELS)
         .select_from(Transaction)
         .outerjoin(Customer, Transaction.customer_id == Customer.id)
+        .outerjoin(User, Transaction.performed_by_user_id == User.id)
         .join(Service, Transaction.service_id == Service.id)
         .join(Operator, Service.operator_id == Operator.id)
         .where(Transaction.deleted_at.is_(None))
@@ -1781,10 +1821,17 @@ async def list_transactions(
     service_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
     status: Annotated[str | None, Query(pattern="^(successful|failed)$")] = None,
     customer_phone: Annotated[str | None, Query(min_length=1, max_length=32)] = None,
+    performed_by: Annotated[int | None, Query(ge=1, le=9223372036854775807)] = None,
 ) -> list[TransactionListItem]:
     """List transactions newest-first, optionally filtered by operator code,
-    service code, status, or a case-insensitive customer phone fragment.
-    Filters that match nothing return an empty list."""
+    service code, status, a case-insensitive customer phone fragment, or the
+    id of the account that performed the sale.
+
+    Filters that match nothing (including an unknown performer id) return an
+    empty list; a performer value that is not a positive integer is a 422.
+    ``performed_by`` is a view filter, not an access boundary: every signed-in
+    account sees every transaction. Legacy rows (no performer) are only listed
+    when no performer is chosen."""
     statement = _transaction_list_statement()
     if operator_code is not None:
         statement = statement.where(Operator.code == operator_code)
@@ -1798,6 +1845,8 @@ async def list_transactions(
                 f"%{customer_phone}%"
             )
         )
+    if performed_by is not None:
+        statement = statement.where(Transaction.performed_by_user_id == performed_by)
     rows = await db.execute(statement.order_by(Transaction.created_at.desc(), Transaction.id.desc()))
     return [TransactionListItem(**row._mapping) for row in rows.all()]
 

@@ -412,8 +412,11 @@ def _snapshot(connection) -> dict:
         "indexes": sorted(
             tuple(row) for row in connection.exec_driver_sql("PRAGMA index_list(transactions)").all()
         ),
+        # By definition, without SQLite's internal ordinal (first field): the
+        # v1.0.4 performer key is added by ALTER TABLE as a column constraint,
+        # which SQLite numbers ahead of the table-level keys of a fresh build.
         "foreign_keys": sorted(
-            tuple(row)
+            tuple(row)[1:]
             for row in connection.exec_driver_sql("PRAGMA foreign_key_list(transactions)").all()
         ),
         "index_columns": sorted(

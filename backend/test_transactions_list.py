@@ -138,7 +138,7 @@ def test_list_without_filters_returns_all_transactions(
     assert set(item) == {
         "id", "reference", "ussd_string", "status", "amount_cents", "created_at",
         "customer_id", "customer_phone", "customer_name", "operator_code", "operator_name",
-        "service_code", "service_name",
+        "service_code", "service_name", "performed_by_user_id", "performed_by_username",
     }
     assert item["reference"] == transactions["ahmad_mtn_a"]["reference"]
     assert item["ussd_string"] == "*150*65477*0933123456*50#"
@@ -147,6 +147,9 @@ def test_list_without_filters_returns_all_transactions(
     assert item["customer_phone"] == "0933123456" and item["customer_name"] == "Ahmad"
     assert item["operator_code"] == "mtn" and item["operator_name"] == "MTN"
     assert item["service_code"] == "prepaid" and item["service_name"] == "Pre-Paid Charging"
+    # v1.0.4 Slice 3: committed by the signed-in test account.
+    assert item["performed_by_username"] == "test-admin"
+    assert isinstance(item["performed_by_user_id"], int)
 
     # The one-time sale is listed too: its phone is shown, its name is empty
     # (a number is never presented as a customer name).
@@ -275,15 +278,15 @@ def test_transactions_template_markup() -> None:
         assert "new AbortController()" in rendered
         assert "fetch('/api/transactions' + buildQuery()" in rendered
         assert "fetch('/api/customers/search?q=' + encodeURIComponent(query)" in rendered
-        # Nine table columns: the Slice 2.3 actions column was added.
-        assert rendered.count('scope="col"') == 9
+        # Ten table columns: Slice 2.3 added actions, v1.0.4 Slice 3 the performer.
+        assert rendered.count('scope="col"') == 10
         assert 'id="tx-action-status" role="status" aria-live="polite"' in rendered
         assert 'id="tx-table-title" tabindex="-1"' in rendered
     for header in ("Reference", "Date/time", "Customer", "Operator", "Service",
-                   "Amount", "Status", "USSD", "Actions"):
+                   "Amount", "Status", "Performed by", "USSD", "Actions"):
         assert header in english
     for header in ("المرجع", "التاريخ والوقت", "العميل", "المشغّل", "الخدمة",
-                   "المبلغ", "الحالة", "USSD", "إجراءات"):
+                   "المبلغ", "الحالة", "نفّذها", "USSD", "إجراءات"):
         assert header in arabic
     # Status vocabulary and the two row actions.
     assert ">Successful<" in english and ">Failed<" in english
