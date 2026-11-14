@@ -20,13 +20,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
-    from . import auth
+    from . import auth, users
     from .commission import get_commission_for_transaction
     from .database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from .seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from .validation import validate_syrian_phone
 else:
     import auth
+    import users
     from commission import get_commission_for_transaction
     from database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
@@ -50,6 +51,7 @@ if getattr(sys, "_MEIPASS", None):
         _template_dir = _meipass_templates
 templates = Jinja2Templates(directory=str(_template_dir))
 auth.install(app, templates)
+app.include_router(users.create_router(templates))
 _static_dir = _template_dir.parent / "static"
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
@@ -60,6 +62,9 @@ def web_app_manifest() -> FileResponse:
 
 Code = Annotated[str, Field(min_length=1, max_length=50)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+#: The admin-only settings: commission, both USSD domains and the timezone.
+#: Every other setting and workflow stays available to sellers.
+ADMIN_ONLY = [Depends(auth.require_admin)]
 
 # Display timezone: the stored default and the options offered on /settings.
 DEFAULT_TIMEZONE = "Asia/Damascus"
@@ -484,6 +489,8 @@ async def settings_page(request: Request, db: DbSession, lang: str = "en") -> HT
             "syriatel_domain": syriatel_domain,
             "timezones": TIMEZONE_OPTIONS,
             "timezone": timezone,
+            # Display only; the PUT endpoints enforce the same rule server-side.
+            "can_manage_settings": auth.is_admin(request),
         },
     )
 
@@ -876,7 +883,7 @@ async def read_commission_setting(db: DbSession) -> dict[str, str]:
     return {"commission_rate": rate}
 
 
-@app.put("/api/settings/commission")
+@app.put("/api/settings/commission", dependencies=ADMIN_ONLY)
 async def update_commission_setting(data: CommissionSettingUpdate, db: DbSession) -> dict[str, str]:
     setting = await set_setting(db, "commission_rate", str(data.rate))
     value = setting.value
@@ -892,7 +899,7 @@ async def read_mtn_domain_setting(db: DbSession) -> dict[str, str]:
     return {"mtn_domain": domain}
 
 
-@app.put("/api/settings/mtn-domain")
+@app.put("/api/settings/mtn-domain", dependencies=ADMIN_ONLY)
 async def update_mtn_domain_setting(data: DomainSettingUpdate, db: DbSession) -> dict[str, str]:
     """Store the MTN USSD domain code consumed by generate_ussd."""
     setting = await set_setting(db, "MTN_DOMAIN", data.domain)
@@ -909,7 +916,7 @@ async def read_syriatel_domain_setting(db: DbSession) -> dict[str, str]:
     return {"syriatel_domain": domain}
 
 
-@app.put("/api/settings/syriatel-domain")
+@app.put("/api/settings/syriatel-domain", dependencies=ADMIN_ONLY)
 async def update_syriatel_domain_setting(data: DomainSettingUpdate, db: DbSession) -> dict[str, str]:
     """Store the Syriatel USSD domain code consumed by generate_ussd."""
     setting = await set_setting(db, "SYRIATEL_DOMAIN", data.domain)
@@ -926,7 +933,7 @@ async def read_timezone_setting(db: DbSession) -> dict[str, str]:
     return {"timezone": timezone}
 
 
-@app.put("/api/settings/timezone")
+@app.put("/api/settings/timezone", dependencies=ADMIN_ONLY)
 async def update_timezone_setting(data: TimezoneSettingUpdate, db: DbSession) -> dict[str, str]:
     """Store the display timezone shown in the header and used for times."""
     setting = await set_setting(db, "timezone", data.timezone)

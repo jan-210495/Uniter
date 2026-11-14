@@ -1,4 +1,4 @@
-"""Test support: sign an existing ``TestClient`` in as an admin.
+"""Test support: sign an existing ``TestClient`` in (admin by default).
 
 Business-workflow tests predate authentication. Rather than bypassing the auth
 gate, they get a genuine server-side session (cookie) plus its CSRF header, so
@@ -27,15 +27,17 @@ def _password_hash() -> str:
     return auth.hash_password(secrets.token_urlsafe(16))
 
 
-async def create_admin_session(sessions: async_sessionmaker) -> tuple[str, str]:
-    """Insert (or reuse) an active admin and open a session for it."""
+async def create_admin_session(
+    sessions: async_sessionmaker, *, role: str = "admin", username: str = TEST_ADMIN_USERNAME
+) -> tuple[str, str]:
+    """Insert (or reuse) an active account and open a session for it."""
     async with sessions() as session:
-        user = await session.scalar(select(User).where(User.username == TEST_ADMIN_USERNAME))
+        user = await session.scalar(select(User).where(User.username == username))
         if user is None:
             user = User(
-                username=TEST_ADMIN_USERNAME,
+                username=username,
                 password_hash=_password_hash(),
-                role="admin",
+                role=role,
                 must_change_password=False,
             )
             session.add(user)
@@ -45,8 +47,11 @@ async def create_admin_session(sessions: async_sessionmaker) -> tuple[str, str]:
     return token, auth._csrf_for(token)
 
 
-def sign_in(client: TestClient, sessions: async_sessionmaker) -> TestClient:
-    token, csrf = asyncio.run(create_admin_session(sessions))
+def sign_in(
+    client: TestClient, sessions: async_sessionmaker, *, role: str = "admin",
+    username: str = TEST_ADMIN_USERNAME,
+) -> TestClient:
+    token, csrf = asyncio.run(create_admin_session(sessions, role=role, username=username))
     client.cookies.set(auth.SESSION_COOKIE, token)
     client.headers[auth.CSRF_HEADER] = csrf
     return client

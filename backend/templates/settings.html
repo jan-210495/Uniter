@@ -1,5 +1,7 @@
 {% extends "base.html" %}
 {% set ar = lang|default('en') == 'ar' %}
+{# Read-only unless the route says otherwise; the server enforces it too. #}
+{% set settings_locked = not (can_manage_settings|default(false)) %}
 
 {% block title %}{{ 'الإعدادات' if ar else 'Settings' }} · Uniter{% endblock %}
 
@@ -7,6 +9,9 @@
 <style>
     .structure-table { table-layout: fixed; }
     .structure-table th, .structure-table td { overflow-wrap: anywhere; }
+    /* Admin-only controls shown to sellers: visibly read-only. */
+    fieldset:disabled input, fieldset:disabled select, fieldset:disabled button { opacity: .6; cursor: not-allowed; }
+    fieldset:disabled button:hover { background-color: #172554; }
     .ussd-pattern { display: block; direction: ltr; unicode-bidi: isolate; text-align: left; overflow-wrap: anywhere; }
     @media (max-width: 639px) {
         .structure-table, .structure-table tbody, .structure-table tr, .structure-table td { display: block; width: 100%; }
@@ -37,12 +42,17 @@
             </div>
             <p id="commission-current" role="status" aria-live="polite" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-semibold text-slate-700">…</p>
             <form id="commission-form" class="mt-4 space-y-3" novalidate>
-                <div>
-                    <label for="commission-input" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'نسبة جديدة (من 0 إلى 1)' if ar else 'New rate (0 to 1)' }}</label>
-                    <input id="commission-input" name="rate" type="number" min="0" max="1" step="any" inputmode="decimal" dir="ltr" required placeholder="0.05" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
-                    <p class="mt-1.5 text-xs text-slate-500">{{ 'قيمة عشرية بين 0 و 1، مثل 0.05.' if ar else 'A decimal between 0 and 1, e.g. 0.05.' }}</p>
-                </div>
-                <button type="submit" class="w-full rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تحديث النسبة' if ar else 'Update rate' }}</button>
+                <fieldset id="commission-fieldset" class="min-w-0 space-y-3"{% if settings_locked %} disabled aria-describedby="commission-locked"{% endif %}>
+                    <div>
+                        <label for="commission-input" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'نسبة جديدة (من 0 إلى 1)' if ar else 'New rate (0 to 1)' }}</label>
+                        <input id="commission-input" name="rate" type="number" min="0" max="1" step="any" inputmode="decimal" dir="ltr" required placeholder="0.05" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                        <p class="mt-1.5 text-xs text-slate-500">{{ 'قيمة عشرية بين 0 و 1، مثل 0.05.' if ar else 'A decimal between 0 and 1, e.g. 0.05.' }}</p>
+                    </div>
+                    <button type="submit" class="w-full rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تحديث النسبة' if ar else 'Update rate' }}</button>
+                </fieldset>
+                {% if settings_locked %}
+                <p id="commission-locked" class="admin-only-note rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">{{ 'يمكن للمدير فقط تغيير هذا الإعداد.' if ar else 'Only an admin can change this setting.' }}</p>
+                {% endif %}
                 <p id="commission-feedback" role="status" aria-live="polite" class="min-h-[1.25rem] text-sm font-medium text-slate-600"></p>
             </form>
         </section>
@@ -99,18 +109,23 @@
                 <p class="mt-1 text-sm text-slate-500">{{ 'المنطقة الزمنية المستخدمة لعرض الوقت في الترويسة.' if ar else 'The timezone used for time display in the header.' }}</p>
             </div>
             <form id="timezone-form" class="space-y-3" novalidate>
-                <label for="timezone-select" class="block text-sm font-semibold text-slate-700">{{ 'المنطقة الزمنية' if ar else 'Timezone' }}</label>
-                <div class="flex flex-wrap items-stretch gap-2">
-                    <select id="timezone-select" name="timezone" class="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
-                        {% for zone in timezones %}
-                        <option value="{{ zone }}"{% if zone == timezone %} selected{% endif %}>{{ zone }}</option>
-                        {% endfor %}
-                        {% if timezone not in timezones %}
-                        <option value="{{ timezone }}" selected>{{ timezone }}</option>
-                        {% endif %}
-                    </select>
-                    <button type="submit" class="rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تحديث' if ar else 'Update' }}</button>
-                </div>
+                <fieldset id="timezone-fieldset" class="min-w-0 space-y-3"{% if settings_locked %} disabled aria-describedby="timezone-locked"{% endif %}>
+                    <label for="timezone-select" class="block text-sm font-semibold text-slate-700">{{ 'المنطقة الزمنية' if ar else 'Timezone' }}</label>
+                    <div class="flex flex-wrap items-stretch gap-2">
+                        <select id="timezone-select" name="timezone" class="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                            {% for zone in timezones %}
+                            <option value="{{ zone }}"{% if zone == timezone %} selected{% endif %}>{{ zone }}</option>
+                            {% endfor %}
+                            {% if timezone not in timezones %}
+                            <option value="{{ timezone }}" selected>{{ timezone }}</option>
+                            {% endif %}
+                        </select>
+                        <button type="submit" class="rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تحديث' if ar else 'Update' }}</button>
+                    </div>
+                </fieldset>
+                {% if settings_locked %}
+                <p id="timezone-locked" class="admin-only-note rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">{{ 'يمكن للمدير فقط تغيير هذا الإعداد.' if ar else 'Only an admin can change this setting.' }}</p>
+                {% endif %}
                 <p id="timezone-feedback" role="status" aria-live="polite" class="min-h-[1.25rem] text-sm font-medium text-slate-600"></p>
             </form>
         </section>
@@ -121,19 +136,29 @@
                 <p class="mt-1 text-sm text-slate-500">{{ 'رموز النطاق المستخدمة في بنية رموز USSD؛ تُطبَّق على المعاملات الجديدة.' if ar else 'Domain codes used in the operators\' USSD structures; applied to new transactions.' }}</p>
             </div>
             <form id="mtn-domain-form" class="space-y-3" novalidate>
-                <label for="mtn-domain-input" class="block text-sm font-semibold text-slate-700">{{ 'نطاق MTN' if ar else 'MTN domain' }}</label>
-                <div class="flex flex-wrap items-stretch gap-2">
-                    <input id="mtn-domain-input" type="number" inputmode="numeric" dir="ltr" min="0" step="1" required placeholder="65477" value="{{ mtn_domain }}" class="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
-                    <button type="submit" class="rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تحديث' if ar else 'Update' }}</button>
-                </div>
+                <fieldset id="mtn-domain-fieldset" class="min-w-0 space-y-3"{% if settings_locked %} disabled aria-describedby="mtn-domain-locked"{% endif %}>
+                    <label for="mtn-domain-input" class="block text-sm font-semibold text-slate-700">{{ 'نطاق MTN' if ar else 'MTN domain' }}</label>
+                    <div class="flex flex-wrap items-stretch gap-2">
+                        <input id="mtn-domain-input" type="number" inputmode="numeric" dir="ltr" min="0" step="1" required placeholder="65477" value="{{ mtn_domain }}" class="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                        <button type="submit" class="rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تحديث' if ar else 'Update' }}</button>
+                    </div>
+                </fieldset>
+                {% if settings_locked %}
+                <p id="mtn-domain-locked" class="admin-only-note rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">{{ 'يمكن للمدير فقط تغيير هذا الإعداد.' if ar else 'Only an admin can change this setting.' }}</p>
+                {% endif %}
                 <p id="mtn-domain-feedback" role="status" aria-live="polite" class="min-h-[1.25rem] text-sm font-medium text-slate-600"></p>
             </form>
             <form id="syriatel-domain-form" class="mt-5 space-y-3" novalidate>
-                <label for="syriatel-domain-input" class="block text-sm font-semibold text-slate-700">{{ 'نطاق Syriatel' if ar else 'Syriatel domain' }}</label>
-                <div class="flex flex-wrap items-stretch gap-2">
-                    <input id="syriatel-domain-input" type="number" inputmode="numeric" dir="ltr" min="0" step="1" required placeholder="67858" value="{{ syriatel_domain }}" class="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
-                    <button type="submit" class="rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تحديث' if ar else 'Update' }}</button>
-                </div>
+                <fieldset id="syriatel-domain-fieldset" class="min-w-0 space-y-3"{% if settings_locked %} disabled aria-describedby="syriatel-domain-locked"{% endif %}>
+                    <label for="syriatel-domain-input" class="block text-sm font-semibold text-slate-700">{{ 'نطاق Syriatel' if ar else 'Syriatel domain' }}</label>
+                    <div class="flex flex-wrap items-stretch gap-2">
+                        <input id="syriatel-domain-input" type="number" inputmode="numeric" dir="ltr" min="0" step="1" required placeholder="67858" value="{{ syriatel_domain }}" class="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                        <button type="submit" class="rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تحديث' if ar else 'Update' }}</button>
+                    </div>
+                </fieldset>
+                {% if settings_locked %}
+                <p id="syriatel-domain-locked" class="admin-only-note rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">{{ 'يمكن للمدير فقط تغيير هذا الإعداد.' if ar else 'Only an admin can change this setting.' }}</p>
+                {% endif %}
                 <p id="syriatel-domain-feedback" role="status" aria-live="polite" class="min-h-[1.25rem] text-sm font-medium text-slate-600"></p>
             </form>
         </section>
@@ -235,7 +260,8 @@
         'domainUpdateFailed': 'تعذر تحديث النطاق. حاول مرة أخرى.' if ar else 'Could not update the domain. Try again.',
         'timezoneUpdated': 'تم تحديث المنطقة الزمنية.' if ar else 'Timezone updated.',
         'invalidTimezone': 'اختر منطقة زمنية صالحة.' if ar else 'Choose a valid timezone.',
-        'timezoneUpdateFailed': 'تعذر تحديث المنطقة الزمنية. حاول مرة أخرى.' if ar else 'Could not update the timezone. Try again.'
+        'timezoneUpdateFailed': 'تعذر تحديث المنطقة الزمنية. حاول مرة أخرى.' if ar else 'Could not update the timezone. Try again.',
+        'adminOnly': 'يمكن للمدير فقط تغيير هذا الإعداد.' if ar else 'Only an admin can change this setting.'
     }|tojson }};
     const commissionForm = document.getElementById('commission-form');
     const commissionInput = document.getElementById('commission-input');
@@ -282,7 +308,7 @@
                 body: JSON.stringify({ rate })
             });
             if (!response.ok) {
-                setFeedback(commissionFeedback, response.status === 422 ? messages.invalidRate : messages.updateFailed, 'error');
+                setFeedback(commissionFeedback, response.status === 403 ? messages.adminOnly : response.status === 422 ? messages.invalidRate : messages.updateFailed, 'error');
                 return;
             }
             const data = await response.json();
@@ -344,7 +370,7 @@
                     body: JSON.stringify({ domain })
                 });
                 if (!response.ok) {
-                    setFeedback(feedback, response.status === 422 ? messages.invalidDomain : messages.domainUpdateFailed, 'error');
+                    setFeedback(feedback, response.status === 403 ? messages.adminOnly : response.status === 422 ? messages.invalidDomain : messages.domainUpdateFailed, 'error');
                     return;
                 }
                 const saved = await response.json();
@@ -380,7 +406,7 @@
                     body: JSON.stringify({ timezone })
                 });
                 if (!response.ok) {
-                    setFeedback(timezoneFeedback, response.status === 422 ? messages.invalidTimezone : messages.timezoneUpdateFailed, 'error');
+                    setFeedback(timezoneFeedback, response.status === 403 ? messages.adminOnly : response.status === 422 ? messages.invalidTimezone : messages.timezoneUpdateFailed, 'error');
                     return;
                 }
                 setFeedback(timezoneFeedback, messages.timezoneUpdated, 'success');

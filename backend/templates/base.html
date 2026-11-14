@@ -80,6 +80,9 @@
             <a href="/settlement" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'settlement' %} aria-current="page"{% endif %}>{{ 'تسوية الديون' if lang|default('en') == 'ar' else 'Settlement' }}</a>
             <a href="/stats" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'stats' %} aria-current="page"{% endif %}>{{ 'الإحصائيات' if lang|default('en') == 'ar' else 'Stats' }}</a>
             <a href="/settings" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'settings' %} aria-current="page"{% endif %}>{{ 'الإعدادات' if lang|default('en') == 'ar' else 'Settings' }}</a>
+            {% if is_admin is defined and request is defined and is_admin(request) %}
+            <a href="/users{{ '?lang=ar' if lang == 'ar' else '' }}" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'users' %} aria-current="page"{% endif %}>{{ 'المستخدمون' if lang|default('en') == 'ar' else 'Users' }}</a>
+            {% endif %}
         </div>
         <div class="nav-languages flex flex-wrap items-center gap-3 border-t border-slate-100 px-4 py-4 text-sm font-semibold text-slate-600">
             <span class="text-xs font-bold uppercase tracking-widest text-slate-400">{{ 'اللغة' if lang|default('en') == 'ar' else 'Language' }}</span>

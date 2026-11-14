@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+{% set ar = lang|default('en') == 'ar' %}
+
+{% block title %}{{ 'المستخدمون' if ar else 'Users' }} · Uniter{% endblock %}
+
+{% block content %}
+<section class="mx-auto max-w-6xl">
+    <header class="mb-8">
+        <p class="mb-2 text-xs font-bold uppercase tracking-widest text-blue-800">{{ 'الحسابات' if ar else 'Accounts' }}</p>
+        <h1 class="text-3xl font-bold tracking-tight text-blue-950 sm:text-4xl">{{ 'المستخدمون' if ar else 'Users' }}</h1>
+        {% if not forbidden %}
+        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{{ 'لكل شخص حسابه الخاص. أنشئ حسابات البائعين وأعد تعيين كلمات مرورهم وفعّل الحسابات أو عطّلها.' if ar else 'Everyone gets their own account. Create seller accounts, reset their passwords, and activate or deactivate accounts.' }}</p>
+        {% endif %}
+    </header>
+
+    {% if forbidden %}
+    <p id="users-forbidden" role="alert" class="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm font-semibold text-amber-900">{{ 'يقتصر إدارة حسابات المستخدمين على المدير.' if ar else 'Only an admin can manage user accounts.' }}</p>
+    {% else %}
+    <div class="grid gap-6 lg:grid-cols-3">
+        <section id="create-user-card" class="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="create-user-title">
+            <div class="mb-5 border-b border-slate-100 pb-4">
+                <h2 id="create-user-title" class="text-lg font-bold text-slate-900">{{ 'إنشاء حساب بائع' if ar else 'Create seller' }}</h2>
+                <p class="mt-1 text-sm text-slate-500">{{ 'تُولَّد كلمة مرور مؤقتة ويجب على البائع تغييرها عند أول تسجيل دخول.' if ar else 'A temporary password is generated; the seller must change it at first sign-in.' }}</p>
+            </div>
+            <form id="create-user-form" class="space-y-3" novalidate>
+                <div>
+                    <label for="new-username" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'اسم المستخدم' if ar else 'Username' }}</label>
+                    <input id="new-username" name="username" type="text" dir="ltr" required minlength="3" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="new-username-help" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                    <p id="new-username-help" class="mt-1.5 text-xs text-slate-500">{{ 'من 3 إلى 64 حرفاً أو رقماً أو . _ - @ بدون مسافات. لا يُميَّز بين الأحرف الكبيرة والصغيرة.' if ar else '3–64 letters, digits or . _ - @, no spaces. Not case-sensitive.' }}</p>
+                </div>
+                <button type="submit" class="w-full rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'إنشاء حساب بائع' if ar else 'Create seller' }}</button>
+                <p id="create-user-feedback" role="status" aria-live="polite" class="min-h-[1.25rem] text-sm font-medium text-slate-600"></p>
+            </form>
+        </section>
+
+        <section id="users-card" class="min-w-0 rounded-2xl border border-slate-200 bg-white shadow-sm lg:col-span-2" aria-labelledby="users-title">
+            <div class="border-b border-slate-100 px-5 py-4">
+                <h2 id="users-title" class="text-lg font-bold text-slate-900">{{ 'الحسابات' if ar else 'Accounts' }}</h2>
+            </div>
+            <div id="temporary-password-panel" hidden class="m-5 rounded-xl border border-blue-200 bg-blue-50 p-4" role="region" aria-labelledby="temporary-password-title">
+                <h3 id="temporary-password-title" class="text-sm font-bold text-blue-950">{{ 'كلمة المرور المؤقتة لـ' if ar else 'Temporary password for' }} <span id="temporary-password-user" dir="ltr"></span></h3>
+                <div class="mt-3 flex flex-wrap items-stretch gap-2">
+                    <input id="temporary-password-value" type="text" dir="ltr" readonly autocomplete="off" spellcheck="false" aria-labelledby="temporary-password-title" class="min-w-0 flex-1 rounded-lg border border-blue-200 bg-white px-3 py-2.5 font-mono text-base font-bold tracking-wider text-slate-900">
+                    <button id="temporary-password-copy" type="button" class="rounded-lg border border-blue-900 bg-white px-3 py-2 text-sm font-semibold text-blue-950 hover:bg-blue-100">{{ 'نسخ' if ar else 'Copy' }}</button>
+                </div>
+                <p class="mt-3 text-xs font-semibold text-blue-950">{{ 'تُعرض مرة واحدة فقط ولا تُحفظ. سلّمها للمستخدم الآن؛ سيُطلب منه تغييرها عند أول تسجيل دخول.' if ar else 'Shown only once and never stored. Give it to the user now; they must change it at first sign-in.' }}</p>
+                <button id="temporary-password-done" type="button" class="mt-3 rounded-lg bg-blue-950 px-4 py-2 text-sm font-bold text-white hover:bg-blue-800">{{ 'تم' if ar else 'Done' }}</button>
+            </div>
+            <p id="users-feedback" role="status" aria-live="polite" class="min-h-[1.25rem] px-5 pt-3 text-sm font-medium text-slate-600"></p>
+            <div class="overflow-x-auto">
+                <table class="w-full text-start text-sm">
+                    <thead class="bg-slate-50 text-xs font-bold uppercase tracking-widest text-slate-500">
+                        <tr>
+                            <th scope="col" class="px-4 py-3 text-start">{{ 'اسم المستخدم' if ar else 'Username' }}</th>
+                            <th scope="col" class="px-4 py-3 text-start">{{ 'الدور' if ar else 'Role' }}</th>
+                            <th scope="col" class="px-4 py-3 text-start">{{ 'الحالة' if ar else 'Status' }}</th>
+                            <th scope="col" class="px-4 py-3 text-start">{{ 'تاريخ الإنشاء (UTC)' if ar else 'Created (UTC)' }}</th>
+                            <th scope="col" class="px-4 py-3 text-start">{{ 'الإجراءات' if ar else 'Actions' }}</th>
+                        </tr>
+                    </thead>
+                    <tbody id="users-rows" class="divide-y divide-slate-100">
+                        {% for account in accounts %}
+                        <tr data-user-id="{{ account.id }}">
+                            <td class="px-4 py-3 font-semibold text-slate-900"><span dir="ltr">{{ account.username }}</span>{% if account.id == current_user_id %} <span class="text-xs font-normal text-slate-500">{{ '(أنت)' if ar else '(you)' }}</span>{% endif %}</td>
+                            <td class="px-4 py-3 text-slate-700">{% if account.role == 'admin' %}{{ 'مدير' if ar else 'Admin' }}{% else %}{{ 'بائع' if ar else 'Seller' }}{% endif %}</td>
+                            <td class="px-4 py-3">
+                                {% if account.is_active %}<span class="rounded-full bg-green-50 px-2 py-0.5 text-xs font-semibold text-green-800">{{ 'نشط' if ar else 'Active' }}</span>{% else %}<span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{{ 'غير نشط' if ar else 'Inactive' }}</span>{% endif %}
+                                {% if account.must_change_password %}<span class="ms-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800">{{ 'بانتظار تغيير كلمة المرور' if ar else 'Password change pending' }}</span>{% endif %}
+                            </td>
+                            <td class="px-4 py-3 text-xs text-slate-600" dir="ltr">{{ account.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                            <td class="px-4 py-3">
+                                <div class="flex flex-wrap gap-2">
+                                    {% if account.role == 'seller' %}<button type="button" data-action="reset" data-id="{{ account.id }}" data-username="{{ account.username }}" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 hover:border-blue-300">{{ 'إعادة تعيين كلمة المرور' if ar else 'Reset password' }}</button>{% endif %}
+                                    {% if account.id != current_user_id %}{% if account.is_active %}<button type="button" data-action="deactivate" data-id="{{ account.id }}" data-username="{{ account.username }}" class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50">{{ 'تعطيل' if ar else 'Deactivate' }}</button>{% else %}<button type="button" data-action="activate" data-id="{{ account.id }}" data-username="{{ account.username }}" class="rounded-lg border border-green-200 bg-white px-3 py-1.5 text-xs font-semibold text-green-800 hover:bg-green-50">{{ 'تفعيل' if ar else 'Activate' }}</button>{% endif %}{% endif %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+    {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+{% if not forbidden %}
+<script>
+(() => {
+    'use strict';
+    const currentUserId = {{ current_user_id|tojson }};
+    const t = {{ {
+        'admin': 'مدير' if ar else 'Admin',
+        'seller': 'بائع' if ar else 'Seller',
+        'active': 'نشط' if ar else 'Active',
+        'inactive': 'غير نشط' if ar else 'Inactive',
+        'pending': 'بانتظار تغيير كلمة المرور' if ar else 'Password change pending',
+        'you': '(أنت)' if ar else '(you)',
+        'reset': 'إعادة تعيين كلمة المرور' if ar else 'Reset password',
+        'deactivate': 'تعطيل' if ar else 'Deactivate',
+        'activate': 'تفعيل' if ar else 'Activate',
+        'created': 'تم إنشاء الحساب.' if ar else 'Account created.',
+        'invalidUsername': 'اسم مستخدم غير صالح: من 3 إلى 64 حرفاً أو رقماً أو . _ - @ بدون مسافات.' if ar else 'Invalid username: 3–64 letters, digits or . _ - @, no spaces.',
+        'taken': 'اسم المستخدم هذا مستخدم بالفعل.' if ar else 'That username is already taken.',
+        'adminOnly': 'يقتصر إدارة حسابات المستخدمين على المدير.' if ar else 'Only an admin can manage user accounts.',
+        'failed': 'تعذر إكمال العملية. حاول مرة أخرى.' if ar else 'Could not complete the action. Try again.',
+        'confirmReset': 'إعادة تعيين كلمة مرور هذا الحساب؟ ستتوقف كلمة المرور الحالية وسيُسجَّل خروجه من كل الأجهزة.' if ar else 'Reset this account\'s password? The current password stops working and it is signed out everywhere.',
+        'confirmDeactivate': 'تعطيل هذا الحساب؟ سيُسجَّل خروجه فوراً ولن يتمكن من تسجيل الدخول.' if ar else 'Deactivate this account? It is signed out at once and cannot sign in.',
+        'resetDone': 'تمت إعادة تعيين كلمة المرور.' if ar else 'Password reset.',
+        'deactivated': 'تم تعطيل الحساب.' if ar else 'Account deactivated.',
+        'activated': 'تم تفعيل الحساب. يسجّل الدخول بكلمة مروره الحالية.' if ar else 'Account activated. It signs in with its existing password.',
+        'cannotDeactivate': 'لا يمكن تعطيل هذا الحساب (حسابك أنت أو آخر مدير نشط).' if ar else 'This account cannot be deactivated (your own account or the last active admin).',
+        'copied': 'تم النسخ.' if ar else 'Copied.'
+    }|tojson }};
+
+    const rows = document.getElementById('users-rows');
+    const feedback = document.getElementById('users-feedback');
+    const createForm = document.getElementById('create-user-form');
+    const createInput = document.getElementById('new-username');
+    const createFeedback = document.getElementById('create-user-feedback');
+    const panel = document.getElementById('temporary-password-panel');
+    const panelUser = document.getElementById('temporary-password-user');
+    const panelValue = document.getElementById('temporary-password-value');
+
+    function setFeedback(element, text, tone) {
+        element.textContent = text;
+        element.className = element.className.replace(/text-(red|green|slate)-\d+/g, '') + (tone === 'error' ? ' text-red-700' : ' text-green-700');
+    }
+
+    // The one and only display of a temporary password. It lives in this
+    // field until "Done" or leaving the page; it is never stored anywhere.
+    function showTemporaryPassword(username, password) {
+        panelUser.textContent = username;
+        panelValue.value = password;
+        panel.hidden = false;
+        panelValue.focus();
+        panelValue.select();
+    }
+    function clearTemporaryPassword() {
+        panelValue.value = '';
+        panelUser.textContent = '';
+        panel.hidden = true;
+    }
+    document.getElementById('temporary-password-done').addEventListener('click', clearTemporaryPassword);
+    window.addEventListener('pagehide', clearTemporaryPassword);
+    document.getElementById('temporary-password-copy').addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(panelValue.value);
+        } catch (_) {
+            panelValue.select();
+            document.execCommand('copy');  // plain-HTTP LAN fallback
+        }
+        setFeedback(feedback, t.copied, 'success');
+    });
+
+    function badge(text, classes) {
+        const span = document.createElement('span');
+        span.className = 'rounded-full px-2 py-0.5 text-xs font-semibold ' + classes;
+        span.textContent = text;
+        return span;
+    }
+    function actionButton(action, account, label, classes) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.action = action;
+        button.dataset.id = String(account.id);
+        button.dataset.username = account.username;
+        button.className = 'rounded-lg border bg-white px-3 py-1.5 text-xs font-semibold ' + classes;
+        button.textContent = label;
+        return button;
+    }
+    function cell(classes) {
+        const td = document.createElement('td');
+        td.className = 'px-4 py-3 ' + classes;
+        return td;
+    }
+    function renderRows(accounts) {
+        rows.replaceChildren(...accounts.map((account) => {
+            const tr = document.createElement('tr');
+            tr.dataset.userId = String(account.id);
+            const name = cell('font-semibold text-slate-900');
+            const nameText = document.createElement('span');
+            nameText.dir = 'ltr';
+            nameText.textContent = account.username;
+            name.append(nameText);
+            if (account.id === currentUserId) {
+                const you = document.createElement('span');
+                you.className = 'ms-1 text-xs font-normal text-slate-500';
+                you.textContent = t.you;
+                name.append(you);
+            }
+            const role = cell('text-slate-700');
+            role.textContent = account.role === 'admin' ? t.admin : t.seller;
+            const status = cell('');
+            status.append(account.is_active
+                ? badge(t.active, 'bg-green-50 text-green-800')
+                : badge(t.inactive, 'bg-slate-100 text-slate-600'));
+            if (account.must_change_password) {
+                const pending = badge(t.pending, 'ms-1 bg-amber-50 text-amber-800');
+                status.append(' ', pending);
+            }
+            const created = cell('text-xs text-slate-600');
+            created.dir = 'ltr';
+            created.textContent = String(account.created_at || '').replace('T', ' ').slice(0, 16);
+            const actions = cell('');
+            const group = document.createElement('div');
+            group.className = 'flex flex-wrap gap-2';
+            if (account.role === 'seller') {
+                group.append(actionButton('reset', account, t.reset, 'border-slate-200 text-blue-900 hover:border-blue-300'));
+            }
+            if (account.id !== currentUserId) {
+                group.append(account.is_active
+                    ? actionButton('deactivate', account, t.deactivate, 'border-red-200 text-red-700 hover:bg-red-50')
+                    : actionButton('activate', account, t.activate, 'border-green-200 text-green-800 hover:bg-green-50'));
+            }
+            actions.append(group);
+            tr.append(name, role, status, created, actions);
+            return tr;
+        }));
+    }
+    async function refresh() {
+        const response = await fetch('/api/users', { cache: 'no-store' });
+        if (response.ok) renderRows(await response.json());
+    }
+
+    createForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const username = createInput.value.trim();
+        if (username.length < 3 || username.length > 64 || /\s/.test(username)) {
+            setFeedback(createFeedback, t.invalidUsername, 'error');
+            createInput.focus();
+            return;
+        }
+        try {
+            const response = await fetch('/api/users', {
+                method: 'POST',
+                cache: 'no-store',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username })
+            });
+            if (!response.ok) {
+                const message = response.status === 409 ? t.taken
+                    : response.status === 422 ? t.invalidUsername
+                    : response.status === 403 ? t.adminOnly : t.failed;
+                setFeedback(createFeedback, message, 'error');
+                return;
+            }
+            const result = await response.json();
+            createInput.value = '';
+            setFeedback(createFeedback, t.created, 'success');
+            showTemporaryPassword(result.user.username, result.temporary_password);
+            await refresh();
+        } catch (_) {
+            setFeedback(createFeedback, t.failed, 'error');
+        }
+    });
+
+    rows.addEventListener('click', async (event) => {
+        const button = event.target.closest('button[data-action]');
+        if (!button) return;
+        const { action, id, username } = button.dataset;
+        if (action === 'reset' && !window.confirm(t.confirmReset)) return;
+        if (action === 'deactivate' && !window.confirm(t.confirmDeactivate)) return;
+        button.disabled = true;
+        try {
+            const response = action === 'reset'
+                ? await fetch('/api/users/' + encodeURIComponent(id) + '/reset-password', { method: 'POST', cache: 'no-store' })
+                : await fetch('/api/users/' + encodeURIComponent(id), {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ is_active: action === 'activate' })
+                });
+            if (!response.ok) {
+                const message = response.status === 409 && action === 'deactivate' ? t.cannotDeactivate
+                    : response.status === 403 ? t.adminOnly : t.failed;
+                setFeedback(feedback, message, 'error');
+                return;
+            }
+            if (action === 'reset') {
+                const result = await response.json();
+                showTemporaryPassword(result.user.username || username, result.temporary_password);
+                setFeedback(feedback, t.resetDone, 'success');
+            } else {
+                setFeedback(feedback, action === 'activate' ? t.activated : t.deactivated, 'success');
+            }
+            await refresh();
+        } catch (_) {
+            setFeedback(feedback, t.failed, 'error');
+        } finally {
+            button.disabled = false;
+        }
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}

@@ -398,6 +398,28 @@ def csrf_token_for(request: Request) -> str:
     return context.csrf_token if isinstance(context, AuthContext) else ""
 
 
+def is_admin(request: Request) -> bool:
+    """Jinja/route helper: whether the request's session belongs to an admin.
+
+    The role comes from the database on every request (``load_session``), so a
+    role or activation change takes effect on the very next request.
+    """
+    context = getattr(request.state, "auth", None)
+    return isinstance(context, AuthContext) and context.role == "admin"
+
+
+async def require_admin(request: Request) -> AuthContext:
+    """Route dependency: refuse anyone but an admin, before the body is used.
+
+    Runs after the app-wide gate, so the caller is already authenticated, has
+    passed CSRF and has no pending password change. The refusal is identical
+    whatever the target resource, so it reveals nothing about it.
+    """
+    if not is_admin(request):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return request.state.auth
+
+
 # ---------------------------------------------------------------------------
 # Request authorisation
 # ---------------------------------------------------------------------------
@@ -467,8 +489,13 @@ async def authorize_request(request: Request, db: AsyncSession = Depends(get_db)
 # Throttling
 # ---------------------------------------------------------------------------
 
+def username_attempt_key(username: str) -> str:
+    """Digest under which failed sign-ins for a normalised username are counted."""
+    return _digest(f"username:{username}")
+
+
 def _attempt_keys(username: str, address: str) -> tuple[str, str]:
-    return _digest(f"username:{username}"), _digest(f"address:{address}")
+    return username_attempt_key(username), _digest(f"address:{address}")
 
 
 async def _is_throttled(db: AsyncSession, username_key: str, address_key: str, now: datetime) -> bool:
@@ -718,5 +745,6 @@ def create_router(templates: Jinja2Templates) -> APIRouter:
 def install(app: FastAPI, templates: Jinja2Templates) -> None:
     """Register auth routes, the redirect handler and template helpers."""
     templates.env.globals["csrf_token_for"] = csrf_token_for
+    templates.env.globals["is_admin"] = is_admin
     app.add_exception_handler(AuthRedirect, auth_redirect_handler)
     app.include_router(create_router(templates))
