@@ -23,6 +23,7 @@ def test_models_and_relationships(tmp_path, monkeypatch) -> None:
                 "operators", "services", "customers", "transactions", "settings",
                 "debt_ledger", "cash_register", "operator_balance",
                 "operator_topup", "operator_credit_refund", "profit_ledger", "currency_denomination",
+                "users", "user_sessions", "login_attempts",
             }
             sessions = async_sessionmaker(engine, expire_on_commit=False)
             async with sessions() as session:

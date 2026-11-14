@@ -20,17 +20,27 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
+    from . import auth
     from .commission import get_commission_for_transaction
     from .database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from .seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from .validation import validate_syrian_phone
 else:
+    import auth
     from commission import get_commission_for_transaction
     from database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from validation import validate_syrian_phone
 
-app = FastAPI(title="Uniter")
+# Every routed request passes the auth gate (see ``auth.authorize_request``);
+# the interactive API docs are disabled so no schema is served unauthenticated.
+app = FastAPI(
+    title="Uniter",
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    dependencies=[Depends(auth.authorize_request)],
+)
 
 # PyInstaller --onefile extracts templates to sys._MEIPASS at runtime.
 _template_dir = Path(__file__).resolve().parent / "templates"
@@ -39,6 +49,7 @@ if getattr(sys, "_MEIPASS", None):
     if _meipass_templates.is_dir():
         _template_dir = _meipass_templates
 templates = Jinja2Templates(directory=str(_template_dir))
+auth.install(app, templates)
 _static_dir = _template_dir.parent / "static"
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 

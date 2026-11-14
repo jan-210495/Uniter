@@ -6,3 +6,10 @@ A bilingual (Arabic/English) web application for managing mobile units charging 
 - **Backend**: FastAPI (Python 3.12) + SQLAlchemy + SQLite
 - **Frontend**: Responsive HTML5 / Tailwind CSS (Monochrome Precision theme) + Vanilla JS with Arabic RTL support (Noto Sans Arabic)
 - **Features**: Dual operators (MTN, Syriatel), Pre-Paid & Post-Paid charging, USSD quick-copy workflow, transaction logs, debt/cash ledger.
+
+## Sign-in and accounts
+- Every page and API requires signing in; only the sign-in page, static assets, the web manifest and `/api/health` are public.
+- **First run:** the first time an initialised database is opened (desktop launch, `python -m backend.seed`, or web startup on an existing database), a single bootstrap account is created: username `admin`, temporary password `admin`. Signing in with it immediately requires choosing a new password (at least 8 characters) before anything else is reachable. The temporary password then stops working, and the bootstrap account is never recreated or reset on later startups.
+- Supported roles are `admin` and `seller`; only the initial admin exists for now.
+- Sessions are server-side (the browser holds an HttpOnly, `SameSite=Lax` cookie; the database stores only its SHA-256 digest). Sessions end after 4 hours idle or 12 hours total, and on sign-out or password change. The cookie is marked `Secure` automatically over HTTPS; override with `UNITER_COOKIE_SECURE=1` or `0` (e.g. behind a TLS proxy).
+- State-changing requests require the session's CSRF token (sent automatically by the app's pages). Repeated failed sign-ins are throttled: 5 per username or 20 per client address within 15 minutes.

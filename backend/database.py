@@ -245,6 +245,67 @@ class Setting(Base):
     )
 
 
+#: The only account roles the system supports. Seller accounts are created by
+#: a later slice; this one only bootstraps the initial admin.
+USER_ROLES = ("admin", "seller")
+
+
+class User(Base):
+    """An individual sign-in account. Passwords are only ever stored hashed."""
+
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("role IN ('admin', 'seller')", name="ck_users_role"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Stored normalised (NFKC, trimmed, case-folded) so lookups and throttling
+    # cannot be split by case or whitespace variants.
+    username: Mapped[str] = mapped_column(String(150), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class UserSession(Base):
+    """Server-side session. Only a SHA-256 digest of the cookie value is kept.
+
+    The CSRF token is derived from the cookie value on demand (see ``auth``),
+    so no usable secret is ever written to the database.
+    """
+
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class LoginAttempt(Base):
+    """A failed sign-in, keyed by a digest of the normalised username or address."""
+
+    __tablename__ = "login_attempts"
+    __table_args__ = (
+        CheckConstraint("scope IN ('username', 'address')", name="ck_login_attempts_scope"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(String(10), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
+
+
 async def get_setting(
     session: AsyncSession, key: str, default: str | None = None
 ) -> str | None:
@@ -281,6 +342,17 @@ async def _migrate_schema() -> None:
 
     await migrate_transaction_lifecycle(engine)
     await migrate_operator_credit_refunds(engine)
+    await _migrate_auth(engine)
+
+
+async def _migrate_auth(target_engine) -> bool:
+    """Install the auth tables and the one-time bootstrap admin (guarded)."""
+    try:
+        from .auth import migrate_auth_schema
+    except ImportError:  # pragma: no cover - flat module layout (PyInstaller)
+        from auth import migrate_auth_schema
+
+    return await migrate_auth_schema(target_engine)
 
 
 async def upgrade_existing_database() -> bool:
@@ -311,6 +383,9 @@ async def upgrade_existing_database() -> bool:
     changed = await _upgrade(engine, DATABASE_URL.database)
     if DATABASE_URL.database and os.path.exists(DATABASE_URL.database):
         changed = await migrate_operator_credit_refunds(engine) or changed
+        # Runs only after every schema safety check above has passed; it is a
+        # no-op for uninitialised files and never recreates the bootstrap.
+        changed = await _migrate_auth(engine) or changed
     return changed
 
 

@@ -64,6 +64,7 @@ from backend.database import (
     validate_existing_refund_schema,
 )
 from backend.migrations import SchemaUpgradeError, migrate_transaction_lifecycle
+from backend.auth import migrate_auth_schema
 from backend.seed import seed_data
 
 
@@ -78,6 +79,8 @@ async def _seed_database() -> None:
         await connection.run_sync(Base.metadata.create_all)
     await migrate_transaction_lifecycle(engine)
     await migrate_operator_credit_refunds(engine)
+    # One-time bootstrap admin; never recreated once it has been recorded.
+    await migrate_auth_schema(engine)
     async with SessionLocal() as session:
         await seed_data(session)
 

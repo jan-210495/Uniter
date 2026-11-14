@@ -8,6 +8,7 @@ from sqlalchemy import URL, delete, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.database import Base, CurrencyDenomination, Setting, enable_sqlite_foreign_keys, get_db
+from backend.auth_test_support import sign_in
 from backend.main import app
 from backend.seed import generate_ussd, seed_data
 
@@ -32,6 +33,7 @@ def client(tmp_path) -> Iterator[TestClient]:
     app.dependency_overrides[get_db] = override_db
     try:
         with TestClient(app) as test_client:
+            sign_in(test_client, sessions)
             yield test_client
     finally:
         app.dependency_overrides.pop(get_db, None)

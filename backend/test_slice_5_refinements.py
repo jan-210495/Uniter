@@ -21,6 +21,7 @@ from backend.database import (
     enable_sqlite_foreign_keys,
     get_db,
 )
+from backend.auth_test_support import sign_in
 from backend.main import app
 from backend.seed import generate_ussd, seed_data
 from backend.validation import normalize_phone, validate_syrian_phone
@@ -47,6 +48,7 @@ def client(tmp_path) -> Iterator[tuple[TestClient, async_sessionmaker]]:
     app.dependency_overrides[get_db] = override_db
     try:
         with TestClient(app) as test_client:
+            sign_in(test_client, sessions)
             yield test_client, sessions
     finally:
         app.dependency_overrides.pop(get_db, None)

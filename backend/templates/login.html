@@ -1,0 +1,32 @@
+{% extends "auth_base.html" %}
+{% set ar = lang == 'ar' %}
+
+{% block title %}{{ 'تسجيل الدخول' if ar else 'Sign in' }} · Uniter{% endblock %}
+
+{% block content %}
+<h1 class="mb-5 text-xl font-bold text-slate-900">{{ 'تسجيل الدخول' if ar else 'Sign in' }}</h1>
+{% if error %}
+<p id="login-error" role="alert" class="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-800">{{ error }}</p>
+{% endif %}
+<form method="post" action="/login" class="space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="lang" value="{{ lang }}">
+    {% if next_path %}<input type="hidden" name="next" value="{{ next_path }}">{% endif %}
+    <div>
+        <label for="login-username" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'اسم المستخدم' if ar else 'Username' }}</label>
+        <input id="login-username" name="username" type="text" dir="ltr" value="{{ username }}" required maxlength="150" autocomplete="username" autocapitalize="none" spellcheck="false" autofocus class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+    </div>
+    <div>
+        <label for="login-password" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'كلمة المرور' if ar else 'Password' }}</label>
+        <input id="login-password" name="password" type="password" dir="ltr" required maxlength="1024" autocomplete="current-password" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+    </div>
+    <button type="submit" class="w-full rounded-lg bg-blue-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'دخول' if ar else 'Sign in' }}</button>
+</form>
+{% endblock %}
+
+{% block languages %}
+{% set suffix = '&next=' ~ (next_path|urlencode) if next_path else '' %}
+<a href="/login?lang=en{{ suffix }}" lang="en" class="hover:text-blue-800"{% if not ar %} aria-current="true"{% endif %}>English</a>
+<span aria-hidden="true" class="text-slate-300">|</span>
+<a href="/login?lang=ar{{ suffix }}" lang="ar" class="hover:text-blue-800"{% if ar %} aria-current="true"{% endif %}>العربية</a>
+{% endblock %}

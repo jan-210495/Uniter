@@ -1,0 +1,32 @@
+{% set ar = lang == 'ar' %}<!DOCTYPE html>
+<html lang="{{ lang|default('en') }}" dir="{{ 'rtl' if ar else 'ltr' }}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="same-origin">
+    <title>{% block title %}Uniter{% endblock %}</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#1e3a8a">
+    <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Noto Sans Arabic', Tahoma, sans-serif; }
+    </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900">
+    <main id="app-main" class="flex min-h-screen items-center justify-center px-4 py-10">
+        <div class="w-full max-w-sm">
+            <p class="mb-6 text-center text-2xl font-bold text-blue-950">Uniter</p>
+            <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                {% block content %}{% endblock %}
+            </section>
+            <nav class="mt-5 flex items-center justify-center gap-4 text-sm font-semibold text-slate-600" aria-label="{{ 'اللغة' if ar else 'Language' }}">
+                {% block languages %}{% endblock %}
+            </nav>
+        </div>
+    </main>
+</body>
+</html>
