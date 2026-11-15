@@ -148,21 +148,23 @@ def test_customers_template_totals_and_cells_in_syp() -> None:
 
 
 def test_topup_template_balance_in_syp() -> None:
-    operators = [{"code": "mtn", "name": "MTN", "balance_cents": 7482500, "last_topup_at": None}]
-    rendered = ENV.get_template("topup.html").render(
-        lang="en", nav_page="topup", operators=operators
+    # The shop-credit top-up card now lives on the Operators page.
+    companies = [{"code": "mtn", "name": "MTN", "balance_cents": 7482500, "last_topup_at": None,
+                  "active_sims": [], "archived_sims": []}]
+    rendered = ENV.get_template("operators.html").render(
+        lang="en", nav_page="operators", companies=companies
     )
     assert 'data-field="balance" dir="ltr">74,825</span>' in rendered
     assert "SYP" in rendered
-    arabic = ENV.get_template("topup.html").render(
-        lang="ar", nav_page="topup", operators=operators
+    arabic = ENV.get_template("operators.html").render(
+        lang="ar", nav_page="operators", companies=companies
     )
     assert 'data-field="balance" dir="ltr">74,825</span>' in arabic
     assert "ل.س" in arabic
 
 
 @pytest.mark.parametrize(
-    "template_name", ["transactions.html", "stats.html", "customers.html", "topup.html", "settlement.html"]
+    "template_name", ["transactions.html", "stats.html", "customers.html", "operators.html", "settlement.html"]
 )
 def test_client_scripts_use_shared_syp_formatter(template_name: str) -> None:
     rendered = ENV.get_template(template_name).render(

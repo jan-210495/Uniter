@@ -27,3 +27,16 @@ There is no recovery screen and no reset password. If an initialised database ha
    `python -c "import getpass, sqlite3, sys; from backend.auth import hash_password; db = sqlite3.connect(sys.argv[1]); db.execute('UPDATE users SET password_hash = ?, must_change_password = 1, is_active = 1 WHERE username = ?', (hash_password(getpass.getpass('New password: ')), 'admin')); db.commit()" <database file>`
    The account must choose a new password at its next sign-in.
 4. Start Uniter again and sign in.
+
+## Operators and SIM cards
+- The **Operators** page (side menu) lists MTN first and Syriatel second. MTN and Syriatel are the two supported companies; their services and USSD settings are unchanged. Each company section shows:
+  - **Shop credit**: the company's prepaid balance with its last top-up and the top-up form (this replaces the former Top-up page; `/topup` now opens the Operators page). POS sales, top-ups and failed-sale refunds are still charged to and credited to this shop credit.
+  - **SIM cards**: the individual SIM/card accounts of that company you can use, each with a display name, phone number, owner (for private cards), private/shared status and active/archived status. A fresh install starts with no SIM cards.
+- Who sees and manages SIM cards (enforced by the server on every page and API call):
+  - A seller sees shared SIM cards and their own private SIM cards. Other sellers' private SIM cards are never shown or returned; asking for one by id answers "not found".
+  - Admins see every SIM card, including archived ones (under **Archived SIM cards** in each company section).
+  - A seller can add a private SIM card for themselves or a shared one. An admin can add a private SIM card for any active account, or a shared one.
+  - The owner of a private SIM card, or an admin, can edit its name and phone number, archive it and restore it. Only an admin can edit, archive or restore a shared SIM card (even one a seller added), or change a SIM card's owner or private/shared status. The company of a SIM card never changes.
+  - SIM cards are archived, never deleted: an archived card keeps its identity and owner and can be restored. Sellers do not see archived shared SIM cards.
+- SIM cards do not hold money yet. Per-SIM balances and top-ups, a personal default SIM per company, choosing the SIM in POS and charging/refunding sales to the chosen SIM are planned for the next update (v1.0.4 Slice 4.1).
+- **Upgrading:** the SIM card table is added automatically on start-up (recorded as `v1.0.4-sim-cards` in `schema_migrations`). No SIM card is created and no money is moved: every existing shop credit balance, top-up, refund and sale stays attached to its company exactly as before. If a database already contains a `sim_cards` table with a different structure, Uniter refuses to start and leaves the file unchanged.

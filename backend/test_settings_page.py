@@ -321,7 +321,7 @@ def test_base_template_renders_burger_menu_and_drawer(client: TestClient) -> Non
             assert 'id="app-drawer-backdrop"' in rendered
             assert 'id="app-drawer-close"' in rendered
             # Every page link plus the language switcher inside the drawer.
-            for href in ("/pos", "/settlement", "/transactions", "/customers", "/settings", "/topup"):
+            for href in ("/pos", "/settlement", "/transactions", "/customers", "/settings", "/operators"):
                 assert f'href="{href}"' in rendered
             assert "?lang=en" in rendered and "?lang=ar" in rendered
             # Escape closes; the drawer slides from the start edge.

@@ -167,11 +167,13 @@ def test_topup_page_renders_in_both_languages(client: TestClient) -> None:
     arabic = client.get("/topup", params={"lang": "ar"})
     fallback = client.get("/topup", params={"lang": "invalid"})
     assert english.status_code == arabic.status_code == fallback.status_code == 200
-    assert "Balance top-up" in english.text
+    # /topup now leads to the Operators page, where shop credit is topped up.
+    assert english.url.path == "/operators"
+    assert "Operators" in english.text and "Shop credit" in english.text
     assert "Remaining balance" in english.text
     assert "Last top-up" in english.text
     assert '<html lang="ar" dir="rtl">' in arabic.text
-    assert "تعبئة الرصيد" in arabic.text
+    assert "رصيد المحل" in arabic.text
     assert "الرصيد المتبقي" in arabic.text
     assert "آخر تعبئة" in arabic.text
     assert '<html lang="en" dir="ltr">' in fallback.text
@@ -183,7 +185,7 @@ def test_topup_page_renders_in_both_languages(client: TestClient) -> None:
     assert "fetch('/api/operators/topup'" in english.text
     assert "fetch('/api/operators/balance'" in english.text
     # Shared navigation exposes the new page and highlights it.
-    assert 'href="/topup"' in english.text
+    assert 'href="/operators"' in english.text
     assert 'aria-current="page"' in english.text
 
 

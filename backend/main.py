@@ -20,13 +20,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
-    from . import auth, users
+    from . import auth, sims, users
     from .commission import get_commission_for_transaction
     from .database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, User, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from .seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from .validation import validate_syrian_phone
 else:
     import auth
+    import sims
     import users
     from commission import get_commission_for_transaction
     from database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, User, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
@@ -52,6 +53,7 @@ if getattr(sys, "_MEIPASS", None):
 templates = Jinja2Templates(directory=str(_template_dir))
 auth.install(app, templates)
 app.include_router(users.create_router(templates))
+app.include_router(sims.create_router(templates))
 _static_dir = _template_dir.parent / "static"
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
@@ -513,40 +515,6 @@ async def settings_page(request: Request, db: DbSession, lang: str = "en") -> HT
             # Display only; the PUT endpoints enforce the same rule server-side.
             "can_manage_settings": auth.is_admin(request),
         },
-    )
-
-
-@app.get("/topup", response_class=HTMLResponse)
-async def topup_page(request: Request, db: DbSession, lang: str = "en") -> HTMLResponse:
-    """Balance topup page: per-operator remaining credit, last topup and form."""
-    language = lang if lang in {"en", "ar"} else "en"
-    rows = (
-        await db.execute(
-            select(
-                Operator.code,
-                Operator.name,
-                func.coalesce(OperatorBalance.balance_cents, 0).label("balance_cents"),
-                func.max(OperatorTopup.created_at).label("last_topup_at"),
-            )
-            .outerjoin(OperatorBalance, OperatorBalance.operator_id == Operator.id)
-            .outerjoin(OperatorTopup, OperatorTopup.operator_id == Operator.id)
-            .group_by(Operator.id)
-            .order_by(Operator.code)
-        )
-    ).all()
-    operators = [
-        {
-            "code": row.code,
-            "name": row.name,
-            "balance_cents": int(row.balance_cents or 0),
-            "last_topup_at": row.last_topup_at,
-        }
-        for row in rows
-    ]
-    return templates.TemplateResponse(
-        request=request,
-        name="topup.html",
-        context={"lang": language, "nav_page": "topup", "operators": operators},
     )
 
 

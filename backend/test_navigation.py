@@ -7,10 +7,10 @@ import pytest
 from backend.test_pos import client  # noqa: F401 -- disposable seeded DB fixture
 
 
-ROUTES = ("/pos", "/topup", "/transactions", "/customers", "/settlement", "/stats", "/settings")
+ROUTES = ("/pos", "/operators", "/transactions", "/customers", "/settlement", "/stats", "/settings")
 LABELS = {
-    "en": ("POS", "Top-up", "Transactions", "Customers", "Settlement", "Stats", "Settings"),
-    "ar": ("نقطة البيع", "تعبئة الرصيد", "المعاملات", "العملاء", "تسوية الديون", "الإحصائيات", "الإعدادات"),
+    "en": ("POS", "Operators", "Transactions", "Customers", "Settlement", "Stats", "Settings"),
+    "ar": ("نقطة البيع", "المشغّلون", "المعاملات", "العملاء", "تسوية الديون", "الإحصائيات", "الإعدادات"),
 }
 
 

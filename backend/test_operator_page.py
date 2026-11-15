@@ -70,7 +70,7 @@ def test_operator_page_renders_mtn(client: TestClient) -> None:
     assert "1,500" in html.text
     # Code badge, top-up link and the eight-column transactions table.
     assert 'dir="ltr">mtn<' in html.text
-    assert 'href="/topup"' in html.text
+    assert 'href="/operators#mtn"' in html.text  # top-up now lives on the Operators page
     assert html.text.count('scope="col"') == 8
     for header in ("Reference", "Date/time", "Customer", "Operator", "Service",
                    "Amount", "Status", "USSD"):

@@ -150,7 +150,8 @@ def build_v103(env: Env) -> None:
     async def build():
         async with env.engine.begin() as connection:
             await connection.run_sync(database.Base.metadata.create_all)
-            for table in ("user_sessions", "login_attempts", "users"):
+            # v1.0.3 had neither accounts nor SIM cards (added in v1.0.4).
+            for table in ("sim_cards", "user_sessions", "login_attempts", "users"):
                 await connection.exec_driver_sql(f"DROP TABLE {table}")
     asyncio.run(build())
 

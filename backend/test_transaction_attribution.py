@@ -149,7 +149,8 @@ async def _build_v103(engine: AsyncEngine, sessions: async_sessionmaker) -> None
     """A v1.0.3 install with history: linked, one-time, failed and removed rows."""
     v103_tables = [
         table for table in Base.metadata.sorted_tables
-        if table.name not in AUTH_TABLES | {"transactions"}
+        # v1.0.3 had neither accounts nor SIM cards (added in v1.0.4).
+        if table.name not in AUTH_TABLES | {"transactions", "sim_cards"}
     ]
     async with engine.begin() as connection:
         await connection.exec_driver_sql(V103_TRANSACTIONS_DDL)

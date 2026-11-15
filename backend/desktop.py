@@ -60,8 +60,8 @@ _data_dir = ensure_data_dir()
 import uvicorn
 from backend.main import app, templates
 from backend.database import (
-    Base, engine, SessionLocal, migrate_operator_credit_refunds,
-    validate_existing_refund_schema,
+    Base, engine, SessionLocal, migrate_operator_credit_refunds, migrate_sim_cards,
+    validate_existing_refund_schema, validate_existing_sim_schema,
 )
 from backend.migrations import SchemaUpgradeError, migrate_transaction_lifecycle
 from backend.auth import migrate_auth_schema
@@ -75,12 +75,15 @@ from backend.seed import seed_data
 async def _seed_database() -> None:
     """Create all tables, upgrade legacy schemas and seed data idempotently."""
     await validate_existing_refund_schema(engine)
+    await validate_existing_sim_schema(engine)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     await migrate_transaction_lifecycle(engine)
     await migrate_operator_credit_refunds(engine)
     # Auth tables only: the first admin is created by one-time /setup.
     await migrate_auth_schema(engine)
+    # SIM card table only: the app starts with no SIM cards.
+    await migrate_sim_cards(engine)
     async with SessionLocal() as session:
         await seed_data(session)
 

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import URL, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint, event, select
+from sqlalchemy import URL, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint, event, select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
@@ -314,6 +314,59 @@ class LoginAttempt(Base):
     attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
 
 
+#: Recorded in ``schema_migrations`` once the SIM card table is installed.
+SIM_SCHEMA_VERSION = "v1.0.4-sim-cards"
+#: Longest SIM display name (characters, after trimming).
+SIM_NAME_MAX_LENGTH = 80
+
+
+class SimCard(Base):
+    """One physical SIM/card account belonging to a company (v1.0.4 slice 4).
+
+    ``operators`` stays the *company* configuration (MTN, Syriatel, with their
+    services and USSD settings); a SIM card is a separate record of exactly one
+    company. A private SIM has an owner account; a shared SIM has none and is
+    usable by every account. SIMs are archived, never deleted, so their
+    identity survives for history.
+
+    Identity and visibility only: money stays on the company shop credit
+    (``operator_balance``) until per-SIM balances are introduced, so this table
+    deliberately has no balance column.
+    """
+
+    __tablename__ = "sim_cards"
+    __table_args__ = (
+        CheckConstraint(
+            "(is_shared = 1 AND owner_user_id IS NULL) OR (is_shared = 0 AND owner_user_id IS NOT NULL)",
+            name="sim_card_visibility",
+        ),
+        CheckConstraint(
+            f"length(trim(display_name)) BETWEEN 1 AND {SIM_NAME_MAX_LENGTH}", name="sim_card_display_name"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    operator_id: Mapped[int] = mapped_column(
+        ForeignKey("operators.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    display_name: Mapped[str] = mapped_column(String(SIM_NAME_MAX_LENGTH), nullable=False)
+    phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    owner_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, default=None, index=True
+    )
+    is_shared: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    created_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+
 async def get_setting(
     session: AsyncSession, key: str, default: str | None = None
 ) -> str | None:
@@ -351,6 +404,7 @@ async def _migrate_schema() -> None:
     await migrate_transaction_lifecycle(engine)
     await migrate_operator_credit_refunds(engine)
     await _migrate_auth(engine)
+    await migrate_sim_cards(engine)
 
 
 async def _migrate_auth(target_engine) -> bool:
@@ -388,12 +442,15 @@ async def upgrade_existing_database() -> bool:
 
     if DATABASE_URL.database and os.path.exists(DATABASE_URL.database):
         await validate_existing_refund_schema(engine)
+        await validate_existing_sim_schema(engine)
     changed = await _upgrade(engine, DATABASE_URL.database)
     if DATABASE_URL.database and os.path.exists(DATABASE_URL.database):
         changed = await migrate_operator_credit_refunds(engine) or changed
         # Runs only after every schema safety check above has passed; it is a
         # no-op for uninitialised files and never creates or changes accounts.
         changed = await _migrate_auth(engine) or changed
+        # Needs the users table, so it runs after the auth step.
+        changed = await migrate_sim_cards(engine) or changed
     return changed
 
 
@@ -479,8 +536,102 @@ async def migrate_operator_credit_refunds(target_engine) -> bool:
             raise
 
 
+def _validate_sim_schema(connection) -> None:
+    """Fail closed on a preexisting ``sim_cards`` table that differs from ours.
+
+    Compares columns, keys, foreign keys (with their ON DELETE rules), unique
+    constraints, checks and indexes against a scratch copy created from the
+    model, so a table that cannot enforce the visibility/owner invariants is
+    never used.
+    """
+    from sqlalchemy import create_engine, inspect
+    try:
+        from .migrations import SchemaUpgradeError
+    except ImportError:  # pragma: no cover - frozen flat layout
+        from migrations import SchemaUpgradeError
+
+    table = SimCard.__tablename__
+
+    def signature(inspector):
+        columns = tuple(
+            (c["name"], str(c["type"]), c["nullable"], c["default"]) for c in inspector.get_columns(table)
+        )
+        primary = tuple(inspector.get_pk_constraint(table)["constrained_columns"])
+        foreign = sorted(
+            (tuple(f["constrained_columns"]), f["referred_table"], tuple(f["referred_columns"]),
+             tuple(sorted(f["options"].items())))
+            for f in inspector.get_foreign_keys(table)
+        )
+        unique = sorted(tuple(u["column_names"]) for u in inspector.get_unique_constraints(table))
+        indexes = sorted((i["name"], tuple(i["column_names"]), bool(i["unique"])) for i in inspector.get_indexes(table))
+        checks = sorted("".join(c["sqltext"].lower().split()) for c in inspector.get_check_constraints(table))
+        return columns, primary, foreign, unique, indexes, checks
+
+    expected_engine = create_engine("sqlite://")
+    try:
+        with expected_engine.begin() as expected:
+            SimCard.__table__.create(expected)
+            if signature(inspect(connection)) != signature(inspect(expected)):
+                raise SchemaUpgradeError("sim_cards schema is incompatible; refusing startup")
+    finally:
+        expected_engine.dispose()
+
+
+async def validate_existing_sim_schema(target_engine) -> None:
+    """Read-only preflight, run before any startup step writes to the file."""
+    async with target_engine.connect() as connection:
+        exists = (await connection.exec_driver_sql(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sim_cards'"
+        )).scalar()
+        if exists:
+            await connection.run_sync(_validate_sim_schema)
+
+
+async def migrate_sim_cards(target_engine) -> bool:
+    """Install the SIM card table under a write lock; never creates a SIM.
+
+    Same guarded contract as the other startup steps: uninitialised files are
+    left untouched, an incompatible existing table fails closed, and the step
+    commits atomically or not at all. Existing money rows are not read or
+    moved: balances, top-ups, refunds and sales stay with their company.
+    """
+    try:
+        from .migrations import SchemaUpgradeError
+    except ImportError:  # pragma: no cover - frozen flat layout
+        from migrations import SchemaUpgradeError
+
+    async with target_engine.connect() as connection:
+        await connection.exec_driver_sql("BEGIN IMMEDIATE")
+        try:
+            tables = set((await connection.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )).scalars())
+            if "transactions" not in tables:
+                await connection.rollback()
+                return False
+            if not {"operators", "users"} <= tables:
+                raise SchemaUpgradeError("operators/users tables are missing; refusing to add SIM cards")
+            changed = "sim_cards" not in tables
+            await connection.run_sync(lambda sync: SimCard.__table__.create(sync, checkfirst=True))
+            await connection.run_sync(_validate_sim_schema)
+            await connection.exec_driver_sql(
+                "CREATE TABLE IF NOT EXISTS schema_migrations "
+                "(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            )
+            await connection.execute(
+                text("INSERT OR IGNORE INTO schema_migrations(version) VALUES (:version)"),
+                {"version": SIM_SCHEMA_VERSION},
+            )
+            await connection.commit()
+            return changed
+        except Exception:
+            await connection.rollback()
+            raise
+
+
 async def init_db() -> None:
     await validate_existing_refund_schema(engine)
+    await validate_existing_sim_schema(engine)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
         statement = sqlite_insert(Setting).values(
