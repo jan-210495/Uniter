@@ -32,9 +32,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from backend import database, seed
 from backend.auth_test_support import sign_in
+from backend.sim_test_support import fund_company, remember_sim
 from backend.database import (
     Base,
     OperatorBalance,
+    SimBalance,
+    SimLedger,
     ProfitLedger,
     Customer,
     Transaction,
@@ -149,8 +152,8 @@ async def _build_v103(engine: AsyncEngine, sessions: async_sessionmaker) -> None
     """A v1.0.3 install with history: linked, one-time, failed and removed rows."""
     v103_tables = [
         table for table in Base.metadata.sorted_tables
-        # v1.0.3 had neither accounts nor SIM cards (added in v1.0.4).
-        if table.name not in AUTH_TABLES | {"transactions", "sim_cards"}
+        # v1.0.3 had neither accounts nor SIM cards/balances (added in v1.0.4).
+        if table.name not in AUTH_TABLES | {"transactions", "sim_cards", "sim_balances", "sim_ledger", "sim_defaults"}
     ]
     async with engine.begin() as connection:
         await connection.exec_driver_sql(V103_TRANSACTIONS_DDL)
@@ -415,6 +418,14 @@ class World:
                         .order_by(OperatorBalance.operator_id)
                     )).all()
                 ),
+                # Slice 4.1: the SIM card balances and ledger a sale moves.
+                "sim_balances": tuple(
+                    (await session.execute(
+                        select(SimBalance.sim_card_id, SimBalance.balance_cents)
+                        .order_by(SimBalance.sim_card_id)
+                    )).all()
+                ),
+                "sim_ledger": await session.scalar(select(func.count()).select_from(SimLedger)),
             }
         return self.run(read)
 
@@ -450,10 +461,12 @@ def world(tmp_path) -> Iterator[World]:
         with TestClient(app) as admin, TestClient(app) as seller:
             sign_in(admin, sessions)
             sign_in(seller, sessions, role="seller", username="sara")
+            # Slice 4.1: one shared SIM card per company, funded by its own
+            # audited top-up; both accounts sell from it.
+            WORLD_SIMS.clear()
             for operator_code in ("mtn", "syriatel"):
-                assert admin.post(
-                    "/api/operators/topup", json={"operator_code": operator_code, "amount_cents": 1_000_000}
-                ).status_code == 200
+                WORLD_SIMS[operator_code] = fund_company(admin, operator_code, 1_000_000)
+                remember_sim(seller, operator_code, WORLD_SIMS[operator_code])
             yield World(
                 sessions=sessions,
                 admin=admin,
@@ -467,6 +480,10 @@ def world(tmp_path) -> Iterator[World]:
         asyncio.run(engine.dispose())
 
 
+#: The shared SIM card of each company in the ``world`` fixture (Slice 4.1).
+WORLD_SIMS: dict[str, int] = {}
+
+
 def sale(**overrides) -> dict:
     body = {
         "customer_phone": "0933123456",
@@ -476,6 +493,8 @@ def sale(**overrides) -> dict:
         "commit_key": new_commit_key(),
     }
     body.update(overrides)
+    if "sim_card_id" not in body and body["operator_code"] in WORLD_SIMS:
+        body["sim_card_id"] = WORLD_SIMS[body["operator_code"]]
     return body
 
 
@@ -626,9 +645,12 @@ def test_list_and_commit_responses_expose_only_the_performer_id_and_username(wor
         "id", "reference", "ussd_string", "status", "amount_cents", "created_at",
         "customer_id", "customer_phone", "customer_name", "operator_code", "operator_name",
         "service_code", "service_name", "performed_by_user_id", "performed_by_username",
+        # Slice 4.1: what funded the sale (a SIM card or the legacy credit).
+        "funding", "sim_card_id", "sim_display_name",
     }
     assert set(created) == {
         "id", "reference", "ussd_string", "status", "amount_cents", "created_at", "performed_by_user_id",
+        "sim_card_id",
     }
     assert not _mentions_secret(json.dumps(rows)), "list response mentions credential material"
     assert not _mentions_secret(json.dumps(created)), "commit response mentions credential material"

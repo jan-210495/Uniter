@@ -34,6 +34,7 @@ from sqlalchemy import select, text
 
 from backend import auth, database, seed
 from backend.auth_test_support import sign_in
+from backend.sim_test_support import sim_balance, topup_sim
 from backend.database import Operator, OperatorBalance, Service, User
 from backend.main import app
 from backend.migrations import SchemaUpgradeError
@@ -229,19 +230,56 @@ def test_v103_upgrade_preserves_every_money_row_and_creates_no_sim(env) -> None:
     assert _dump(env.engine.url.database) == first
 
 
+SIM_FK_CLAUSE = ", \n\tFOREIGN KEY(sim_card_id) REFERENCES sim_cards (id) ON DELETE RESTRICT"
+
+
+def _remove_sim_schema(path: str) -> None:
+    """Strip everything Slice 4/4.1 added from a still-empty database file.
+
+    Drops the SIM card and SIM balance tables (and the ledger's triggers),
+    their markers, and rebuilds the empty ``transactions`` table without the
+    Slice 4.1 ``sim_card_id`` column, leaving the exact Slice 3.1 shape.
+    """
+    connection = sqlite3.connect(path)
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM transactions").fetchone() == (0,)
+        connection.execute("PRAGMA foreign_keys=OFF")
+        with connection:
+            for trigger in ("sim_ledger_no_update", "sim_ledger_no_delete"):
+                connection.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+            for table in ("sim_defaults", "sim_ledger", "sim_balances", "sim_cards"):
+                connection.execute(f"DROP TABLE IF EXISTS {table}")
+            connection.execute("DELETE FROM schema_migrations WHERE version IN (?, ?)",
+                               (SIM_MARKER, database.SIM_BALANCE_SCHEMA_VERSION))
+            ddl = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='transactions'").fetchone()[0]
+            assert "\tsim_card_id INTEGER, \n" in ddl and SIM_FK_CLAUSE in ddl, ddl
+            ddl = ddl.replace("\tsim_card_id INTEGER, \n", "").replace(SIM_FK_CLAUSE, "")
+            indexes = [sql for (sql,) in connection.execute(
+                "SELECT sql FROM sqlite_master WHERE tbl_name='transactions' AND type IN ('index', 'trigger')"
+                " AND sql IS NOT NULL")]
+            assert not [sql for sql in indexes if "sim_card_id" in sql]
+            connection.execute("DROP TABLE transactions")
+            connection.execute(ddl)
+            for sql in indexes:
+                connection.execute(sql)
+        assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
+        assert "sim_card_id" not in [row[1] for row in connection.execute("PRAGMA table_info(transactions)")]
+    finally:
+        connection.close()
+
+
 def _build_v104_slice31(env) -> None:
     """A v1.0.4 (Slice 3.1) install: auth, performer column, no sim_cards."""
     async def build():
-        tables = [t for t in database.Base.metadata.sorted_tables if t.name != "sim_cards"]
+        # Slice 3.1 had no SIM cards (nor the Slice 4.1 SIM balance tables).
+        tables = [t for t in database.Base.metadata.sorted_tables
+                  if t.name not in {"sim_cards", "sim_balances", "sim_ledger", "sim_defaults"}]
         async with env.engine.begin() as connection:
             await connection.run_sync(lambda sync: database.Base.metadata.create_all(sync, tables=tables))
     asyncio.run(build())
-    asyncio.run(seed.main())  # pre-Slice-4 code path also ran init_db; sim table dropped below
-    async def drop(session):
-        await session.execute(text("DROP TABLE sim_cards"))
-        await session.execute(text("DELETE FROM schema_migrations WHERE version = :v"), {"v": SIM_MARKER})
-        await session.commit()
-    env.run(drop)
+    asyncio.run(seed.main())  # pre-Slice-4 code path also ran init_db; SIM schema removed below
+    _remove_sim_schema(env.engine.url.database)
     owner = add_account(env, "owner", role="admin")
     async def history(session):
         await session.execute(text("UPDATE operator_balance SET balance_cents = 777000 WHERE operator_id = 2"))
@@ -526,21 +564,29 @@ def test_sim_owner_link_survives_owner_deactivation(people, fresh) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_sales_and_topups_still_use_the_company_shop_credit(people, fresh) -> None:
+def test_sales_use_the_selected_sim_and_never_the_company_shop_credit(people, fresh) -> None:
+    """Slice 4.1: the legacy company credit is frozen; a sale debits its SIM card."""
     sara = people("sara")
     sim = created(sara)
-    assert sara.post("/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 1_000_000}).status_code == 200
-    sale = sara.post("/api/transactions", json={
-        "customer_phone": "0944123456", "operator_code": "mtn", "service_code": "prepaid",
-        "amount_cents": 50_000, "commit_key": "slice4-boundary-key-0001"})
-    assert sale.status_code == 200, sale.text
     async def balances(session):
         return dict((await session.execute(
             select(Operator.code, OperatorBalance.balance_cents).join(Operator, Operator.id == OperatorBalance.operator_id)
         )).all())
-    assert fresh.run(balances) == {"mtn": 950_000, "syriatel": 0}
+    legacy = sara.post("/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 1_000_000})
+    assert legacy.status_code == 409
+    assert fresh.run(balances) == {"mtn": 0, "syriatel": 0}
+    assert topup_sim(sara, sim["id"], 1_000_000).status_code == 200
+    sale = sara.post("/api/transactions", json={
+        "customer_phone": "0944123456", "operator_code": "mtn", "service_code": "prepaid",
+        "amount_cents": 50_000, "commit_key": "slice4-boundary-key-0001", "sim_card_id": sim["id"]})
+    assert sale.status_code == 200, sale.text
+    assert sim_balance(sara, sim["id"]) == 950_000
+    assert fresh.run(balances) == {"mtn": 0, "syriatel": 0}
+    # Archiving moves no money anywhere.
     assert sara.post(f"/api/sims/{sim['id']}/archive").status_code == 200
-    assert fresh.run(balances) == {"mtn": 950_000, "syriatel": 0}
+    assert fresh.run(balances) == {"mtn": 0, "syriatel": 0}
+    assert rows(fresh, f"SELECT balance_cents FROM sim_balances WHERE sim_card_id = {int(sim['id'])}") == [(950_000,)]
+    # The SIM directory itself still carries no money columns (balances live apart).
     columns = {row[1] for row in rows(fresh, "PRAGMA table_info(sim_cards)")}
     assert not any("balance" in column or "cents" in column for column in columns)
 
@@ -557,17 +603,18 @@ def test_operators_page_renders_in_both_languages_mtn_first(people, fresh) -> No
     assert english.status_code == arabic.status_code == 200
     assert '<html lang="ar" dir="rtl">' in arabic.text
     for page, words in (
-        (english.text, ("Operators", "SIM cards", "Add SIM card", "Shop credit", "No SIM cards yet",
+        # Slice 4.1: the old shop credit is shown as the legacy company credit.
+        (english.text, ("Operators", "SIM cards", "Add SIM card", "Legacy company credit", "No SIM cards yet",
                         "Remaining balance", "Last top-up")),
-        (arabic.text, ("المشغّلون", "شرائح SIM", "إضافة شريحة", "رصيد المحل", "لا توجد شرائح بعد",
+        (arabic.text, ("المشغّلون", "شرائح SIM", "إضافة شريحة", "رصيد الشركة القديم", "لا توجد شرائح بعد",
                        "الرصيد المتبقي", "آخر تعبئة")),
     ):
         for word in words:
             assert word in page, word
         assert page.index('data-company="mtn"') < page.index('data-company="syriatel"')
-        # The shop-credit top-up keeps working from here.
-        assert 'data-operator-card="mtn"' in page and 'data-operator-code="syriatel"' in page
-        assert "fetch('/api/operators/topup'" in page
+        # Both legacy credit cards are shown, read-only: no legacy top-up any more.
+        assert 'data-operator-card="mtn"' in page and 'data-operator-card="syriatel"' in page
+        assert "fetch('/api/operators/topup'" not in page
     # Navigation: a normal item, highlighted on this page; Top-up is gone.
     assert re.search(r'<a href="/operators"[^>]*aria-current="page"[^>]*>Operators</a>', english.text)
     assert 'href="/topup"' not in english.text
@@ -618,10 +665,11 @@ def test_operators_page_scripts_are_valid_javascript(people, tmp_path) -> None:
     page = people("boss", "admin").get("/operators", params={"lang": "ar"}).text
     scripts = re.findall(r"<script>(.*?)</script>", page, re.S)
     assert len(scripts) == 3  # top-up, SIM cards, then the shared base search script
-    # The first inline script stays the shop-credit top-up handler the money
-    # form harness drives (test_money_boundaries).
-    assert "fetch('/api/operators/topup'" in scripts[0]
-    assert "/api/sims" in scripts[1] and "/api/sims" not in scripts[0]
+    # The first inline script is the per-SIM top-up handler the money form
+    # harness drives (test_money_boundaries); the legacy credit is read-only.
+    assert "'/api/sims/' + encodeURIComponent(form.dataset.simId) + '/topup'" in scripts[0]
+    assert not any("/api/operators/topup" in script for script in scripts)
+    assert "send('POST', '/api/sims', body)" in scripts[1] and "/api/pos/default-sim" in scripts[1]
     for index, script in enumerate(scripts):
         path = tmp_path / f"script{index}.js"
         path.write_text(script)

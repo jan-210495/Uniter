@@ -133,6 +133,16 @@ PERFORMER_COLUMN_SQL = "performed_by_user_id INTEGER REFERENCES users (id) ON DE
 #: ``PRAGMA foreign_key_list`` (table, to, on_update, on_delete, match) the
 #: performer column must have, on fresh and upgraded databases alike.
 PERFORMER_FOREIGN_KEY = ("users", "id", "NO ACTION", "RESTRICT", "NONE")
+# v1.0.4 Slice 4.1: the SIM card a new sale was charged to. Legacy rows stay
+# NULL (they were charged to the company's legacy credit); nothing is guessed.
+SIM_COLUMN = "sim_card_id"
+SIM_COLUMN_SQL = "sim_card_id INTEGER REFERENCES sim_cards (id) ON DELETE RESTRICT"
+SIM_FOREIGN_KEY = ("sim_cards", "id", "NO ACTION", "RESTRICT", "NONE")
+#: In-place nullable columns, in the order they are appended to transactions.
+NULLABLE_FK_COLUMNS = (
+    (PERFORMER_COLUMN, PERFORMER_COLUMN_SQL, PERFORMER_FOREIGN_KEY),
+    (SIM_COLUMN, SIM_COLUMN_SQL, SIM_FOREIGN_KEY),
+)
 
 _CREATE_TABLE_RE = re.compile(
     r"^\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
@@ -923,19 +933,17 @@ def _run_customer_upgrade(connection) -> bool:
     return True
 
 
-def _performer_column_missing(connection) -> bool:
-    """Whether the performer column must still be added (read-only).
+def _nullable_fk_column_missing(connection, name: str, foreign_key: tuple) -> bool:
+    """Whether the nullable foreign-key column ``name`` must still be added (read-only).
 
     An existing column is accepted only in the exact shape this build creates
-    (nullable ``INTEGER``, no DEFAULT, one foreign key to ``users(id)`` with
-    ``ON DELETE RESTRICT``). Anything else raises ``SchemaUpgradeError`` so the
-    caller fails closed instead of trusting attribution it cannot enforce.
+    (nullable ``INTEGER``, no DEFAULT, exactly ``foreign_key``). Anything else
+    raises ``SchemaUpgradeError`` so the caller fails closed instead of
+    trusting a column whose meaning it cannot enforce.
     """
     if not _has_table(connection, TABLE):
         return False
-    column = next(
-        (c for c in _table_columns(connection, TABLE) if c.name == PERFORMER_COLUMN), None
-    )
+    column = next((c for c in _table_columns(connection, TABLE) if c.name == name), None)
     if column is None:
         return True
     foreign_keys = [
@@ -943,36 +951,60 @@ def _performer_column_missing(connection) -> bool:
         for _id, _seq, table, source, target, on_update, on_delete, match in connection.exec_driver_sql(
             f"PRAGMA foreign_key_list({_quote(TABLE)})"
         ).all()
-        if source == PERFORMER_COLUMN
+        if source == name
     ]
     if (
         column.type.upper() != "INTEGER"
         or column.notnull
         or column.default is not None
         or column.primary_key
-        or foreign_keys != [PERFORMER_FOREIGN_KEY]
+        or foreign_keys != [foreign_key]
     ):
         raise SchemaUpgradeError(
-            f"transactions.{PERFORMER_COLUMN} exists with an unexpected definition; refusing to use it"
+            f"transactions.{name} exists with an unexpected definition; refusing to use it"
         )
     return False
 
 
-def _run_attribution_upgrade(connection) -> bool:
-    """Add the nullable performer column; never touch an existing row."""
-    if not _performer_column_missing(connection):
+def _performer_column_missing(connection) -> bool:
+    """Whether the performer column must still be added (read-only, fails closed)."""
+    return _nullable_fk_column_missing(connection, PERFORMER_COLUMN, PERFORMER_FOREIGN_KEY)
+
+
+def _attribution_columns_missing(connection) -> bool:
+    """Whether any in-place nullable column is still missing (validates the rest)."""
+    missing = [
+        _nullable_fk_column_missing(connection, name, foreign_key)
+        for name, _sql, foreign_key in NULLABLE_FK_COLUMNS
+    ]
+    return any(missing)
+
+
+def _add_nullable_fk_column(connection, name: str, sql: str, foreign_key: tuple) -> bool:
+    """Append one nullable column; never touch an existing row."""
+    if not _nullable_fk_column_missing(connection, name, foreign_key):
         return False
-    rows = connection.exec_driver_sql(f"SELECT COUNT(*) FROM {_quote(TABLE)}").scalar()
-    connection.exec_driver_sql(f"ALTER TABLE {_quote(TABLE)} ADD COLUMN {PERFORMER_COLUMN_SQL}")
-    if _performer_column_missing(connection):  # validates the shape just written
-        raise SchemaUpgradeError("the performer column was not added")
-    after = connection.exec_driver_sql(f"SELECT COUNT(*) FROM {_quote(TABLE)}").scalar()
+    count_sql = f"SELECT COUNT(*), COALESCE(SUM(amount_cents), 0) FROM {_quote(TABLE)}"
+    before = tuple(connection.exec_driver_sql(count_sql).one())
+    connection.exec_driver_sql(f"ALTER TABLE {_quote(TABLE)} ADD COLUMN {sql}")
+    if _nullable_fk_column_missing(connection, name, foreign_key):  # validates the shape just written
+        raise SchemaUpgradeError(f"the {name} column was not added")
+    after = tuple(connection.exec_driver_sql(count_sql).one())
     filled = connection.exec_driver_sql(
-        f"SELECT COUNT(*) FROM {_quote(TABLE)} WHERE {_quote(PERFORMER_COLUMN)} IS NOT NULL"
+        f"SELECT COUNT(*) FROM {_quote(TABLE)} WHERE {_quote(name)} IS NOT NULL"
     ).scalar()
-    if after != rows or filled:
-        raise SchemaUpgradeError("adding the performer column changed existing rows")
+    if after != before or filled:
+        raise SchemaUpgradeError(f"adding the {name} column changed existing rows")
     return True
+
+
+def _run_attribution_upgrade(connection) -> bool:
+    """Add the nullable performer, then SIM card, columns; never touch an existing row."""
+    changed = False
+    for name, sql, foreign_key in NULLABLE_FK_COLUMNS:
+        if _add_nullable_fk_column(connection, name, sql, foreign_key):
+            changed = True
+    return changed
 
 
 def _transaction_upgrade_plan(connection) -> tuple[_Plan | None, _Plan | None]:
@@ -1013,7 +1045,8 @@ async def migrate_transaction_lifecycle(engine: AsyncEngine) -> bool:
     pending/completed -> successful/failed lifecycle rebuild (Slice 2.3/2.3a),
     the widening that lets a committed sale exist without a customer record
     (Slice 2.3b), then the nullable ``performed_by_user_id`` column (v1.0.4
-    Slice 3, legacy rows stay NULL). All are data-preserving and idempotent.
+    Slice 3) and the nullable ``sim_card_id`` column (v1.0.4 Slice 4.1); legacy
+    rows stay NULL in both. All are data-preserving and idempotent.
 
     Safe to call on a current or empty database (no-op) and safe to call
     repeatedly or from two processes at once. Raises ``SchemaUpgradeError``
@@ -1025,8 +1058,8 @@ async def migrate_transaction_lifecycle(engine: AsyncEngine) -> bool:
         await connection.execution_options(isolation_level="AUTOCOMMIT")
         lifecycle_plan, customer_plan = await connection.run_sync(_transaction_upgrade_plan)
         if lifecycle_plan is None and customer_plan is None:
-            # Validates an existing performer column too (fails closed).
-            if not await connection.run_sync(_performer_column_missing):
+            # Validates existing performer/SIM columns too (fails closed).
+            if not await connection.run_sync(_attribution_columns_missing):
                 return False
 
         await connection.exec_driver_sql("PRAGMA busy_timeout=5000")
@@ -1090,6 +1123,7 @@ __all__ = [
     "FINAL_STATUSES",
     "LEGACY_STATUSES",
     "PERFORMER_COLUMN",
+    "SIM_COLUMN",
     "STATUS_MAP",
     "SchemaUpgradeError",
     "migrate_transaction_lifecycle",

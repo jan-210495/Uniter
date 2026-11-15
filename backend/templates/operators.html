@@ -23,8 +23,26 @@
             {% endif %}
         </p>
     </div>
-    {% if sim.can_edit or sim.can_archive or sim.can_restore %}
+    <div class="flex flex-col items-end gap-1 text-end">
+        <p class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'رصيد الشريحة' if ar else 'SIM balance' }}</p>
+        <p class="text-lg font-bold tabular-nums text-blue-950"><span data-field="sim-balance" dir="ltr">{{ "{:,.2f}".format(sim.balance_cents / 100).rstrip('0').rstrip('.') }}</span> <span class="text-xs font-semibold text-slate-500">{{ currency }}</span></p>
+        {% if sim.is_default %}
+        <span class="rounded-full bg-blue-950 px-2 py-0.5 text-xs font-semibold text-white" data-field="default-badge">{{ 'افتراضيتك' if ar else 'Your default' }}</span>
+        {% endif %}
+    </div>
+    {% if sim.can_use %}
+    <form class="topup-form flex w-full flex-wrap items-end gap-2" data-sim-id="{{ sim.id }}" data-operator-code="{{ company.code }}" novalidate>
+        <div class="min-w-[9rem] flex-1">
+            <label for="topup-amount-{{ sim.id }}" class="mb-1 block text-xs font-semibold text-slate-700">{{ 'مبلغ التعبئة (ل.س)' if ar else 'Top-up amount (SYP)' }}<span class="sr-only"> {{ sim.display_name }}</span></label>
+            <input id="topup-amount-{{ sim.id }}" name="amount" type="number" min="1" step="1" inputmode="numeric" dir="ltr" required placeholder="500" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+        </div>
+        <button type="submit" class="rounded-lg bg-blue-950 px-3 py-2 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تعبئة' if ar else 'Top up' }}<span class="sr-only"> {{ sim.display_name }}</span></button>
+        <p class="feedback min-h-[1.25rem] w-full text-sm font-medium text-slate-600" role="status" aria-live="polite"></p>
+    </form>
+    {% endif %}
+    {% if sim.can_edit or sim.can_archive or sim.can_restore or (sim.can_use and not sim.is_default) %}
     <div class="flex flex-wrap gap-2">
+        {% if sim.can_use and not sim.is_default %}<button type="button" data-action="default" class="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'اجعلها افتراضيتي' if ar else 'Make my default' }}<span class="sr-only"> {{ sim.display_name }}</span></button>{% endif %}
         {% if sim.can_edit %}<button type="button" data-action="edit" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 hover:border-blue-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'تعديل' if ar else 'Edit' }}<span class="sr-only"> {{ sim.display_name }}</span></button>{% endif %}
         {% if sim.can_archive %}<button type="button" data-action="archive" class="rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'أرشفة' if ar else 'Archive' }}<span class="sr-only"> {{ sim.display_name }}</span></button>{% endif %}
         {% if sim.can_restore %}<button type="button" data-action="restore" class="rounded-lg border border-green-200 bg-white px-3 py-1.5 text-xs font-semibold text-green-800 hover:bg-green-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'استعادة' if ar else 'Restore' }}<span class="sr-only"> {{ sim.display_name }}</span></button>{% endif %}
@@ -39,7 +57,7 @@
         <div>
             <p class="mb-2 text-xs font-bold uppercase tracking-widest text-blue-800">{{ 'الشركات والشرائح' if ar else 'Companies and SIM cards' }}</p>
             <h1 class="text-3xl font-bold tracking-tight text-blue-950 sm:text-4xl">{{ 'المشغّلون' if ar else 'Operators' }}</h1>
-            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{{ 'رصيد المحل لدى كل شركة، وشرائح SIM التي يمكنك استخدامها.' if ar else "Each company's shop credit, and the SIM cards you can use." }}</p>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{{ 'شرائح SIM التي يمكنك استخدامها مع أرصدتها، ورصيد الشركة القديم لكل شركة.' if ar else "The SIM cards you can use with their balances, and each company's legacy credit." }}</p>
         </div>
     </header>
     <p id="sim-status" class="sr-only" role="status" aria-live="polite"></p>
@@ -52,11 +70,11 @@
                 <a href="/operators/{{ company.code }}{{ '?lang=ar' if ar else '' }}" class="text-sm font-semibold text-blue-800 hover:text-blue-950">{{ 'أحدث المعاملات' if ar else 'Latest transactions' }}</a>
             </div>
             <div class="grid gap-6 lg:grid-cols-5">
-                <section class="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 lg:col-span-2" data-operator-card="{{ company.code }}" aria-labelledby="topup-{{ company.code }}-title">
+                <section class="min-w-0 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 sm:p-6 lg:col-span-2" data-operator-card="{{ company.code }}" data-legacy-credit aria-labelledby="legacy-{{ company.code }}-title">
                     {% set operator = company %}
-                    <div class="mb-5 border-b border-slate-100 pb-4">
-                        <h3 id="topup-{{ company.code }}-title" class="text-lg font-bold text-slate-900">{{ 'رصيد المحل' if ar else 'Shop credit' }}</h3>
-                        <p class="mt-1 text-xs leading-5 text-slate-500">{{ ('تُخصم مبيعات نقطة البيع لـ %s من رصيد المحل هذا.' if ar else 'POS sales for %s are charged to this shop credit.')|format(company.name) }}</p>
+                    <div class="mb-5 border-b border-slate-200 pb-4">
+                        <h3 id="legacy-{{ company.code }}-title" class="text-lg font-bold text-slate-900">{{ 'رصيد الشركة القديم' if ar else 'Legacy company credit' }}</h3>
+                        <p class="mt-1 text-xs leading-5 text-slate-500">{{ ('رصيد المحل السابق لدى %s من قبل أرصدة الشرائح. لا يُستخدم للمبيعات الجديدة ولا يمكن تعبئته؛ تُخصم المبيعات الجديدة من الشريحة المختارة.' if ar else 'The former %s shop credit, from before SIM balances. Not used for new sales and cannot be topped up; new sales are charged to the selected SIM card.')|format(company.name) }}</p>
                     </div>
             <dl class="grid gap-3 sm:grid-cols-2">
                 <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -68,15 +86,6 @@
                     <dd class="mt-1 text-sm font-semibold text-slate-700"><time data-field="last-topup"{% if operator.last_topup_at %} data-iso="{{ operator.last_topup_at.isoformat() }}"{% endif %} dir="ltr">{{ operator.last_topup_at.strftime('%Y-%m-%d %H:%M') if operator.last_topup_at else ('—' if not ar else 'لا يوجد') }}</time></dd>
                 </div>
             </dl>
-            <form class="topup-form mt-4 space-y-3" data-operator-code="{{ operator.code }}" novalidate>
-                <div>
-                    <label for="topup-amount-{{ operator.code }}" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'المبلغ (س.ل)' if ar else 'Amount (SYP)' }}</label>
-                    <input id="topup-amount-{{ operator.code }}" name="amount" type="number" min="1" step="1" inputmode="numeric" dir="ltr" required placeholder="500" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
-                    <p class="mt-1.5 text-xs text-slate-500">{{ 'مبلغ صحيح بالـس.ل أكبر من صفر.' if ar else 'A whole amount in SYP, greater than zero.' }}</p>
-                </div>
-                <button type="submit" class="w-full rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تعبئة' if ar else 'Top up' }}</button>
-                <p class="feedback min-h-[1.25rem] text-sm font-medium text-slate-600" role="status" aria-live="polite"></p>
-            </form>
                 </section>
 
                 <section class="min-w-0 rounded-2xl border border-slate-200 bg-white shadow-sm lg:col-span-3" aria-labelledby="sims-{{ company.code }}-title">
@@ -151,11 +160,16 @@
 <script>
 (() => {
     'use strict';
+    // Per-SIM top-up (v1.0.4 slice 4.1). The legacy company credit card is
+    // read-only; new money is loaded onto one SIM card at a time. Each form
+    // carries an idempotency key that survives a failed or repeated submit, so
+    // a double tap or a retry can never credit the SIM card twice.
     const messages = {{ {
         'invalidAmount': 'أدخل مبلغاً صحيحاً بالليرة السورية أكبر من صفر.' if ar else 'Enter a whole amount in SYP, greater than zero.',
         'topupRecorded': 'تم تسجيل التعبئة.' if ar else 'Top-up recorded.',
         'updateFailed': 'تعذر تسجيل التعبئة. حاول مرة أخرى.' if ar else 'Could not record the top-up. Try again.',
-        'loadFailed': 'تعذر تحديث الأرصدة.' if ar else 'Could not refresh the balances.'
+        'archived': 'هذه الشريحة مؤرشفة أو لم تعد متاحة. أعد تحميل الصفحة.' if ar else 'This SIM card is archived or no longer available. Reload the page.',
+        'overflow': 'المبلغ كبير جداً لهذه الشريحة.' if ar else 'This amount is too large for this SIM card.'
     }|tojson }};
     const pageLang = {{ lang|default('en')|tojson }};
     const cards = [...document.querySelectorAll('[data-operator-card]')];
@@ -174,69 +188,64 @@
     function setFeedback(form, text, tone) {
         const feedback = form.querySelector('.feedback');
         feedback.textContent = text;
-        feedback.className = 'feedback min-h-[1.25rem] text-sm font-medium ' + (tone === 'error' ? 'text-red-700' : 'text-green-700');
+        feedback.className = 'feedback min-h-[1.25rem] w-full text-sm font-medium ' + (tone === 'error' ? 'text-red-700' : 'text-green-700');
     }
-    function cardOf(form) {
-        return form.closest('[data-operator-card]');
+    function newKey() {
+        const random = (window.crypto && typeof window.crypto.randomUUID === 'function')
+            ? window.crypto.randomUUID().replace(/-/g, '')
+            : Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+        return ('simtopup' + random).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64).padEnd(16, '0');
     }
 
-    // Locale-format the server-rendered last top-up timestamps.
+    // Locale-format the server-rendered legacy last top-up timestamps.
     cards.forEach((card) => {
         const lastTopup = card.querySelector('[data-field="last-topup"]');
         if (lastTopup && lastTopup.dataset.iso) lastTopup.textContent = formatDate(lastTopup.dataset.iso);
     });
 
-    // Abortable balance refresh (stale responses are discarded); used after
-    // every successful top-up to keep every card in sync.
-    let refreshAbort = null;
-    async function refreshBalances() {
-        if (refreshAbort) refreshAbort.abort();
-        const controller = new AbortController();
-        refreshAbort = controller;
-        try {
-            const response = await fetch('/api/operators/balance', { cache: 'no-store', signal: controller.signal });
-            if (!response.ok) throw new Error('balance refresh failed');
-            const balances = await response.json();
-            if (refreshAbort !== controller) return;
-            balances.forEach((balance) => {
-                const card = cards.find((element) => element.dataset.operatorCard === balance.operator_code);
-                if (card) card.querySelector('[data-field="balance"]').textContent = formatAmount(balance.balance_cents);
-            });
-        } catch (_) {
-            if (refreshAbort !== controller) return;
-        }
-    }
-
     document.querySelectorAll('.topup-form').forEach((form) => {
+        let key = newKey();
+        let busy = false;
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
+            if (busy) return;
             const amountInput = form.querySelector('input[name="amount"]');
-            const amount = Number(amountInput.value);
-            if (!amountInput.value.trim() || !Number.isSafeInteger(amount * 100) || !/^\d+$/.test(amountInput.value.trim()) || amount <= 0) {
+            const raw = String(amountInput.value || '').trim();
+            const amount = Number(raw);
+            if (!raw || !/^\d+$/.test(raw) || !Number.isSafeInteger(amount * 100) || amount <= 0) {
                 setFeedback(form, messages.invalidAmount, 'error');
                 amountInput.focus();
                 return;
             }
+            busy = true;
             try {
-                const response = await fetch('/api/operators/topup', {
+                const response = await fetch('/api/sims/' + encodeURIComponent(form.dataset.simId) + '/topup', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ operator_code: form.dataset.operatorCode, amount_cents: amount * 100 })
+                    body: JSON.stringify({ amount_cents: amount * 100, topup_key: key })
                 });
                 if (!response.ok) {
-                    setFeedback(form, response.status === 422 ? messages.invalidAmount : messages.updateFailed, 'error');
+                    let detail = '';
+                    try { detail = String((await response.json()).detail || ''); } catch (_) { detail = ''; }
+                    let text = messages.updateFailed;
+                    if (response.status === 422) text = messages.invalidAmount;
+                    else if (response.status === 404 || (response.status === 409 && /restore/i.test(detail))) text = messages.archived;
+                    else if (response.status === 409 && /largest/i.test(detail)) text = messages.overflow;
+                    setFeedback(form, text, 'error');
                     return;
                 }
                 const topup = await response.json();
-                const card = cardOf(form);
-                card.querySelector('[data-field="balance"]').textContent = formatAmount(topup.new_balance_cents);
-                const lastTopup = card.querySelector('[data-field="last-topup"]');
-                lastTopup.textContent = formatDate(new Date().toISOString());
+                const row = form.closest('[data-sim-id]');
+                const balance = row ? row.querySelector('[data-field="sim-balance"]') : null;
+                if (balance) balance.textContent = formatAmount(topup.balance_cents);
                 setFeedback(form, messages.topupRecorded + ' (' + topup.reference + ')', 'success');
                 amountInput.value = '';
-                refreshBalances();
+                key = newKey();  // recorded: the next top-up is a new one
             } catch (_) {
+                // Unknown outcome: keep the key, so retrying cannot credit twice.
                 setFeedback(form, messages.updateFailed, 'error');
+            } finally {
+                busy = false;
             }
         });
     });
@@ -371,6 +380,26 @@
         const row = button.closest('[data-sim-id]');
         if (!row) return;
         if (action === 'edit') { openDialog(row.dataset.company, row.dataset.companyName, row); return; }
+        if (action === 'default') {
+            if (busy) return;
+            busy = true;
+            button.disabled = true;
+            try {
+                const result = await send('PUT', '/api/pos/default-sim', { operator_code: row.dataset.company, sim_id: Number(row.dataset.simId) });
+                if (!result.ok) {
+                    statusBox.textContent = result.status === 400 ? text.missing : text.failed;
+                    window.alert(statusBox.textContent);
+                    return;
+                }
+                window.location.reload();
+            } catch (_) {
+                window.alert(text.failed);
+            } finally {
+                busy = false;
+                button.disabled = false;
+            }
+            return;
+        }
         if (action !== 'archive' && action !== 'restore') return;
         if (action === 'archive' && !window.confirm(text.confirmArchive)) return;
         if (busy) return;

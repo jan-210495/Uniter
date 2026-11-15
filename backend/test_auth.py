@@ -361,8 +361,9 @@ def test_existing_pre_auth_database_gets_auth_tables_but_no_account_on_upgrade(e
     async def legacy():
         async with env.engine.begin() as connection:
             await connection.run_sync(database.Base.metadata.create_all)
-            # v1.0.3 had neither accounts nor SIM cards (added in v1.0.4).
-            for table in ("sim_cards", "user_sessions", "login_attempts", "users"):
+            # v1.0.3 had neither accounts nor SIM cards/balances (added in v1.0.4).
+            for table in ("sim_defaults", "sim_ledger", "sim_balances", "sim_cards", "user_sessions",
+                          "login_attempts", "users"):
                 await connection.exec_driver_sql(f"DROP TABLE {table}")
     asyncio.run(legacy())
     asyncio.run(database.upgrade_existing_database())

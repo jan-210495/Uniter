@@ -12,6 +12,7 @@ from sqlalchemy import URL, event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.database import Base, Customer, enable_sqlite_foreign_keys, get_db
+from backend.sim_test_support import fund_company, with_sim
 from backend.auth_test_support import sign_in
 from backend.main import app
 from backend.seed import seed_data
@@ -153,22 +154,20 @@ def test_edit_customer_name(client: TestClient) -> None:
 
 def test_remove_customer(client: TestClient) -> None:
     customer = create_customer(client, AHMAD_PHONE, "Ahmad")
-    assert client.post(
-        "/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 100000}
-    ).status_code == 200
+    fund_company(client, "mtn", 100000)
     client.post(
         "/api/debt/charge",
         json={"customer_phone": AHMAD_PHONE, "amount_cents": 15000, "description": "Airtime"},
     )
     transaction = client.post(
         "/api/transactions",
-        json={
+        json=with_sim(client, {
             "customer_phone": AHMAD_PHONE,
             "operator_code": "mtn",
             "service_code": "prepaid",
             "amount_cents": 5000,
             "commit_key": new_commit_key(),
-        },
+        }),
     )
     assert transaction.status_code == 200
 
@@ -216,19 +215,17 @@ def test_remove_customer_is_refused_while_removed_transactions_exist(
     """A tombstoned row is audit history: its customer cannot be deleted."""
     client, engine = client_and_engine
     customer = create_customer(client, AHMAD_PHONE, "Ahmad")
-    assert client.post(
-        "/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 100000}
-    ).status_code == 200
+    fund_company(client, "mtn", 100000)
     sale = client.post(
         "/api/transactions",
-        json={
+        json=with_sim(client, {
             "customer_phone": AHMAD_PHONE,
             "customer_name": "Ahmad",
             "operator_code": "mtn",
             "service_code": "prepaid",
             "amount_cents": 5000,
             "commit_key": new_commit_key(),
-        },
+        }),
     )
     assert sale.status_code == 200
     transaction_id = sale.json()["id"]

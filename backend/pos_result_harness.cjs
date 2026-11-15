@@ -105,6 +105,19 @@ while ((idMatch = idPattern.exec(html)) !== null) {
     });
 }
 
+// v1.0.4 slice 4.1: the SIM cards the page offers (rendered server-side as
+// JSON). Tests pass their own; by default each company has one usable SIM
+// card that is the saved default, so the sale flow can be exercised.
+const DEFAULT_SIMS = {
+  companies: [
+    { operator_code: 'mtn', operator_name: 'MTN', default_sim_id: 1,
+      sims: [{ id: 1, display_name: 'Counter MTN', phone: '0944000001', visibility: 'shared', balance_cents: 100000000 }] },
+    { operator_code: 'syriatel', operator_name: 'Syriatel', default_sim_id: 2,
+      sims: [{ id: 2, display_name: 'Counter Syriatel', phone: '0933000002', visibility: 'shared', balance_cents: 100000000 }] },
+  ],
+};
+element('pos-sim-data').textContent = JSON.stringify(input.sims === undefined ? DEFAULT_SIMS : input.sims);
+
 // Selects start on their first option, as a fresh page does.
 function firstOptionValue(selectId) {
   const select = new RegExp(`<select[^>]*id="${selectId}"[^>]*>([\\s\\S]*?)</select>`).exec(html);
@@ -226,7 +239,7 @@ const context = {
     }
     if (url === '/api/transactions/preview' && method === 'POST') {
       if (previewMode === 'insufficient') {
-        return jsonResponse(false, 400, { detail: 'Insufficient operator balance' });
+        return jsonResponse(false, 400, { detail: 'Insufficient SIM balance' });
       }
       if (previewMode === 'error') return jsonResponse(false, 400, { detail: 'Operator is inactive' });
       return jsonResponse(true, 200, {
@@ -236,7 +249,7 @@ const context = {
     }
     if (url === '/api/transactions' && method === 'POST') {
       if (commitMode === 'insufficient') {
-        return jsonResponse(false, 400, { detail: 'Insufficient operator balance' });
+        return jsonResponse(false, 400, { detail: 'Insufficient SIM balance' });
       }
       if (commitMode === 'error') return jsonResponse(false, 409, { detail: 'Could not commit the sale' });
       return jsonResponse(true, 200, {

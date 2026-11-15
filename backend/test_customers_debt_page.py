@@ -16,6 +16,7 @@ from backend.database import (
     get_db,
 )
 from backend.auth_test_support import sign_in
+from backend.sim_test_support import create_sim, sim_balance, topup_sim
 from backend.main import app
 from backend.seed import seed_data
 
@@ -317,21 +318,29 @@ def test_operator_balance_and_topup(client: TestClient) -> None:
         "syriatel": {"operator_code": "syriatel", "operator_name": "Syriatel", "balance_cents": 0},
     }
 
-    first = client.post("/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 50000})
+    # v1.0.4 Slice 4.1: the legacy company credit is read-only ...
+    legacy = client.post("/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 50000})
+    assert legacy.status_code == 409
+    assert legacy.json()["detail"] == "Legacy company credit is read-only; top up a SIM card instead"
+
+    # ... and money is loaded onto a SIM card, which accumulates and audits.
+    sim_id = create_sim(client, "mtn")["id"]
+    first = topup_sim(client, sim_id, 50000)
     assert first.status_code == 200
     first_body = first.json()
-    assert first_body["operator_code"] == "mtn"
+    assert first_body["sim_id"] == sim_id
     assert first_body["amount_cents"] == 50000
-    assert first_body["new_balance_cents"] == 50000
-    assert first_body["reference"].startswith("TOPUP-")
+    assert first_body["balance_cents"] == 50000
+    assert first_body["reference"].startswith("SIMTOPUP-")
 
-    second = client.post("/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 25000})
+    second = topup_sim(client, sim_id, 25000)
     assert second.status_code == 200
-    assert second.json()["new_balance_cents"] == 75000
+    assert second.json()["balance_cents"] == 75000
     assert second.json()["reference"] != first_body["reference"]
+    assert sim_balance(client, sim_id) == 75000
 
     listing = {item["operator_code"]: item for item in client.get("/api/operators/balance").json()}
-    assert listing["mtn"]["balance_cents"] == 75000
+    assert listing["mtn"]["balance_cents"] == 0
     assert listing["syriatel"]["balance_cents"] == 0
 
     assert client.post(

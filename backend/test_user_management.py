@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from backend.sim_test_support import fund_company
 from backend import auth, users
 from backend.database import User, UserSession
 from backend.main import app
@@ -522,7 +523,7 @@ def test_both_roles_view_settings_and_business_data(role, request):
         assert client.get(path).status_code == 200, path
     phone = "0933123456" if role == "admin" else "0944123456"
     assert client.post("/api/customers", json={"phone": phone, "name": role}).status_code == 200
-    assert client.post("/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 1000}).status_code == 200
+    fund_company(client, "mtn", 1000)
 
 
 FIELDSETS = ("commission-fieldset", "timezone-fieldset", "mtn-domain-fieldset", "syriatel-domain-fieldset")

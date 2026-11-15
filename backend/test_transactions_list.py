@@ -9,6 +9,7 @@ from jinja2 import Environment, FileSystemLoader
 from sqlalchemy import URL, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from backend.sim_test_support import fund_company, with_sim
 from backend.database import Base, Transaction, enable_sqlite_foreign_keys, get_db
 from backend.auth_test_support import sign_in
 from backend.main import app
@@ -59,7 +60,7 @@ def post_transaction(
     }
     if customer_name is not None:
         body["customer_name"] = customer_name
-    response = client.post("/api/transactions", json=body)
+    response = client.post("/api/transactions", json=with_sim(client, body))
     assert response.status_code == 200
     return response.json()
 
@@ -86,9 +87,8 @@ def transactions(client: TestClient) -> dict[str, dict]:
     One-time: mtn/prepaid with no customer name (no customer record).
     """
     for operator_code in ("mtn", "syriatel"):
-        assert client.post(
-            "/api/operators/topup", json={"operator_code": operator_code, "amount_cents": 1000000}
-        ).status_code == 200
+        # Slice 4.1: sales are charged to a SIM card, funded by its own top-up.
+        fund_company(client, operator_code, 1000000)
     client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
     client.post("/api/customers", json={"phone": "0944123456", "name": "Rami"})
     created = {
@@ -139,8 +139,12 @@ def test_list_without_filters_returns_all_transactions(
         "id", "reference", "ussd_string", "status", "amount_cents", "created_at",
         "customer_id", "customer_phone", "customer_name", "operator_code", "operator_name",
         "service_code", "service_name", "performed_by_user_id", "performed_by_username",
+        "funding", "sim_card_id", "sim_display_name",
     }
     assert item["reference"] == transactions["ahmad_mtn_a"]["reference"]
+    # Slice 4.1: a new sale names the SIM card that funded it.
+    assert item["funding"] == "sim" and item["sim_card_id"] == client.sim_ids["mtn"]
+    assert item["sim_display_name"] == "MTN test SIM"
     assert item["ussd_string"] == "*150*65477*0933123456*50#"
     assert item["status"] == "successful" and item["amount_cents"] == 5000
     assert item["created_at"]

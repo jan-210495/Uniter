@@ -17,14 +17,16 @@ class Element {
 const elements = new Map();
 function element(id) { if(!elements.has(id)) elements.set(id,new Element(id)); return elements.get(id); }
 const card=element('card'); card.dataset.operatorCard='mtn';
-const topup=element('topup'); topup.dataset.operatorCode='mtn';
+const topup=element('topup'); topup.dataset.operatorCode='mtn'; topup.dataset.simId=String(input.simId||7);
+// v1.0.4 slice 4.1: the SIM card choices the server rendered into /pos.
+element('pos-sim-data').textContent=input.posSims||'';
 const requests=[];
 const document={ getElementById:element, querySelector:element, querySelectorAll(s){ return s==='[data-operator-card]'?[card]:s==='.topup-form'?[topup]:[]; }, createElement:()=>new Element(), createDocumentFragment:()=>new Element(), addEventListener(){} };
 let balance=0;
 const context={document, console, AbortController, Date, setTimeout:()=>0, clearTimeout(){}, window:{confirm:()=>true}, navigator:{}, alert(){}, fetch:async(url,opts={})=>{
   const body=opts.body?JSON.parse(opts.body):null; requests.push({url,method:opts.method||'GET',body});
   let data=[];
-  if(url==='/api/operators/topup') { balance+=body.amount_cents; data={new_balance_cents:balance,reference:'TOPUP-test'}; }
+  if(/^\/api\/sims\/\d+\/topup$/.test(url)) { balance+=body.amount_cents; data={sim_id:Number(topup.dataset.simId),amount_cents:body.amount_cents,balance_cents:balance,reference:'SIMTOPUP-test'}; }
   else if(url==='/api/operators/balance') data=[{operator_code:'mtn',balance_cents:balance}];
   else if(url==='/api/settings/commission') data={commission_rate:'0.05'};
   else if(url==='/api/transactions/preview') data={ussd_string:'captured', commit_key:'moneyboundarykey0000000001'};

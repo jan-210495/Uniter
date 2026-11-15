@@ -9,6 +9,7 @@ from sqlalchemy import select
 from backend.database import ProfitLedger, Transaction, get_db
 from backend.main import app
 from backend.seed import generate_ussd
+from backend.sim_test_support import fund_sim, sim_balance
 from backend.test_pos import client  # disposable tmp_path database
 from backend.test_pos_vouchers import VOUCHERS, posted_amount_cents, run_pos, voucher_groups
 
@@ -74,17 +75,18 @@ def test_display_and_payload_remain_decimal(lang, value, cents, summary, total):
 @pytest.mark.parametrize('cents', [192, 480, 6250, 43269, 384615, 1234, 1230, 1200, 0, 1])
 def test_preview_commit_persistence_and_accounting(client, service, mode, cents):
     funding = 1_000_000
-    assert client.post('/api/operators/topup', json={
-        'operator_code': 'syriatel', 'amount_cents': funding,
-    }).status_code == 200
-    balances_before = client.get('/api/operators/balance').json()
+    # Slice 4.1: the sale is charged to a SIM card funded by its own top-up;
+    # the legacy company credit must not move at all.
+    sim_id = fund_sim(client, 'syriatel', funding)
+    legacy_before = client.get('/api/operators/balance').json()
     payload = {'operator_code': 'syriatel', 'service_code': service,
-               'customer_phone': '0933123456', 'amount_cents': cents}
+               'customer_phone': '0933123456', 'amount_cents': cents, 'sim_card_id': sim_id}
     preview = client.post('/api/transactions/preview', json=payload)
     assert preview.status_code == 200
     code = f'*150*1*67858*{mode}*{cents}*0933123456*0933123456#'
     assert preview.json()['ussd_string'] == code
-    assert client.get('/api/operators/balance').json() == balances_before
+    assert sim_balance(client, sim_id) == funding
+    assert client.get('/api/operators/balance').json() == legacy_before
     assert client.get('/api/transactions').json() == []
     assert client.get('/api/customers').json() == []
 
@@ -114,12 +116,11 @@ def test_preview_commit_persistence_and_accounting(client, service, mode, cents)
             entry = (await db.scalars(select(ProfitLedger))).one()
             assert (entry.amount_cents, entry.commission_cents, entry.profit_cents) == (cents, commission, commission)
     asyncio.run(check_stored())
-    balance = next(b for b in client.get('/api/operators/balance').json() if b['operator_code'] == 'syriatel')
-    assert balance['balance_cents'] == funding - cents
+    assert sim_balance(client, sim_id) == funding - cents
     failed = client.patch(f'/api/transactions/{sale["id"]}/status', json={'status': 'failed'})
     assert failed.status_code == 200
-    balance = next(b for b in client.get('/api/operators/balance').json() if b['operator_code'] == 'syriatel')
-    assert balance['balance_cents'] == funding
+    assert sim_balance(client, sim_id) == funding
+    assert client.get('/api/operators/balance').json() == legacy_before
 
 
 @pytest.mark.parametrize('value', ['', '-1', '1.234', 'abc', '1e3', '90071992547409.92'])

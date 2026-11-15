@@ -67,6 +67,7 @@ def test_generate_only_previews_and_persists_nothing() -> None:
         "operator_code": "mtn",
         "service_code": "prepaid",
         "amount_cents": 5000,
+        "sim_card_id": 1,  # Slice 4.1: the default MTN SIM card
     }
     # No commit, no status PATCH: generating is not a sale.
     assert commits(result) == []
@@ -82,7 +83,7 @@ def test_preview_rejects_insufficient_balance_without_showing_a_code() -> None:
     result = run(GENERATE, preview="insufficient")
     assert result["previews"] and commits(result) == []
     assert result["elements"]["result"]["hidden"] is True
-    assert result["elements"]["register-status"]["text"] == "Insufficient operator balance."
+    assert result["elements"]["register-status"]["text"] == "Not enough balance on this SIM card."
     assert result["elements"]["ussd-output"]["value"] == ""
 
 
@@ -109,12 +110,13 @@ def test_copy_commits_the_sale_once_with_the_preview_key() -> None:
         "operator_code": "mtn",
         "service_code": "prepaid",
         "amount_cents": 5000,
+        "sim_card_id": 1,  # Slice 4.1: the default MTN SIM card
         "commit_key": COMMIT_KEY,
     }
     assert result["elements"]["result-badge"]["text"] == "Recorded"
     assert "text-green-800" in result["elements"]["result-badge"]["classes"]
     assert result["elements"]["commit-status"]["text"] == (
-        "Sale recorded and charged to the operator balance. TXN-harness"
+        "Sale recorded and charged to the SIM card. TXN-harness"
     )
     # Accounting is not re-applied through the status endpoint.
     assert [request for request in result["requests"] if request["method"] == "PATCH"] == []
@@ -186,7 +188,7 @@ def test_commit_failure_keeps_the_sale_unrecorded() -> None:
 
 def test_commit_failure_for_insufficient_balance_is_translated() -> None:
     result = run(GENERATE + COPY, commit="insufficient")
-    assert result["elements"]["commit-status"]["text"] == "Insufficient operator balance."
+    assert result["elements"]["commit-status"]["text"] == "Not enough balance on this SIM card."
     assert result["elements"]["result-badge"]["text"] == "Not recorded yet"
 
 
@@ -254,7 +256,7 @@ def test_arabic_page_is_translated_and_rtl() -> None:
     assert "Not recorded yet" not in html
     result = run(GENERATE + COPY, lang="ar")
     assert result["elements"]["result-badge"]["text"] == "مسجّلة"
-    assert result["elements"]["commit-status"]["text"] == "تم تسجيل البيع وخصمه من رصيد المشغّل. TXN-harness"
+    assert result["elements"]["commit-status"]["text"] == "تم تسجيل البيع وخصمه من رصيد الشريحة. TXN-harness"
 
 
 def test_arabic_copy_failure_feedback() -> None:
@@ -328,6 +330,7 @@ def test_the_matching_number_still_previews_and_commits_under_the_name() -> None
         "operator_code": "mtn",
         "service_code": "prepaid",
         "amount_cents": 5000,
+        "sim_card_id": 1,  # Slice 4.1: the default MTN SIM card
     }
     commit = commits(result)[0]
     assert commit["body"]["customer_name"] == "Ahmad"

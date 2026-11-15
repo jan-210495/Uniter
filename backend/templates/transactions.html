@@ -82,6 +82,7 @@
                 <p class="mt-1 text-sm text-slate-500">{{ 'أحدث المعاملات أولاً.' if ar else 'Newest transactions first.' }}</p>
             </div>
             <div class="flex flex-wrap items-center gap-3">
+                <p class="text-xs text-slate-500" id="tx-funding-legend">{{ 'كل بيع يُخصم من الشريحة؛ المبيعات الأقدم من رصيد الشركة القديم.' if ar else 'Each sale is charged to a SIM card; older sales to the legacy company credit.' }}</p>
                 <p id="tx-status" role="status" aria-live="polite" class="text-xs text-slate-500"></p>
                 <button id="tx-refresh" type="button" class="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'تحديث' if ar else 'Refresh' }}</button>
             </div>
@@ -150,7 +151,11 @@
         'servicePrepaid': 'مسبق الدفع' if ar else 'Pre-Paid',
         'servicePostpaid': 'لاحق الدفع' if ar else 'Post-Paid',
         'oneTimeCustomer': 'بيع لمرة واحدة' if ar else 'One-time sale',
-        'legacyPerformer': 'قديمة / غير معروف' if ar else 'Legacy / unknown'
+        'legacyPerformer': 'قديمة / غير معروف' if ar else 'Legacy / unknown',
+        'simPrefix': 'الشريحة' if ar else 'SIM card',
+        'simHidden': 'شريحة خاصة' if ar else 'Private SIM card',
+        'legacyCredit': 'رصيد الشركة القديم' if ar else 'Legacy company credit',
+        'legacyRefundDenied': 'هذه بيعة قديمة خُصمت من رصيد الشركة القديم، ولا توجد شريحة لاسترداد المبلغ إليها.' if ar else 'This older sale was charged to the legacy company credit; there is no SIM card to refund it to.'
     }|tojson }};
     const pageLang = {{ lang|default('en')|tojson }};
     const filterForm = document.getElementById('tx-filters');
@@ -430,6 +435,19 @@
         operatorLink.className = 'font-semibold text-blue-900 transition hover:text-blue-800 hover:underline';
         operatorLink.textContent = transaction.operator_name;
         operator.appendChild(operatorLink);
+        // What the sale was charged to: a SIM card (named only when this
+        // account may see it), or the legacy company credit for older rows.
+        const funding = document.createElement('span');
+        funding.className = 'mt-0.5 block text-xs text-slate-500';
+        funding.dataset.field = 'funding';
+        if (transaction.funding === 'sim') {
+            funding.textContent = transaction.sim_display_name
+                ? messages.simPrefix + ': ' + transaction.sim_display_name
+                : messages.simHidden;
+        } else {
+            funding.textContent = messages.legacyCredit;
+        }
+        operator.appendChild(funding);
 
         const service = makeCell('px-4 py-3 text-slate-700');
         service.textContent = SERVICE_LABELS[transaction.service_code] || transaction.service_name;
@@ -495,7 +513,9 @@
                 body: JSON.stringify({ status: 'failed' })
             });
             if (!response.ok) {
-                actionStatusEl.textContent = describeFailure(response.status);
+                actionStatusEl.textContent = response.status === 409 && transaction.funding === 'legacy'
+                    ? messages.legacyRefundDenied
+                    : describeFailure(response.status);
                 setActionBusy(button, false);
                 return;
             }

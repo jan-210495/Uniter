@@ -23,6 +23,7 @@ from sqlalchemy import URL, event, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from backend.sim_test_support import fund_company
 from backend import auth, database, seed
 from backend.database import LoginAttempt, Transaction, User, UserSession, get_db
 from backend.main import app
@@ -150,8 +151,9 @@ def build_v103(env: Env) -> None:
     async def build():
         async with env.engine.begin() as connection:
             await connection.run_sync(database.Base.metadata.create_all)
-            # v1.0.3 had neither accounts nor SIM cards (added in v1.0.4).
-            for table in ("sim_cards", "user_sessions", "login_attempts", "users"):
+            # v1.0.3 had neither accounts nor SIM cards/balances (added in v1.0.4).
+            for table in ("sim_defaults", "sim_ledger", "sim_balances", "sim_cards", "user_sessions",
+                          "login_attempts", "users"):
                 await connection.exec_driver_sql(f"DROP TABLE {table}")
     asyncio.run(build())
 
@@ -634,7 +636,7 @@ def test_after_setup_accounts_attribution_and_forced_change_still_work(client, b
     assert created.status_code == 201
     temporary = created.json()["temporary_password"]
     for code in ("mtn",):
-        assert client.post("/api/operators/topup", json={"operator_code": code, "amount_cents": 100000}).status_code == 200
+        fund_company(client, code, 100000)
 
     with TestClient(app) as seller:
         first = login(seller, "sara", temporary)
@@ -651,6 +653,8 @@ def test_after_setup_accounts_attribution_and_forced_change_still_work(client, b
         sale = seller.post("/api/transactions", headers={auth.CSRF_HEADER: seller_token}, json={
             "customer_phone": "0933123456", "operator_code": "mtn", "service_code": "prepaid",
             "amount_cents": 1000, "commit_key": "setup-slice-commit-0001",
+            # Slice 4.1: the admin's shared, funded MTN SIM card.
+            "sim_card_id": client.sim_ids["mtn"],
         })
         assert sale.status_code == 200, sale.text
 

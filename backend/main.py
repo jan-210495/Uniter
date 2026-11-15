@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy import delete as sql_delete
@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 if __package__:
     from . import auth, sims, users
     from .commission import get_commission_for_transaction
-    from .database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, User, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
+    from .database import TRANSACTION_STATUSES, MAX_MINOR_UNITS, Customer, Operator, Service, SimCard, SimLedger, Transaction, User, DebtLedger, OperatorBalance, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from .seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from .validation import validate_syrian_phone
 else:
@@ -30,7 +30,7 @@ else:
     import sims
     import users
     from commission import get_commission_for_transaction
-    from database import TRANSACTION_STATUSES, Customer, Operator, Service, Transaction, User, DebtLedger, OperatorBalance, OperatorTopup, OperatorCreditRefund, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
+    from database import TRANSACTION_STATUSES, MAX_MINOR_UNITS, Customer, Operator, Service, SimCard, SimLedger, Transaction, User, DebtLedger, OperatorBalance, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from validation import validate_syrian_phone
 
@@ -196,6 +196,9 @@ class TransactionRequest(BaseModel):
     service_code: Code
     amount_cents: int = Field(ge=0, le=9223372036854775807)
     customer_name: str | None = Field(default=None, max_length=255)
+    #: The SIM card the sale is charged to (v1.0.4 slice 4.1). Required by the
+    #: route: a sale without one is refused, never charged to legacy credit.
+    sim_card_id: StrictInt | None = Field(default=None, ge=1, le=MAX_MINOR_UNITS)
 
     @field_validator("customer_phone")
     @classmethod
@@ -256,6 +259,9 @@ class TransactionResponse(BaseModel):
     created_at: datetime
     #: The account that committed the sale; ``None`` for legacy rows.
     performed_by_user_id: int | None = None
+    #: The SIM card the sale was charged to; ``None`` for legacy rows, which
+    #: were charged to the company's legacy credit.
+    sim_card_id: int | None = None
 
 
 class TransactionStatusUpdate(BaseModel):
@@ -292,6 +298,13 @@ class TransactionListItem(BaseModel):
     #: rows recorded before v1.0.4, which are never back-filled.
     performed_by_user_id: int | None
     performed_by_username: str | None
+    #: ``"legacy"``: recorded before per-SIM balances and charged to the
+    #: company's legacy credit (no SIM card). ``"sim"``: charged to a SIM card.
+    funding: Literal["sim", "legacy"] = "legacy"
+    #: The SIM card, only when the viewer may see it (never another seller's
+    #: private SIM card); ``None`` otherwise and for legacy rows.
+    sim_card_id: int | None = None
+    sim_display_name: str | None = None
 
 
 class SearchTransactionItem(BaseModel):
@@ -455,7 +468,15 @@ def root() -> RedirectResponse:
 async def pos_page(request: Request, db: DbSession, lang: str = "en") -> HTMLResponse:
     language = lang if lang in {"en", "ar"} else "en"
     denom = await db.scalar(select(CurrencyDenomination).where(CurrencyDenomination.is_active == True))
-    return templates.TemplateResponse(request=request, name="pos.html", context={"lang": language, "currency_denomination": denom})
+    # Only the SIM cards this account may use (with balances and its default):
+    # another seller's private SIM card never reaches the page.
+    pos_sims = (await sims.pos_companies(db, _auth_context(request))).model_dump()
+    return templates.TemplateResponse(
+        request=request,
+        name="pos.html",
+        context={"lang": language, "currency_denomination": denom, "pos_sims": pos_sims},
+        headers={"Cache-Control": "no-store"},
+    )
 
 @app.get("/settlement", response_class=HTMLResponse)
 async def settlement_page(request: Request, db: DbSession, lang: str = "en") -> HTMLResponse:
@@ -547,7 +568,7 @@ async def operator_page(
         .order_by(Transaction.created_at.desc(), Transaction.id.desc())
         .limit(20)
     )
-    transactions = [TransactionListItem(**row._mapping) for row in rows.all()]
+    transactions = _list_items(rows.all(), _auth_context(request))
     return templates.TemplateResponse(
         request=request,
         name="operator.html",
@@ -1095,6 +1116,24 @@ async def delete_customer(customer_id: int, db: DbSession) -> Response:
             status_code=409,
             detail="Customer keeps removed transactions for the audit trail",
         )
+    # v1.0.4 Slice 4.1: a sale charged to a SIM card is referenced by the
+    # append-only SIM ledger and can never be deleted. Every sale this build
+    # commits keeps its own phone (and is unlinked below), so this trips only
+    # for a hand-edited row; refuse instead of failing on the ledger's guard.
+    sim_history = await db.scalar(
+        select(func.count())
+        .select_from(Transaction)
+        .where(
+            Transaction.customer_id == customer_id,
+            Transaction.customer_phone.is_(None),
+            Transaction.sim_card_id.is_not(None),
+        )
+    )
+    if sim_history:
+        raise HTTPException(
+            status_code=409,
+            detail="Customer keeps SIM card sales for the audit trail",
+        )
     # Dependent rows are removed explicitly: SQLite enforces the foreign keys,
     # and the customer row owns this history once the customer is deleted.
     #
@@ -1281,37 +1320,16 @@ async def list_operator_balances(db: DbSession) -> list[OperatorBalanceResponse]
 async def topup_operator_balance(
     data: OperatorTopupCreate, db: DbSession
 ) -> OperatorTopupResponse:
-    """Add credit to an operator balance and record the top-up."""
+    """Legacy company credit is read-only since per-SIM balances (slice 4.1).
+
+    New money is loaded onto a SIM card (``POST /api/sims/{id}/topup``). The
+    company pool keeps its historical balance and top-up audit untouched until
+    the shop decides how to migrate it, so no new credit is added here.
+    """
     operator = await db.scalar(select(Operator).where(Operator.code == data.operator_code))
     if operator is None:
         raise HTTPException(status_code=404, detail="Operator not found")
-
-    balance = await db.scalar(
-        select(OperatorBalance).where(OperatorBalance.operator_id == operator.id)
-    )
-    if balance is None:
-        balance = OperatorBalance(operator_id=operator.id, balance_cents=0)
-        db.add(balance)
-        await db.flush()
-
-    balance.balance_cents += data.amount_cents
-    reference = f"TOPUP-{uuid4().hex}"
-    db.add(
-        OperatorTopup(
-            operator_id=operator.id,
-            amount_cents=data.amount_cents,
-            reference=reference,
-        )
-    )
-    await db.commit()
-    await db.refresh(balance)
-    return OperatorTopupResponse(
-        operator_code=operator.code,
-        amount_cents=data.amount_cents,
-        new_balance_cents=balance.balance_cents,
-        reference=reference,
-    )
-
+    raise HTTPException(status_code=409, detail=LEGACY_CREDIT_READ_ONLY)
 
 async def _resolve_sale_configuration(
     db: AsyncSession, operator_code: str, service_code: str
@@ -1332,15 +1350,34 @@ async def _resolve_sale_configuration(
     return operator, service
 
 
-async def _require_operator_balance(
-    db: AsyncSession, operator: Operator, amount_cents: int
-) -> None:
-    """Reject a sale the shop cannot fund with its prepaid operator credit."""
-    balance = await db.scalar(
-        select(OperatorBalance.balance_cents).where(OperatorBalance.operator_id == operator.id)
-    )
-    if balance is None or balance < amount_cents:
-        raise HTTPException(status_code=400, detail="Insufficient operator balance")
+#: Reported for a legacy top-up attempt (slice 4.1).
+LEGACY_CREDIT_READ_ONLY = "Legacy company credit is read-only; top up a SIM card instead"
+#: Reported when a legacy sale (no SIM card) is marked failed: its money came
+#: from the company's legacy credit and no SIM card may be guessed for it.
+LEGACY_SALE_HAS_NO_SIM = (
+    "This sale was charged to the legacy company credit; it has no SIM card to refund"
+)
+
+
+def _auth_context(request: Request) -> auth.AuthContext:
+    context = getattr(request.state, "auth", None)
+    if context is None:  # the app-wide gate always sets it; fail closed anyway
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return context
+
+
+async def _require_sim_for_sale(
+    db: AsyncSession, request: Request, operator_id: int, sim_card_id: int | None, amount_cents: int
+) -> int:
+    """The usable SIM card that will fund this sale, with enough balance.
+
+    There is no fallback: without a usable SIM card of this company the sale is
+    refused, and the legacy company credit is never charged.
+    """
+    sim_id = await sims.usable_sim_id(db, _auth_context(request), sim_card_id, operator_id)
+    if await sims.sim_balance(db, sim_id) < amount_cents:
+        raise HTTPException(status_code=400, detail=sims.INSUFFICIENT_SIM_BALANCE)
+    return sim_id
 
 
 async def _committed_transaction(
@@ -1370,6 +1407,8 @@ async def _committed_transaction(
     if row is None:
         return None
     transaction = row[0]
+    # The SIM card is deliberately not compared: a replay answers the stored
+    # sale with the SIM card it was charged to, even if another one is sent.
     same_sale = (
         row.customer_phone == data.customer_phone
         and row.operator_code == data.operator_code
@@ -1489,7 +1528,7 @@ async def _resolve_sale_customer(
 
 @app.post("/api/transactions/preview", response_model=TransactionPreviewResponse)
 async def preview_transaction(
-    data: TransactionRequest, db: DbSession
+    request: Request, data: TransactionRequest, db: DbSession
 ) -> TransactionPreviewResponse:
     """Render the USSD code for a sale without persisting anything.
 
@@ -1500,7 +1539,7 @@ async def preview_transaction(
     operator, _service = await _resolve_sale_configuration(
         db, data.operator_code, data.service_code
     )
-    await _require_operator_balance(db, operator, data.amount_cents)
+    await _require_sim_for_sale(db, request, operator.id, data.sim_card_id, data.amount_cents)
     try:
         ussd_string = await generate_ussd(
             db, data.operator_code, data.service_code, data.customer_phone, data.amount_cents
@@ -1547,7 +1586,18 @@ async def create_transaction(
     operator, service = await _resolve_sale_configuration(
         db, data.operator_code, data.service_code
     )
-    await _require_operator_balance(db, operator, data.amount_cents)
+    # Plain values: ORM attributes expire on rollback and must not lazy-load.
+    operator_id, operator_code = operator.id, operator.code
+    try:
+        sim_id = await _require_sim_for_sale(db, request, operator_id, data.sim_card_id, data.amount_cents)
+    except HTTPException as exc:
+        if exc.detail == sims.INSUFFICIENT_SIM_BALANCE:
+            # A same-key request may have committed (and spent the balance)
+            # since the replay check above: answer that sale, not "insufficient".
+            replay = await _committed_transaction(db, data)
+            if replay is not None:
+                return replay
+        raise
     try:
         ussd_string = await generate_ussd(
             db, data.operator_code, data.service_code, data.customer_phone, data.amount_cents
@@ -1581,21 +1631,21 @@ async def create_transaction(
         # A blank name is a one-time sale: no customer record is created,
         # modified or linked, and the phone is kept on the transaction row.
 
-        # Atomic, non-negative debit: two concurrent commits can never overdraw.
-        debit = await db.execute(
-            update(OperatorBalance)
-            .where(
-                OperatorBalance.operator_id == operator.id,
-                OperatorBalance.balance_cents >= data.amount_cents,
-            )
-            .values(
-                balance_cents=OperatorBalance.balance_cents - data.amount_cents,
-                updated_at=datetime.now(timezone.utc),
-            )
+        # Atomic, non-negative debit of the selected SIM card only: two
+        # concurrent commits can never overdraw it, and the legacy company
+        # credit is never touched.
+        balance_after = await sims.debit_for_sale(
+            db, _auth_context(request), sim_id, operator_id, data.amount_cents
         )
-        if debit.rowcount != 1:
+        if balance_after is None:
             await db.rollback()
-            raise HTTPException(status_code=400, detail="Insufficient operator balance")
+            # The losing request of a same-key race: the winner may have
+            # committed (and spent the balance) since the first replay check.
+            replay = await _committed_transaction(db, data)
+            if replay is not None:
+                return replay
+            await _require_sim_for_sale(db, request, operator_id, sim_id, data.amount_cents)
+            raise HTTPException(status_code=400, detail=sims.INSUFFICIENT_SIM_BALANCE)
 
         transaction = Transaction(
             customer_id=None if customer is None else customer.id,
@@ -1609,16 +1659,29 @@ async def create_transaction(
             # filters can identify the sale without a customer record.
             customer_phone=data.customer_phone,
             performed_by_user_id=performer_id,
+            sim_card_id=sim_id,
         )
         db.add(transaction)
         await db.flush()  # assigns transaction.id for the profit ledger row
         db.add(
             ProfitLedger(
                 transaction_id=transaction.id,
-                operator_code=operator.code,
+                operator_code=operator_code,
                 amount_cents=data.amount_cents,
                 commission_cents=commission_cents,
                 profit_cents=commission_cents,
+            )
+        )
+        db.add(
+            SimLedger(
+                sim_card_id=sim_id,
+                kind="sale",
+                amount_cents=data.amount_cents,
+                balance_after_cents=balance_after,
+                transaction_id=transaction.id,
+                reference=f"SALE-{transaction.reference}",
+                performed_by_user_id=performer_id,
+                created_at=datetime.now(timezone.utc),
             )
         )
         await db.commit()
@@ -1638,6 +1701,7 @@ async def create_transaction(
 
 @app.patch("/api/transactions/{transaction_id}/status", response_model=TransactionResponse)
 async def update_transaction_status(
+    request: Request,
     transaction_id: Annotated[int, Field(ge=1)],
     data: TransactionStatusUpdate,
     db: DbSession,
@@ -1646,10 +1710,14 @@ async def update_transaction_status(
 
     The seller records the real-world outcome from the Transactions page. Only
     ``successful -> failed`` is allowed, the guard lives in the UPDATE itself
-    (so replays and races cannot apply twice). The original ledger operator
-    receives exactly the stored face amount, with a unique durable refund audit
-    in the same commit. Commission/profit history is never reversed or edited.
+    (so replays and races cannot apply twice). The SIM card the sale was
+    charged to receives exactly the stored original debit (even if it has been
+    archived since), with a unique append-only ``refund`` ledger row in the
+    same commit. A legacy sale has no SIM card: it is refused unchanged rather
+    than refunded to a guessed one. Commission/profit history and the
+    performer are never reversed or edited.
     """
+    performer_id = _session_user_id(request)
     if data.status != "failed":
         raise HTTPException(status_code=409, detail="Transactions can only be marked failed")
 
@@ -1666,33 +1734,38 @@ async def update_transaction_status(
             if current is None:
                 raise HTTPException(status_code=404, detail="Transaction not found")
             raise HTTPException(status_code=409, detail="Transaction is already failed")
-        transaction = await db.get(Transaction, transaction_id)
-        operator_id = await db.scalar(
-            select(Operator.id)
-            .join(ProfitLedger, ProfitLedger.operator_code == Operator.code)
-            .where(ProfitLedger.transaction_id == transaction_id)
+        transaction = await db.get(Transaction, transaction_id, populate_existing=True)
+        if transaction is None:
+            raise HTTPException(status_code=409, detail="Original debit could not be resolved")
+        if transaction.sim_card_id is None:
+            raise HTTPException(status_code=409, detail=LEGACY_SALE_HAS_NO_SIM)
+        debit = await db.scalar(
+            select(SimLedger).where(SimLedger.transaction_id == transaction.id, SimLedger.kind == "sale")
         )
-        if transaction is None or operator_id is None:
-            raise HTTPException(status_code=409, detail="Original operator debit could not be resolved")
-        if type(transaction.amount_cents) is not int or not 0 <= transaction.amount_cents <= 9223372036854775807:
+        if debit is None or debit.sim_card_id != transaction.sim_card_id:
+            raise HTTPException(status_code=409, detail="Original SIM debit could not be resolved")
+        # The sale's own accounting must still be intact (fail closed, as before):
+        # without its profit ledger row the original sale cannot be trusted.
+        recorded = await db.scalar(
+            select(func.count()).select_from(ProfitLedger).where(ProfitLedger.transaction_id == transaction.id)
+        )
+        if recorded != 1:
+            raise HTTPException(status_code=409, detail="Original sale accounting could not be resolved")
+        amount = debit.amount_cents
+        if type(amount) is not int or not 0 <= amount <= MAX_MINOR_UNITS or amount != transaction.amount_cents:
             raise HTTPException(status_code=409, detail="Stored transaction amount is invalid")
-        credit = await db.execute(
-            update(OperatorBalance)
-            .where(
-                OperatorBalance.operator_id == operator_id,
-                func.typeof(OperatorBalance.balance_cents) == "integer",
-                OperatorBalance.balance_cents >= 0,
-                OperatorBalance.balance_cents <= 9223372036854775807 - transaction.amount_cents,
-            )
-            .values(balance_cents=OperatorBalance.balance_cents + transaction.amount_cents)
-        )
-        if credit.rowcount != 1:
-            raise HTTPException(status_code=409, detail="Original operator balance not found")
-        db.add(OperatorCreditRefund(
+        balance_after = await sims.credit_refund(db, debit.sim_card_id, amount)
+        if balance_after is None:
+            raise HTTPException(status_code=409, detail="Original SIM balance could not be credited")
+        db.add(SimLedger(
+            sim_card_id=debit.sim_card_id,
+            kind="refund",
+            amount_cents=amount,
+            balance_after_cents=balance_after,
             transaction_id=transaction.id,
-            transaction_reference=transaction.reference,
-            operator_id=operator_id,
-            amount_cents=transaction.amount_cents,
+            reference=f"REFUND-{transaction.reference}",
+            performed_by_user_id=performer_id,
+            created_at=datetime.now(timezone.utc),
         ))
         await db.commit()
         return transaction
@@ -1758,7 +1831,41 @@ _TRANSACTION_LABELS = (
     Service.name.label("service_name"),
     Transaction.performed_by_user_id.label("performed_by_user_id"),
     User.username.label("performed_by_username"),
+    Transaction.sim_card_id.label("sim_card_id"),
+    SimCard.display_name.label("sim_display_name"),
+    SimCard.is_shared.label("sim_is_shared"),
+    SimCard.owner_user_id.label("sim_owner_user_id"),
+    SimCard.archived_at.label("sim_archived_at"),
 )
+
+
+def _list_items(rows, context: auth.AuthContext) -> list[TransactionListItem]:
+    """Build list items; a SIM card is only named to accounts that may see it.
+
+    Visibility mirrors the SIM directory: admins see every SIM card; a seller
+    sees active shared SIM cards and their own private ones. Any other SIM
+    sale is shown as "charged to a SIM card" without its id or name.
+    """
+    items = []
+    for row in rows:
+        values = dict(row._mapping)
+        sim_id = values.pop("sim_card_id")
+        name = values.pop("sim_display_name")
+        shared = values.pop("sim_is_shared")
+        owner = values.pop("sim_owner_user_id")
+        archived = values.pop("sim_archived_at")
+        visible = sim_id is not None and (
+            context.role == "admin"
+            or (bool(shared) and archived is None)
+            or (not shared and owner == context.user_id)
+        )
+        items.append(TransactionListItem(
+            **values,
+            funding="legacy" if sim_id is None else "sim",
+            sim_card_id=sim_id if visible else None,
+            sim_display_name=name if visible else None,
+        ))
+    return items
 
 
 def _transaction_list_statement():
@@ -1776,6 +1883,7 @@ def _transaction_list_statement():
         .select_from(Transaction)
         .outerjoin(Customer, Transaction.customer_id == Customer.id)
         .outerjoin(User, Transaction.performed_by_user_id == User.id)
+        .outerjoin(SimCard, Transaction.sim_card_id == SimCard.id)
         .join(Service, Transaction.service_id == Service.id)
         .join(Operator, Service.operator_id == Operator.id)
         .where(Transaction.deleted_at.is_(None))
@@ -1784,6 +1892,7 @@ def _transaction_list_statement():
 
 @app.get("/api/transactions", response_model=list[TransactionListItem])
 async def list_transactions(
+    request: Request,
     db: DbSession,
     operator_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
     service_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
@@ -1816,7 +1925,7 @@ async def list_transactions(
     if performed_by is not None:
         statement = statement.where(Transaction.performed_by_user_id == performed_by)
     rows = await db.execute(statement.order_by(Transaction.created_at.desc(), Transaction.id.desc()))
-    return [TransactionListItem(**row._mapping) for row in rows.all()]
+    return _list_items(rows.all(), _auth_context(request))
 
 
 # --- Debt Ledger Endpoints ---

@@ -9,6 +9,7 @@ from sqlalchemy import URL, event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.database import Base, Operator, enable_sqlite_foreign_keys, get_db
+from backend.sim_test_support import add_legacy_credit, fund_company, sim_balance, with_sim
 from backend.auth_test_support import sign_in
 from backend.main import app
 from backend.seed import seed_data
@@ -42,32 +43,33 @@ def client(tmp_path) -> Iterator[TestClient]:
 
 
 def topup(client: TestClient, operator_code: str, amount_cents: int) -> None:
-    assert client.post(
-        "/api/operators/topup", json={"operator_code": operator_code, "amount_cents": amount_cents}
-    ).status_code == 200
+    # Slice 4.1: sales are charged to a SIM card, funded by its own top-up.
+    fund_company(client, operator_code, amount_cents)
 
 
 def post_transaction(client: TestClient, phone: str, operator: str, service: str, amount: int) -> dict:
     response = client.post(
         "/api/transactions",
-        json={
+        json=with_sim(client, {
             "customer_phone": phone,
             "operator_code": operator,
             "service_code": service,
             "amount_cents": amount,
             "commit_key": new_commit_key(),
-        },
+        }),
     )
     assert response.status_code == 200
     return response.json()
 
 
 def test_operator_page_renders_mtn(client: TestClient) -> None:
-    topup(client, "mtn", 150000)
+    # Slice 4.1: the page's balance card is the (historical) legacy company credit.
+    add_legacy_credit("mtn", 150000)
     html = client.get("/operators/mtn")
     assert html.status_code == 200
     assert "MTN" in html.text
     assert "1,500" in html.text
+    assert "Legacy company credit" in html.text
     # Code badge, top-up link and the eight-column transactions table.
     assert 'dir="ltr">mtn<' in html.text
     assert 'href="/operators#mtn"' in html.text  # top-up now lives on the Operators page
@@ -139,8 +141,11 @@ def test_operator_page_shows_only_that_operators_transactions(client: TestClient
     # Newest first: the last created MTN transaction appears before the others.
     positions = [html.index(transaction["reference"]) for transaction in mtn_transactions]
     assert positions == sorted(positions, reverse=True)
-    # Balance card reflects deductions from this operator only.
-    assert "9,940" in html  # 1,000,000 - 6,000 face value = 9,940 SYP
+    # Slice 4.1: the sales were debited from this operator's SIM card only
+    # (10,000 - 60 face value = 9,940 SYP); the legacy credit card stays at 0.
+    assert sim_balance(client, client.sim_ids["mtn"]) == 1000000 - 6000
+    assert sim_balance(client, client.sim_ids["syriatel"]) == 1000000 - 11000
+    assert 'id="operator-balance" dir="ltr">0</span>' in html
 
 
 def test_operator_page_empty_state(client: TestClient) -> None:
