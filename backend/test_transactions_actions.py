@@ -122,8 +122,8 @@ def test_only_allowed_actions_are_rendered_per_status() -> None:
     assert remove_action["text"] == "Remove"
     assert remove_action["label"] == "Remove · TXN-b"
 
-    # Every row keeps its nine cells, including the actions column.
-    assert all(entry["cells"] == 9 for entry in result["rows"])
+    # Every row keeps its ten cells, including the performer and actions columns.
+    assert all(entry["cells"] == 10 for entry in result["rows"])
 
 
 def test_a_one_time_sale_has_no_customer_name_a_neutral_label() -> None:
@@ -166,11 +166,11 @@ def test_arabic_actions_are_translated() -> None:
     assert failed["actions"][0]["label"].startswith("إزالة")
 
 
-def test_empty_list_uses_the_full_nine_column_row() -> None:
+def test_empty_list_uses_the_full_ten_column_row() -> None:
     result = run([], rows=[])
     # One placeholder row, not a data row.
     assert [entry["id"] for entry in result["rows"]] == [None]
-    assert result["emptyCells"][0]["colSpan"] == 9
+    assert result["emptyCells"][0]["colSpan"] == 10
     assert result["emptyCells"][0]["text"] == "No matching transactions."
 
 

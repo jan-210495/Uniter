@@ -110,7 +110,7 @@ function firstOptionValue(selectId) {
   const option = /<option value="([^"]*)"/.exec(select ? select[1] : '');
   return option ? option[1] : null;
 }
-for (const selectId of ['filter-operator', 'filter-service', 'filter-status']) {
+for (const selectId of ['filter-operator', 'filter-service', 'filter-status', 'filter-performer']) {
   const value = firstOptionValue(selectId);
   if (value !== null) element(selectId).value = value;
 }
@@ -216,6 +216,18 @@ function actionButton(txId, action) {
 (async () => {
   await flush();
   for (const step of input.steps || []) {
+    if (step.setFilter) {
+      // Choose a filter value as the user would, then fire its change handlers.
+      const target = element(step.setFilter.id);
+      target.value = step.setFilter.value;
+      for (const handler of target.handlers.change || []) await handler({ target, currentTarget: target });
+      await flush();
+    }
+    if (step.click) {
+      const target = element(step.click);
+      for (const handler of target.handlers.click || []) await handler({ preventDefault() {}, target, currentTarget: target });
+      await flush();
+    }
     if (step.clickAction) {
       const button = actionButton(step.clickAction.txId, step.clickAction.action);
       const handlers = button.handlers.click || [];
@@ -255,6 +267,8 @@ function actionButton(txId, action) {
       const badge = row.children[6] && row.children[6].children[0];
       return badge ? badge.textContent : null;
     })(),
+    // The performer cell (column 8), when the row has one.
+    performer: row.children.length > 8 && row.children[7] ? row.children[7].textContent : null,
     actions: (() => {
       const cell = row.children[row.children.length - 1];
       const group = cell.children[0];

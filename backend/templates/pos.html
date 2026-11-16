@@ -70,6 +70,22 @@
                         </select>
                     </div>
                 </div>
+                {# v1.0.4 slice 4.1: the SIM card this sale is charged to. Only SIM
+                   cards this account may use are rendered (pos-sim-data); the
+                   saved default is preselected, otherwise the seller chooses.
+                   There is no fallback to the legacy company credit. #}
+                <div id="sim-field">
+                    <label for="sim" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'الشريحة' if ar else 'SIM card' }}</label>
+                    <div class="flex gap-2">
+                        <select id="sim" name="sim" aria-describedby="sim-status sim-empty" class="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100">
+                            <option value="">{{ 'اختر شريحة' if ar else 'Select a SIM card' }}</option>
+                        </select>
+                        <button type="button" id="sim-default" class="shrink-0 rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-semibold text-blue-900 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700 disabled:opacity-50">{{ 'اجعلها الافتراضية' if ar else 'Make default' }}</button>
+                    </div>
+                    <p id="sim-status" role="status" aria-live="polite" class="mt-1.5 text-xs text-slate-500"></p>
+                    <p id="sim-empty" hidden class="mt-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">{{ 'لا توجد شريحة لهذه الشركة. أضف شريحة أو اخترها من صفحة' if ar else 'No SIM card for this company. Add or select a SIM card on the' }} <a href="/operators" class="font-semibold underline">{{ 'المشغّلين' if ar else 'Operators page' }}</a>.</p>
+                </div>
+                <script type="application/json" id="pos-sim-data">{{ pos_sims|default({'companies': []})|tojson }}</script>
                 {# Operator vouchers, kept as exact decimal strings so no value is
                    ever rounded through binary floating point. #}
                 {% set voucher_amounts = {
@@ -185,10 +201,18 @@
         'copyError': 'تعذر النسخ تلقائياً. حدد الرمز وانسخه يدوياً.' if ar else 'Could not copy automatically. Select the code and copy it manually.',
         'previewError': 'تعذر تجهيز الرمز. حاول مرة أخرى.' if ar else 'Could not prepare the code. Try again.',
         'transactionError': 'تعذر تسجيل البيع. حاول مرة أخرى.' if ar else 'Could not record the sale. Try again.',
-        'insufficientBalance': 'رصيد المشغّل غير كافٍ.' if ar else 'Insufficient operator balance.',
+        'insufficientBalance': 'رصيد هذه الشريحة غير كافٍ.' if ar else 'Not enough balance on this SIM card.',
+        'simRequired': 'اختر شريحة لهذه الشركة.' if ar else 'Select a SIM card for this company.',
+        'simUnavailable': 'هذه الشريحة غير متاحة لهذا البيع. اختر شريحة أخرى.' if ar else 'This SIM card is not available for this sale. Choose another one.',
+        'simBalance': 'رصيد الشريحة' if ar else 'SIM balance',
+        'simIsDefault': 'هذه شريحتك الافتراضية.' if ar else 'This is your default SIM card.',
+        'simDefaultSaved': 'تم حفظ الشريحة الافتراضية.' if ar else 'Default SIM card saved.',
+        'simDefaultFailed': 'تعذر حفظ الشريحة الافتراضية.' if ar else 'Could not save the default SIM card.',
+        'simShared': 'مشتركة' if ar else 'shared',
+        'simPrivate': 'خاصة' if ar else 'private',
         'statusOpen': 'لم تُسجَّل بعد' if ar else 'Not recorded yet',
         'statusSuccessful': 'مسجّلة' if ar else 'Recorded',
-        'saleRecorded': 'تم تسجيل البيع وخصمه من رصيد المشغّل.' if ar else 'Sale recorded and charged to the operator balance.',
+        'saleRecorded': 'تم تسجيل البيع وخصمه من رصيد الشريحة.' if ar else 'Sale recorded and charged to the SIM card.',
         'copyNotRecorded': 'لم يُسجَّل أي شيء: انسخ الرمز يدوياً ثم أرسله للعميل.' if ar else 'Nothing was recorded: copy the code by hand and send it to the customer.'
     }|tojson }};
     const form = document.getElementById('charge-form');
@@ -207,6 +231,10 @@
     const amount = document.getElementById('amount');
     const operator = document.getElementById('operator');
     const service = document.getElementById('service');
+    const simSelect = document.getElementById('sim');
+    const simDefault = document.getElementById('sim-default');
+    const simStatus = document.getElementById('sim-status');
+    const simEmpty = document.getElementById('sim-empty');
     const voucherFieldset = document.getElementById('voucher-fieldset');
     const voucherGroups = [...document.querySelectorAll('[data-voucher-operator]')];
     const voucherButtons = [...document.querySelectorAll('.voucher-button')];
@@ -340,6 +368,133 @@
         dialLink.setAttribute('href', 'tel:' + code.replace(/#/g, '%23'));
         dialActions.hidden = false;
     }
+    // --- SIM card selection (v1.0.4 slice 4.1) ---------------------------
+    // The server rendered only the SIM cards this account may use, per
+    // company, with each balance and the saved default. A manual choice is
+    // remembered per company for this page; otherwise the default is used.
+    // With no choice nothing is previewed or committed: there is no fallback
+    // to the legacy company credit.
+    function readSimData() {
+        try {
+            const holder = document.getElementById('pos-sim-data');
+            const parsed = JSON.parse((holder && holder.textContent) || '{}');
+            return parsed && Array.isArray(parsed.companies) ? parsed : { companies: [] };
+        } catch (_) {
+            return { companies: [] };
+        }
+    }
+    let simData = readSimData();
+    const manualSims = {};
+    // The company the SIM choices were built for. A browser restoring form
+    // state (back/forward) can change the company without a change event.
+    let simOptionsFor = null;
+    function simCompany(code) {
+        return simData.companies.find((company) => company.operator_code === code)
+            || { operator_code: code, sims: [], default_sim_id: null };
+    }
+    function formatSimAmount(cents) {
+        return (Number(cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    }
+    function selectedSim() {
+        if (simOptionsFor !== operator.value) syncSimOptions();
+        const id = Number(simSelect.value);
+        if (!Number.isSafeInteger(id) || id <= 0) return null;
+        return simCompany(operator.value).sims.find((sim) => sim.id === id) || { id };
+    }
+    function updateSimStatus() {
+        const company = simCompany(operator.value);
+        const sim = currentSim();
+        simDefault.disabled = !sim || company.default_sim_id === (sim && sim.id);
+        if (!sim) { simStatus.textContent = ''; return; }
+        const parts = [];
+        if (sim.balance_cents !== undefined) {
+            parts.push(messages.simBalance + ': ' + formatSimAmount(sim.balance_cents) + ' ' + messages.currency);
+        }
+        if (company.default_sim_id === sim.id) parts.push(messages.simIsDefault);
+        simStatus.textContent = parts.join(' · ');
+    }
+    function currentSim() {
+        const id = Number(simSelect.value);
+        if (!Number.isSafeInteger(id) || id <= 0) return null;
+        return simCompany(operator.value).sims.find((sim) => sim.id === id) || { id };
+    }
+    function syncSimOptions() {
+        simOptionsFor = operator.value;
+        const company = simCompany(operator.value);
+        const sims = Array.isArray(company.sims) ? company.sims : [];
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = simSelect.dataset.placeholder || placeholderText;
+        const options = [placeholder];
+        sims.forEach((sim) => {
+            const option = document.createElement('option');
+            option.value = String(sim.id);
+            option.textContent = sim.display_name + ' (' + (sim.visibility === 'shared' ? messages.simShared : messages.simPrivate)
+                + ') · ' + formatSimAmount(sim.balance_cents) + ' ' + messages.currency;
+            options.push(option);
+        });
+        simSelect.replaceChildren(...options);
+        const ids = sims.map((sim) => String(sim.id));
+        const manual = manualSims[operator.value];
+        const fallback = company.default_sim_id === null || company.default_sim_id === undefined ? '' : String(company.default_sim_id);
+        simSelect.value = manual && ids.includes(manual) ? manual : (ids.includes(fallback) ? fallback : '');
+        simSelect.disabled = sims.length === 0;
+        simEmpty.hidden = sims.length > 0;
+        simSelect.setCustomValidity('');
+        updateSimStatus();
+    }
+    const placeholderText = (() => {
+        const first = simSelect.querySelector('option');
+        return (first && first.textContent) || '';
+    })();
+    simSelect.addEventListener('change', () => {
+        manualSims[operator.value] = simSelect.value;
+        simSelect.setCustomValidity('');
+        registerStatus.textContent = '';
+        updateSimStatus();
+        // A new SIM means a new sale: the shown code is regenerated first.
+        clearResult();
+    });
+    simDefault.addEventListener('click', async () => {
+        const sim = selectedSim();
+        if (!sim) { simStatus.textContent = messages.simRequired; return; }
+        const code = operator.value;
+        simDefault.disabled = true;
+        try {
+            const response = await fetch('/api/pos/default-sim', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ operator_code: code, sim_id: sim.id })
+            });
+            const data = await response.json().catch(() => null);
+            if (!response.ok || !data) throw new Error('default not saved');
+            simCompany(code).default_sim_id = data.default_sim_id;
+            updateSimStatus();
+            simStatus.textContent = messages.simDefaultSaved;
+        } catch (_) {
+            simStatus.textContent = messages.simDefaultFailed;
+            updateSimStatus();
+            simStatus.textContent = messages.simDefaultFailed;
+        }
+    });
+    async function refreshSims() {
+        try {
+            const response = await fetch('/api/pos/sims', { cache: 'no-store' });
+            if (!response.ok) return;
+            const data = await response.json();
+            if (!data || !Array.isArray(data.companies)) return;
+            simData = data;
+            syncSimOptions();
+        } catch (_) {
+            // Keep the current choices; the server re-checks every sale anyway.
+        }
+    }
+    function messageForSaleError(detail, fallback) {
+        if (detail === 'Insufficient SIM balance') return messages.insufficientBalance;
+        if (detail === 'Select a SIM card for this company') return messages.simRequired;
+        if (detail === 'This SIM card is not available for this sale') return messages.simUnavailable;
+        return detail || fallback;
+    }
     function clearResult() {
         result.hidden = true;
         output.value = '';
@@ -371,17 +526,14 @@
                     operator_code: sale.operator_code,
                     service_code: sale.service_code,
                     amount_cents: sale.amount_cents,
+                    sim_card_id: sale.sim_card_id,
                     commit_key: sale.commit_key
                 })
             });
             const data = await response.json().catch(() => null);
             if (!response.ok) {
                 const detail = data && data.detail;
-                throw new Error(
-                    detail === 'Insufficient operator balance'
-                        ? messages.insufficientBalance
-                        : (detail || messages.transactionError)
-                );
+                throw new Error(messageForSaleError(detail, messages.transactionError));
             }
             return data;
         })();
@@ -391,6 +543,7 @@
             sale.transaction = data;
             setBadge(true);
             commitStatus.textContent = messages.saleRecorded + ' ' + (data.reference || '');
+            refreshSims();  // show the SIM card's new balance
             return data;
         } catch (error) {
             // Nothing was recorded. The key is kept, so a retry cannot double-charge.
@@ -649,11 +802,13 @@
                 // While typing: a known operator prefix selects the operator,
                 // unless the user picked one manually.
                 const operatorCode = operatorForPhonePrefix(phone.value);
-                if (operatorCode && !operatorTouched) {
+                if (operatorCode && !operatorTouched && operator.value !== operatorCode) {
                     operator.value = operatorCode;
-                    // Typing a known prefix re-targets the vouchers too.
+                    // Typing a known prefix re-targets the vouchers and the
+                    // SIM card choices too.
                     syncVoucherVisibility();
                     syncButtons();
+                    syncSimOptions();
                 }
             }
             queueSearch(input, anchor);
@@ -714,6 +869,7 @@
         operatorTouched = true;
         syncVoucherVisibility();
         syncButtons();
+        syncSimOptions();
         clearResult();
     });
     service.addEventListener('change', () => {
@@ -781,6 +937,17 @@
         phone.setCustomValidity(normalized ? '' : messages.invalidPhone);
         amount.setCustomValidity(cents === null ? messages.invalidAmount : '');
         if (!form.reportValidity()) { clearResult(); return; }
+        // No SIM card, no sale: nothing is previewed and the legacy company
+        // credit is never used as a fallback.
+        const sim = selectedSim();
+        if (!sim) {
+            simSelect.setCustomValidity(messages.simRequired);
+            registerStatus.textContent = messages.simRequired;
+            clearResult();
+            if (typeof simSelect.focus === 'function' && !simSelect.disabled) simSelect.focus();
+            return;
+        }
+        simSelect.setCustomValidity('');
         // Blank (or whitespace-only) means a one-time sale: the name is sent
         // as null and no customer record is created.
         const saleName = nameInput.value.trim() || null;
@@ -795,17 +962,14 @@
                     customer_phone: normalized,
                     operator_code: operator.value,
                     service_code: service.value,
-                    amount_cents: Number(cents)
+                    amount_cents: Number(cents),
+                    sim_card_id: sim.id
                 })
             });
             const data = await response.json().catch(() => null);
             if (!response.ok) {
                 const detail = data && data.detail;
-                throw new Error(
-                    detail === 'Insufficient operator balance'
-                        ? messages.insufficientBalance
-                        : (detail || messages.previewError)
-                );
+                throw new Error(messageForSaleError(detail, messages.previewError));
             }
             if (!data || !data.ussd_string || !data.commit_key) {
                 throw new Error(messages.previewError);
@@ -821,6 +985,7 @@
                 operator_code: operator.value,
                 service_code: service.value,
                 amount_cents: Number(cents),
+                sim_card_id: sim.id,
                 transaction: null,
                 inFlight: null
             };
@@ -851,6 +1016,7 @@
     }
     syncVoucherVisibility();
     syncButtons();
+    syncSimOptions();
     updateSummary();
     loadRate();
 })();

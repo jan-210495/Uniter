@@ -89,6 +89,9 @@ function firstOptionValue(selectId) {
   const option = /<option value="([^"]*)"/.exec(select ? select[1] : '');
   return option ? option[1] : '';
 }
+// v1.0.4 slice 4.1: the server-rendered SIM card choices (JSON).
+const simData = /<script type="application\/json" id="pos-sim-data">([\s\S]*?)<\/script>/.exec(html);
+element('pos-sim-data').textContent = simData ? simData[1] : '';
 element('operator').value = firstOptionValue('operator');
 element('service').value = firstOptionValue('service');
 

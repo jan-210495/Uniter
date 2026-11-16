@@ -16,6 +16,8 @@ from backend.database import (
     enable_sqlite_foreign_keys,
     get_db,
 )
+from backend.sim_test_support import fund_company, sim_balance, with_sim
+from backend.auth_test_support import sign_in
 from backend.main import app
 from backend.seed import generate_ussd, seed_data
 
@@ -40,6 +42,7 @@ def client(tmp_path) -> Iterator[TestClient]:
     app.dependency_overrides[get_db] = override_db
     try:
         with TestClient(app) as test_client:
+            sign_in(test_client, sessions)
             yield test_client
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -59,10 +62,8 @@ def run_db(statement) -> None:
 
 
 def topup(client: TestClient, operator_code: str, amount_cents: int) -> None:
-    response = client.post(
-        "/api/operators/topup", json={"operator_code": operator_code, "amount_cents": amount_cents}
-    )
-    assert response.status_code == 200
+    # Slice 4.1: sales are charged to a SIM card, funded by its own top-up.
+    fund_company(client, operator_code, amount_cents)
 
 
 def post_transaction(
@@ -70,13 +71,13 @@ def post_transaction(
 ):
     return client.post(
         "/api/transactions",
-        json={
+        json=with_sim(client, {
             "customer_phone": phone,
             "operator_code": operator,
             "service_code": service,
             "amount_cents": amount_cents,
             "commit_key": new_commit_key(),
-        },
+        }),
     )
 
 
@@ -168,8 +169,10 @@ def test_transaction_deducts_balance_and_records_profit(client: TestClient) -> N
     transaction = response.json()
     assert transaction["ussd_string"] == "*150*65477*0933123456*50#"
 
+    # Slice 4.1: the face value is debited from the SIM card, not the legacy credit.
+    assert sim_balance(client, client.sim_ids["mtn"]) == 20000 - 5000
     balances = {item["operator_code"]: item for item in client.get("/api/operators/balance").json()}
-    assert balances["mtn"]["balance_cents"] == 20000 - 5000
+    assert balances["mtn"]["balance_cents"] == 0
     assert balances["syriatel"]["balance_cents"] == 0
 
     async def check_profit() -> None:
@@ -192,7 +195,7 @@ def test_insufficient_balance_rejects_transaction(client: TestClient) -> None:
     # Seeded balances are zero: any positive amount is insufficient.
     response = post_transaction(client, "0933123456", "mtn", "prepaid", 5000)
     assert response.status_code == 400
-    assert response.json()["detail"] == "Insufficient operator balance"
+    assert response.json()["detail"] == "Insufficient SIM balance"
 
     async def check_nothing_created() -> None:
         async with aclosing(app.dependency_overrides[get_db]()) as dependency:
@@ -206,11 +209,14 @@ def test_insufficient_balance_rejects_transaction(client: TestClient) -> None:
     balances = {item["operator_code"]: item for item in client.get("/api/operators/balance").json()}
     assert balances["mtn"]["balance_cents"] == 0
 
+    assert sim_balance(client, client.sim_ids["mtn"]) == 0
+
     # A partial balance below the amount is still insufficient.
     topup(client, "mtn", 4999)
     assert post_transaction(client, "0933123456", "mtn", "prepaid", 5000).status_code == 400
+    assert sim_balance(client, client.sim_ids["mtn"]) == 4999
     balances = {item["operator_code"]: item for item in client.get("/api/operators/balance").json()}
-    assert balances["mtn"]["balance_cents"] == 4999
+    assert balances["mtn"]["balance_cents"] == 0
 
     # The full balance allows the transaction through.
     topup(client, "mtn", 1)
@@ -229,9 +235,9 @@ def test_profit_ledger_accumulates_across_transactions(client: TestClient) -> No
     assert client.put("/api/settings/commission", json={"rate": "0.10"}).status_code == 200
     assert post_transaction(client, "0933123456", "syriatel", "postpaid", 10000).status_code == 200
 
-    balances = {item["operator_code"]: item for item in client.get("/api/operators/balance").json()}
-    assert balances["mtn"]["balance_cents"] == 30000 - 5000 - 2500
-    assert balances["syriatel"]["balance_cents"] == 20000 - 10000
+    # Slice 4.1: each company's SIM card carries the face debits.
+    assert sim_balance(client, client.sim_ids["mtn"]) == 30000 - 5000 - 2500
+    assert sim_balance(client, client.sim_ids["syriatel"]) == 20000 - 10000
 
     async def check_ledger() -> None:
         async with aclosing(app.dependency_overrides[get_db]()) as dependency:

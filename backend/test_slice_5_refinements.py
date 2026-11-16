@@ -21,6 +21,8 @@ from backend.database import (
     enable_sqlite_foreign_keys,
     get_db,
 )
+from backend.sim_test_support import fund_company, sim_balance, with_sim
+from backend.auth_test_support import sign_in
 from backend.main import app
 from backend.seed import generate_ussd, seed_data
 from backend.validation import normalize_phone, validate_syrian_phone
@@ -47,6 +49,7 @@ def client(tmp_path) -> Iterator[tuple[TestClient, async_sessionmaker]]:
     app.dependency_overrides[get_db] = override_db
     try:
         with TestClient(app) as test_client:
+            sign_in(test_client, sessions)
             yield test_client, sessions
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -147,30 +150,28 @@ def test_generate_ussd_exact_structures_with_domains_and_fallback(client) -> Non
 
 def test_pos_flow_creates_transaction_deducts_balance_and_records_profit(client) -> None:
     test_client, sessions = client
-    assert (
-        test_client.post("/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 20000})
-        .status_code
-        == 200
-    )
+    fund_company(test_client, "mtn", 20000)  # Slice 4.1: a funded SIM card
 
     response = test_client.post(
         "/api/transactions",
-        json={
+        json=with_sim(test_client, {
             "customer_phone": "0933123456",
             "operator_code": "mtn",
             "service_code": "prepaid",
             "amount_cents": 5000,
             "commit_key": new_commit_key(),
-        },
+        }),
     )
     assert response.status_code == 200
     transaction = response.json()
     assert transaction["ussd_string"] == "*150*65477*0933123456*50#"
     assert transaction["status"] == "successful"
 
-    # The operator balance was deducted.
+    # The SIM card balance was deducted (Slice 4.1) ...
+    assert sim_balance(test_client, test_client.sim_ids["mtn"]) == 20000 - 5000
+    # ... and the legacy company credit was not touched.
     balances = {row["operator_code"]: row for row in test_client.get("/api/operators/balance").json()}
-    assert balances["mtn"]["balance_cents"] == 20000 - 5000
+    assert balances["mtn"]["balance_cents"] == 0
 
     # The transaction is stored and appears in the transaction list.
     listed = test_client.get("/api/transactions").json()

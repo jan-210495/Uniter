@@ -25,10 +25,14 @@ from backend.database import (
     Operator,
     OperatorBalance,
     ProfitLedger,
+    SimBalance,
+    SimCard,
     Transaction,
     enable_sqlite_foreign_keys,
     get_db,
 )
+from backend.auth_test_support import sign_in
+from backend.sim_test_support import fund_company, with_sim
 from backend.main import app
 from backend.seed import seed_data
 
@@ -60,6 +64,7 @@ def client(tmp_path) -> Iterator[tuple[TestClient, async_sessionmaker]]:
     app.dependency_overrides[get_db] = override_db
     try:
         with TestClient(app) as test_client:
+            sign_in(test_client, sessions)
             yield test_client, sessions
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -86,13 +91,8 @@ def fund(
     operator_code: str = "mtn",
     amount_cents: int = 5_000_000,
 ) -> None:
-    assert (
-        client.post(
-            "/api/operators/topup",
-            json={"operator_code": operator_code, "amount_cents": amount_cents},
-        ).status_code
-        == 200
-    )
+    # Slice 4.1: sales are charged to a SIM card, funded by its own top-up.
+    fund_company(client, operator_code, amount_cents)
 
 
 def screenshot(sessions: async_sessionmaker) -> dict:
@@ -104,7 +104,23 @@ def screenshot(sessions: async_sessionmaker) -> dict:
             "ledger": await session.scalar(select(func.count()).select_from(ProfitLedger)),
             "customers": await session.scalar(select(func.count()).select_from(Customer)),
             "debt": await session.scalar(select(func.count()).select_from(DebtLedger)),
+            # Slice 4.1: the money a sale moves is the SIM card balance ...
             "balances": {
+                row.code: row.balance
+                for row in (
+                    await session.execute(
+                        select(
+                            Operator.code,
+                            func.coalesce(func.sum(SimBalance.balance_cents), 0).label("balance"),
+                        )
+                        .outerjoin(SimCard, SimCard.operator_id == Operator.id)
+                        .outerjoin(SimBalance, SimBalance.sim_card_id == SimCard.id)
+                        .group_by(Operator.code)
+                    )
+                ).all()
+            },
+            # ... and the legacy company credit never moves at all.
+            "legacy": {
                 row.code: row.balance
                 for row in (
                     await session.execute(
@@ -137,7 +153,7 @@ def preview(
     }
     if name is not None:
         body["customer_name"] = name
-    return client.post("/api/transactions/preview", json=body)
+    return client.post("/api/transactions/preview", json=with_sim(client, body))
 
 
 def commit(
@@ -160,7 +176,7 @@ def commit(
     }
     if include_name:
         body["customer_name"] = name
-    return client.post("/api/transactions", json=body)
+    return client.post("/api/transactions", json=with_sim(client, body))
 
 
 def customers(sessions: async_sessionmaker) -> list[dict]:
@@ -556,7 +572,7 @@ def test_insufficient_balance_creates_neither_transaction_nor_customer(client) -
     named = commit(test_client, name="Ahmad", amount_cents=50_000)
     anonymous = commit(test_client, name=None, amount_cents=50_000)
     assert named.status_code == anonymous.status_code == 400
-    assert named.json()["detail"] == "Insufficient operator balance"
+    assert named.json()["detail"] == "Insufficient SIM balance"
 
     assert screenshot(sessions) == before
     assert customers(sessions) == []

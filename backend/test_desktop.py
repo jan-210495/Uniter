@@ -57,7 +57,8 @@ def desktop(monkeypatch, tmp_path):
         "backend.main": {"app": object(), "templates": object()},
         "backend.database": {name: Mock() for name in (
             "Base", "engine", "SessionLocal", "migrate_operator_credit_refunds",
-            "validate_existing_refund_schema")},
+            "validate_existing_refund_schema", "migrate_sim_cards", "validate_existing_sim_schema",
+            "migrate_sim_balances", "validate_existing_sim_balance_schema")},
         "backend.migrations": {"SchemaUpgradeError": type("SchemaUpgradeError", (Exception,), {}),
                                "migrate_transaction_lifecycle": Mock()},
         "backend.seed": {"seed_data": Mock()},

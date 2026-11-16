@@ -9,6 +9,8 @@ from sqlalchemy import URL, event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.database import Base, Customer, Operator, Service, Transaction, enable_sqlite_foreign_keys, get_db
+from backend.auth_test_support import sign_in
+from backend.sim_test_support import fund_company, sim_balance, with_sim
 from backend.main import app
 from backend.seed import seed_data
 
@@ -33,6 +35,7 @@ def client(tmp_path) -> Iterator[TestClient]:
     app.dependency_overrides[get_db] = override_db
     try:
         with TestClient(app) as test_client:
+            sign_in(test_client, sessions)
             yield test_client
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -57,9 +60,7 @@ def test_transaction_existing_and_one_time_customers(client: TestClient) -> None
     its phone and never leaves a customer record behind.
     """
     for operator_code in ("mtn", "syriatel"):
-        assert client.post(
-            "/api/operators/topup", json={"operator_code": operator_code, "amount_cents": 100000}
-        ).status_code == 200
+        fund_company(client, operator_code, 100000)  # Slice 4.1: a funded SIM card
     customer = client.post("/api/customers", json={"phone": "0933123456", "name": "Customer"}).json()
     payload = {
         "customer_phone": "0933123456",
@@ -136,6 +137,7 @@ def test_inactive_configuration_is_not_used(client: TestClient) -> None:
             service.is_active = False
             await session.commit()
 
+    fund_company(client, "mtn", 100000)  # funded: only the inactive service refuses the sale
     asyncio.run(disable_service())
     payload = {"customer_phone": "0999999999", "operator_code": "mtn", "service_code": "prepaid", "amount_cents": 5000}
     assert post_transaction(client, payload).status_code == 400
@@ -146,9 +148,7 @@ def test_failed_transaction_does_not_leave_new_customer(client: TestClient, monk
     from uuid import UUID
 
     monkeypatch.setattr("backend.main.uuid4", lambda: UUID(int=1))
-    assert client.post(
-        "/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 25000}
-    ).status_code == 200
+    fund_company(client, "mtn", 25000)  # Slice 4.1: a funded SIM card
     payload = {"customer_phone": "0933123456", "operator_code": "mtn", "service_code": "prepaid", "amount_cents": 5000}
     assert post_transaction(client, payload).status_code == 200
     payload["customer_phone"] = "0944123456"
@@ -157,12 +157,11 @@ def test_failed_transaction_does_not_leave_new_customer(client: TestClient, monk
     assert post_transaction(client, payload).status_code == 409
     assert client.get("/api/customers/lookup", params={"phone": "0944123456"}).status_code == 404
     assert len(client.get("/api/transactions").json()) == 1
+    assert sim_balance(client, client.sim_ids["mtn"]) == 20000  # debited once only
 
 
 def test_normalized_customer_and_transaction_phones(client: TestClient) -> None:
-    assert client.post(
-        "/api/operators/topup", json={"operator_code": "mtn", "amount_cents": 100000}
-    ).status_code == 200
+    fund_company(client, "mtn", 100000)  # Slice 4.1: a funded SIM card
     response = client.post("/api/customers", json={"phone": "+963 933-123-456", "name": "Customer"})
     assert response.status_code == 200
     customer = response.json()
@@ -341,4 +340,4 @@ def post_transaction(client: TestClient, payload: dict, **overrides):
     body = dict(payload)
     body.update(overrides)
     body["commit_key"] = new_commit_key()
-    return client.post("/api/transactions", json=body)
+    return client.post("/api/transactions", json=with_sim(client, body))

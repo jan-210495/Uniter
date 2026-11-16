@@ -24,6 +24,8 @@ from backend.database import (
     enable_sqlite_foreign_keys,
     get_db,
 )
+from backend.auth_test_support import sign_in
+from backend.sim_test_support import fund_company, sim_balance, sim_for, sim_total_statement, with_sim
 from backend.main import app
 from backend.seed import seed_data
 
@@ -52,6 +54,7 @@ def client(tmp_path) -> Iterator[tuple[TestClient, async_sessionmaker]]:
     app.dependency_overrides[get_db] = override_db
     try:
         with TestClient(app) as test_client:
+            sign_in(test_client, sessions)
             yield test_client, sessions
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -67,24 +70,16 @@ def run_db(sessions: async_sessionmaker, coroutine_factory):
 
 
 def fund(client: TestClient, operator_code: str = "mtn", amount_cents: int = 5_000_000) -> None:
-    assert (
-        client.post(
-            "/api/operators/topup",
-            json={"operator_code": operator_code, "amount_cents": amount_cents},
-        ).status_code
-        == 200
-    )
+    # Slice 4.1: sales are charged to a SIM card, funded by its own top-up.
+    fund_company(client, operator_code, amount_cents)
 
 
 def balance(sessions: async_sessionmaker, operator_code: str = "mtn") -> int:
     async def read(session: AsyncSession) -> int:
         from backend.database import Operator
 
-        value = await session.scalar(
-            select(OperatorBalance.balance_cents)
-            .join(Operator, OperatorBalance.operator_id == Operator.id)
-            .where(Operator.code == operator_code)
-        )
+        # Slice 4.1: the balance a sale debits is the company's SIM card.
+        value = await session.scalar(sim_total_statement(operator_code))
         return int(value or 0)
 
     return run_db(sessions, read)
@@ -137,12 +132,12 @@ def preview(
 ):
     return client.post(
         "/api/transactions/preview",
-        json={
+        json=with_sim(client, {
             "customer_phone": phone,
             "operator_code": operator_code,
             "service_code": service_code,
             "amount_cents": amount_cents,
-        },
+        }),
     )
 
 
@@ -164,7 +159,7 @@ def commit(
         "commit_key": commit_key() if key is None else key,
     }
     body.update(extra)
-    return client.post("/api/transactions", json=body)
+    return client.post("/api/transactions", json=with_sim(client, body))
 
 
 # --- A. Preparing a code records and charges nothing ----------------------
@@ -218,7 +213,7 @@ def test_preview_rejects_insufficient_operator_balance(client) -> None:
     test_client, sessions = client
     response = preview(test_client, amount_cents=50_000)
     assert response.status_code == 400
-    assert response.json()["detail"] == "Insufficient operator balance"
+    assert response.json()["detail"] == "Insufficient SIM balance"
     assert counts(sessions) == (0, 0, 0)
 
 
@@ -344,7 +339,7 @@ def test_insufficient_balance_rejects_atomically(client) -> None:
 
     response = commit(test_client, key=key, amount_cents=5000)
     assert response.status_code == 400
-    assert response.json()["detail"] == "Insufficient operator balance"
+    assert response.json()["detail"] == "Insufficient SIM balance"
     # No transaction, no ledger row, no customer, and the balance is untouched.
     assert counts(sessions) == (0, 0, 0)
     assert balance(sessions) == 1_000
@@ -433,4 +428,7 @@ def test_commit_is_reflected_in_register_and_operator_balance(client) -> None:
 
     page = test_client.get("/operators/mtn").text
     assert "Successful" in page
-    assert 'id="operator-balance" dir="ltr">950</span>' in page
+    # Slice 4.1: the sale debited the SIM card (1,000 - 50 = 950 SYP); the
+    # legacy company credit shown on the operator page stays untouched at 0.
+    assert sim_balance(test_client, sim_for(test_client, "mtn")) == 95_000
+    assert 'id="operator-balance" dir="ltr">0</span>' in page

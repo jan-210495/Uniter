@@ -6,7 +6,7 @@ from threading import Barrier
 import pytest
 from sqlalchemy import select, text, update
 
-from backend.database import Operator, OperatorCreditRefund, Service, Transaction
+from backend.database import Operator, OperatorCreditRefund, Service, SimLedger, Transaction
 from backend import database
 from backend.test_transaction_status import (
     client, balance, create_transaction, fund, profits, raw_row, run_db, set_failed,
@@ -14,9 +14,19 @@ from backend.test_transaction_status import (
 
 
 def refunds(sessions):
+    """The SIM card refund audit (v1.0.4 Slice 4.1), one row per refunded sale.
+
+    A new sale's refund goes back to the SIM card it debited, with an
+    append-only ``refund`` ledger row; the legacy company-credit refund table
+    must never receive a row for it.
+    """
     async def read(session):
-        rows = (await session.scalars(select(OperatorCreditRefund).order_by(OperatorCreditRefund.id))).all()
-        return [(r.transaction_id, r.transaction_reference, r.operator_id, r.amount_cents) for r in rows]
+        legacy = (await session.scalars(select(OperatorCreditRefund))).all()
+        assert legacy == [], "a SIM card sale was refunded to the legacy company credit"
+        rows = (await session.scalars(
+            select(SimLedger).where(SimLedger.kind == 'refund').order_by(SimLedger.id)
+        )).all()
+        return [(r.transaction_id, r.reference, r.sim_card_id, r.amount_cents) for r in rows]
     return run_db(sessions, read)
 
 
@@ -75,7 +85,8 @@ def test_refund_write_failure_rolls_back_status_credit_and_audit(client, fault):
     sale = create_transaction(http)
     original = raw_row(sessions, sale['id'])
     ledger = profits(sessions)
-    target = 'operator_balance' if fault == 'balance' else 'operator_credit_refund'
+    # Slice 4.1: the refund writes the SIM card balance and its ledger row.
+    target = 'sim_balances' if fault == 'balance' else 'sim_ledger'
     action = 'UPDATE' if fault == 'balance' else 'INSERT'
     async def install(session):
         await session.execute(text(f"CREATE TRIGGER fail_refund BEFORE {action} ON {target} BEGIN SELECT RAISE(ABORT, 'injected refund failure'); END"))
@@ -148,7 +159,7 @@ def test_missing_original_accounting_fails_closed(client, missing):
     fund(http, amount_cents=100_000)
     sale = create_transaction(http)
     async def remove(session):
-        target = 'profit_ledger' if missing == 'ledger' else 'operator_balance'
+        target = 'profit_ledger' if missing == 'ledger' else 'sim_balances'
         await session.execute(text(f'DELETE FROM {target}'))
         await session.commit()
     run_db(sessions, remove)
@@ -172,9 +183,12 @@ def test_customer_deletion_preserves_refund_audit_and_existing_history_policy(cl
     assert set_failed(http, sale['id']).status_code == 200
     before = refunds(sessions)[0]
     customer = http.get('/api/customers/lookup', params={'phone': '0944123456'}).json()
-    assert http.delete(f"/api/customers/{customer['id']}").status_code == 204
-    assert refunds(sessions) == [(None if legacy else sale['id'], *before[1:])]
-    assert (raw_row(sessions, sale['id']) is None) == legacy
+    # Slice 4.1: a SIM card sale is referenced by the append-only SIM ledger,
+    # so a phone-less (hand-edited) one keeps its customer instead of being
+    # deleted with it; a normal sale is unlinked and stays a one-time sale.
+    assert http.delete(f"/api/customers/{customer['id']}").status_code == (409 if legacy else 204)
+    assert refunds(sessions) == [before]
+    assert raw_row(sessions, sale['id']) is not None
     assert balance(sessions) == 5_000_000
 
 
@@ -245,14 +259,14 @@ def test_refund_overflow_rejects_and_preserves_integer_accounting(client):
     fund(http, amount_cents=100_000)
     sale = create_transaction(http)
     async def corrupt(session):
-        await session.execute(text('UPDATE operator_balance SET balance_cents=:value'), {'value': 9223372036854775807})
+        await session.execute(text('UPDATE sim_balances SET balance_cents=:value'), {'value': 9223372036854775807})
         await session.commit()
     run_db(sessions, corrupt)
     original = raw_row(sessions, sale['id'])
     ledger = profits(sessions)
     assert set_failed(http, sale['id']).status_code == 409
     async def stored(session):
-        return (await session.execute(text('SELECT balance_cents, typeof(balance_cents) FROM operator_balance WHERE operator_id=1'))).one()
+        return (await session.execute(text('SELECT balance_cents, typeof(balance_cents) FROM sim_balances'))).one()
     assert tuple(run_db(sessions, stored)) == (9223372036854775807, 'integer')
     assert raw_row(sessions, sale['id']) == original
     assert profits(sessions) == ledger
@@ -269,12 +283,12 @@ def test_malformed_stored_refund_money_fails_closed(client, column, value):
         # Model constraints normally reject negative transaction amounts; simulate
         # an imported/hand-edited SQLite file without weakening production checks.
         await session.execute(text('PRAGMA ignore_check_constraints=ON'))
-        table = 'transactions' if column == 'amount_cents' else 'operator_balance'
+        table = 'transactions' if column == 'amount_cents' else 'sim_balances'
         await session.execute(text(f'UPDATE {table} SET {column}=:value'), {'value': value})
         await session.commit()
     run_db(sessions, corrupt)
     async def snapshot(session):
-        return (await session.execute(text('SELECT amount_cents, typeof(amount_cents), status FROM transactions'))).all(), (await session.execute(text('SELECT balance_cents, typeof(balance_cents) FROM operator_balance'))).all()
+        return (await session.execute(text('SELECT amount_cents, typeof(amount_cents), status FROM transactions'))).all(), (await session.execute(text('SELECT balance_cents, typeof(balance_cents) FROM sim_balances'))).all()
     before = run_db(sessions, snapshot)
     assert set_failed(http, sale['id']).status_code == 409
     assert run_db(sessions, snapshot) == before

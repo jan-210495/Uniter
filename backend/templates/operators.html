@@ -1,0 +1,425 @@
+{% extends "base.html" %}
+{% set ar = lang|default('en') == 'ar' %}
+{% set currency = 'ل.س' if ar else 'SYP' %}
+
+{% block title %}{{ 'المشغّلون' if ar else 'Operators' }} · Uniter{% endblock %}
+
+{% macro sim_row(sim, company) -%}
+<li class="flex flex-wrap items-start justify-between gap-3 px-4 py-3" data-sim-id="{{ sim.id }}" data-company="{{ company.code }}" data-company-name="{{ company.name }}" data-sim-name="{{ sim.display_name }}" data-sim-phone="{{ sim.phone }}" data-sim-visibility="{{ sim.visibility }}" data-sim-owner="{{ sim.owner_user_id or '' }}">
+    <div class="min-w-0">
+        <p class="font-semibold text-slate-900">{{ sim.display_name }}</p>
+        <p class="mt-0.5 font-mono text-sm text-slate-600" dir="ltr">{{ sim.phone }}</p>
+        <p class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
+            {% if sim.visibility == 'shared' %}
+            <span class="rounded-full bg-blue-50 px-2 py-0.5 font-semibold text-blue-900">{{ 'مشتركة' if ar else 'Shared' }}</span>
+            {% else %}
+            <span class="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-700">{{ 'خاصة' if ar else 'Private' }}</span>
+            <span class="text-slate-600">{{ 'المالك:' if ar else 'Owner:' }} {% if sim.owner_user_id == current_user_id %}{{ 'أنت' if ar else 'you' }}{% else %}<span dir="ltr">{{ sim.owner_username }}</span>{% endif %}</span>
+            {% endif %}
+            {% if sim.status == 'archived' %}
+            <span class="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-800">{{ 'مؤرشفة' if ar else 'Archived' }}</span>
+            {% else %}
+            <span class="rounded-full bg-green-50 px-2 py-0.5 font-semibold text-green-800">{{ 'نشطة' if ar else 'Active' }}</span>
+            {% endif %}
+        </p>
+    </div>
+    <div class="flex flex-col items-end gap-1 text-end">
+        <p class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'رصيد الشريحة' if ar else 'SIM balance' }}</p>
+        <p class="text-lg font-bold tabular-nums text-blue-950"><span data-field="sim-balance" dir="ltr">{{ "{:,.2f}".format(sim.balance_cents / 100).rstrip('0').rstrip('.') }}</span> <span class="text-xs font-semibold text-slate-500">{{ currency }}</span></p>
+        {% if sim.is_default %}
+        <span class="rounded-full bg-blue-950 px-2 py-0.5 text-xs font-semibold text-white" data-field="default-badge">{{ 'افتراضيتك' if ar else 'Your default' }}</span>
+        {% endif %}
+    </div>
+    {% if sim.can_use %}
+    <form class="topup-form flex w-full flex-wrap items-end gap-2" data-sim-id="{{ sim.id }}" data-operator-code="{{ company.code }}" novalidate>
+        <div class="min-w-[9rem] flex-1">
+            <label for="topup-amount-{{ sim.id }}" class="mb-1 block text-xs font-semibold text-slate-700">{{ 'مبلغ التعبئة (ل.س)' if ar else 'Top-up amount (SYP)' }}<span class="sr-only"> {{ sim.display_name }}</span></label>
+            <input id="topup-amount-{{ sim.id }}" name="amount" type="number" min="1" step="1" inputmode="numeric" dir="ltr" required placeholder="500" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+        </div>
+        <button type="submit" class="rounded-lg bg-blue-950 px-3 py-2 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تعبئة' if ar else 'Top up' }}<span class="sr-only"> {{ sim.display_name }}</span></button>
+        <p class="feedback min-h-[1.25rem] w-full text-sm font-medium text-slate-600" role="status" aria-live="polite"></p>
+    </form>
+    {% endif %}
+    {% if sim.can_edit or sim.can_archive or sim.can_restore or (sim.can_use and not sim.is_default) %}
+    <div class="flex flex-wrap gap-2">
+        {% if sim.can_use and not sim.is_default %}<button type="button" data-action="default" class="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'اجعلها افتراضيتي' if ar else 'Make my default' }}<span class="sr-only"> {{ sim.display_name }}</span></button>{% endif %}
+        {% if sim.can_edit %}<button type="button" data-action="edit" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 hover:border-blue-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'تعديل' if ar else 'Edit' }}<span class="sr-only"> {{ sim.display_name }}</span></button>{% endif %}
+        {% if sim.can_archive %}<button type="button" data-action="archive" class="rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'أرشفة' if ar else 'Archive' }}<span class="sr-only"> {{ sim.display_name }}</span></button>{% endif %}
+        {% if sim.can_restore %}<button type="button" data-action="restore" class="rounded-lg border border-green-200 bg-white px-3 py-1.5 text-xs font-semibold text-green-800 hover:bg-green-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'استعادة' if ar else 'Restore' }}<span class="sr-only"> {{ sim.display_name }}</span></button>{% endif %}
+    </div>
+    {% endif %}
+</li>
+{%- endmacro %}
+
+{% block content %}
+<section class="mx-auto max-w-5xl">
+    <header class="mb-8 flex flex-wrap items-end justify-between gap-4">
+        <div>
+            <p class="mb-2 text-xs font-bold uppercase tracking-widest text-blue-800">{{ 'الشركات والشرائح' if ar else 'Companies and SIM cards' }}</p>
+            <h1 class="text-3xl font-bold tracking-tight text-blue-950 sm:text-4xl">{{ 'المشغّلون' if ar else 'Operators' }}</h1>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{{ 'شرائح SIM التي يمكنك استخدامها مع أرصدتها، ورصيد الشركة القديم لكل شركة.' if ar else "The SIM cards you can use with their balances, and each company's legacy credit." }}</p>
+        </div>
+    </header>
+    <p id="sim-status" class="sr-only" role="status" aria-live="polite"></p>
+
+    <div class="space-y-10">
+        {% for company in companies %}
+        <section data-company="{{ company.code }}" aria-labelledby="company-{{ company.code }}-title" class="scroll-mt-24" id="{{ company.code }}">
+            <div class="mb-4 flex flex-wrap items-baseline justify-between gap-3 border-b border-slate-200 pb-3">
+                <h2 id="company-{{ company.code }}-title" class="text-2xl font-bold text-slate-900">{{ company.name }}</h2>
+                <a href="/operators/{{ company.code }}{{ '?lang=ar' if ar else '' }}" class="text-sm font-semibold text-blue-800 hover:text-blue-950">{{ 'أحدث المعاملات' if ar else 'Latest transactions' }}</a>
+            </div>
+            <div class="grid gap-6 lg:grid-cols-5">
+                <section class="min-w-0 rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 sm:p-6 lg:col-span-2" data-operator-card="{{ company.code }}" data-legacy-credit aria-labelledby="legacy-{{ company.code }}-title">
+                    {% set operator = company %}
+                    <div class="mb-5 border-b border-slate-200 pb-4">
+                        <h3 id="legacy-{{ company.code }}-title" class="text-lg font-bold text-slate-900">{{ 'رصيد الشركة القديم' if ar else 'Legacy company credit' }}</h3>
+                        <p class="mt-1 text-xs leading-5 text-slate-500">{{ ('رصيد المحل السابق لدى %s من قبل أرصدة الشرائح. لا يُستخدم للمبيعات الجديدة ولا يمكن تعبئته؛ تُخصم المبيعات الجديدة من الشريحة المختارة.' if ar else 'The former %s shop credit, from before SIM balances. Not used for new sales and cannot be topped up; new sales are charged to the selected SIM card.')|format(company.name) }}</p>
+                    </div>
+            <dl class="grid gap-3 sm:grid-cols-2">
+                <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <dt class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'الرصيد المتبقي' if ar else 'Remaining balance' }}</dt>
+                    <dd class="mt-1 text-2xl font-bold tabular-nums text-blue-950"><span data-field="balance" dir="ltr">{{ "{:,.2f}".format(operator.balance_cents / 100).rstrip('0').rstrip('.') }}</span> <span class="text-sm font-semibold text-slate-500">{{ currency }}</span></dd>
+                </div>
+                <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <dt class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'آخر تعبئة' if ar else 'Last top-up' }}</dt>
+                    <dd class="mt-1 text-sm font-semibold text-slate-700"><time data-field="last-topup"{% if operator.last_topup_at %} data-iso="{{ operator.last_topup_at.isoformat() }}"{% endif %} dir="ltr">{{ operator.last_topup_at.strftime('%Y-%m-%d %H:%M') if operator.last_topup_at else ('—' if not ar else 'لا يوجد') }}</time></dd>
+                </div>
+            </dl>
+                </section>
+
+                <section class="min-w-0 rounded-2xl border border-slate-200 bg-white shadow-sm lg:col-span-3" aria-labelledby="sims-{{ company.code }}-title">
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-5">
+                        <h3 id="sims-{{ company.code }}-title" class="text-lg font-bold text-slate-900">{{ 'شرائح SIM' if ar else 'SIM cards' }}</h3>
+                        <button type="button" data-action="add" data-company="{{ company.code }}" data-company-name="{{ company.name }}" class="rounded-lg bg-blue-950 px-3 py-2 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'إضافة شريحة' if ar else 'Add SIM card' }}<span class="sr-only"> {{ company.name }}</span></button>
+                    </div>
+                    {% if company.active_sims %}
+                    <ul class="divide-y divide-slate-100" aria-label="{{ ('شرائح %s النشطة' if ar else 'Active %s SIM cards')|format(company.name) }}">
+                        {% for sim in company.active_sims %}{{ sim_row(sim, company) }}{% endfor %}
+                    </ul>
+                    {% else %}
+                    <p class="px-4 py-8 text-center text-sm text-slate-500 sm:px-5">{{ 'لا توجد شرائح بعد.' if ar else 'No SIM cards yet.' }}</p>
+                    {% endif %}
+                    {% if company.archived_sims %}
+                    <details class="border-t border-slate-100">
+                        <summary class="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-700 hover:text-blue-900 sm:px-5">{{ 'الشرائح المؤرشفة' if ar else 'Archived SIM cards' }} ({{ company.archived_sims|length }})</summary>
+                        <ul class="divide-y divide-slate-100 bg-slate-50">
+                            {% for sim in company.archived_sims %}{{ sim_row(sim, company) }}{% endfor %}
+                        </ul>
+                    </details>
+                    {% endif %}
+                </section>
+            </div>
+        </section>
+        {% else %}
+        <p class="rounded-2xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-500">{{ 'لا يوجد مشغّلون مهيأون.' if ar else 'No operators configured.' }}</p>
+        {% endfor %}
+    </div>
+</section>
+
+<dialog id="sim-dialog" aria-labelledby="sim-dialog-title" class="w-full max-w-md rounded-2xl border border-slate-200 p-0 shadow-xl backdrop:bg-slate-900/40">
+    <form id="sim-form" class="space-y-4 p-5 sm:p-6" novalidate>
+        <div>
+            <h2 id="sim-dialog-title" class="text-lg font-bold text-slate-900" data-title-add="{{ 'إضافة شريحة' if ar else 'Add SIM card' }}" data-title-edit="{{ 'تعديل الشريحة' if ar else 'Edit SIM card' }}">{{ 'إضافة شريحة' if ar else 'Add SIM card' }}</h2>
+            <p class="mt-1 text-sm text-slate-600">{{ 'الشركة:' if ar else 'Company:' }} <span id="sim-company-name" class="font-semibold"></span></p>
+        </div>
+        <p id="sim-form-error" role="alert" class="hidden rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-800"></p>
+        <div>
+            <label for="sim-name" class="mb-1.5 block text-sm font-semibold text-slate-700">{{ 'الاسم الظاهر' if ar else 'Display name' }}</label>
+            <input id="sim-name" name="display_name" type="text" required maxlength="80" autocomplete="off" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+        </div>
+        <div>
+            <label for="sim-phone" class="mb-1.5 block text-sm font-semibold text-slate-700">{{ 'رقم الهاتف' if ar else 'Phone number' }}</label>
+            <input id="sim-phone" name="phone" type="tel" required inputmode="tel" dir="ltr" maxlength="32" autocomplete="off" placeholder="09XXXXXXXX" aria-describedby="sim-phone-help" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-start text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+            <p id="sim-phone-help" class="mt-1 text-xs text-slate-500">{{ '10 أرقام تبدأ بـ 093 أو 094 أو 095 أو 096 أو 098 أو 099.' if ar else '10 digits starting with 093, 094, 095, 096, 098 or 099.' }}</p>
+        </div>
+        <fieldset id="sim-visibility-field">
+            <legend class="mb-1.5 text-sm font-semibold text-slate-700">{{ 'من يمكنه استخدامها' if ar else 'Who can use it' }}</legend>
+            <label class="flex items-start gap-2 text-sm text-slate-700"><input type="radio" name="visibility" value="private" checked class="mt-1"> <span>{% if viewer_is_admin %}{{ 'خاصة: مالكها والمدراء فقط' if ar else 'Private: its owner and admins only' }}{% else %}{{ 'خاصة: أنا والمدراء فقط' if ar else 'Private: me and admins only' }}{% endif %}</span></label>
+            <label class="mt-1 flex items-start gap-2 text-sm text-slate-700"><input type="radio" name="visibility" value="shared" class="mt-1"> <span>{{ 'مشتركة مع جميع الحسابات' if ar else 'Shared with every account' }}</span></label>
+            {% if not viewer_is_admin %}<p id="sim-shared-note" class="mt-1 hidden text-xs text-amber-800">{{ 'بعد الحفظ، يستطيع المدير فقط تعديل الشريحة المشتركة أو أرشفتها.' if ar else 'After saving, only an admin can edit or archive a shared SIM card.' }}</p>{% endif %}
+        </fieldset>
+        {% if viewer_is_admin %}
+        <div id="sim-owner-field">
+            <label for="sim-owner" class="mb-1.5 block text-sm font-semibold text-slate-700">{{ 'المالك' if ar else 'Owner' }}</label>
+            <select id="sim-owner" name="owner_user_id" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                <option value="">{{ 'اختر حساباً' if ar else 'Choose an account' }}</option>
+                {% for owner in owners %}<option value="{{ owner.id }}">{{ owner.username }}</option>{% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        <div class="flex flex-wrap justify-end gap-2 pt-2">
+            <button type="button" data-action="cancel" class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">{{ 'إلغاء' if ar else 'Cancel' }}</button>
+            <button type="submit" class="rounded-lg bg-blue-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'حفظ' if ar else 'Save' }}</button>
+        </div>
+    </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+    'use strict';
+    // Per-SIM top-up (v1.0.4 slice 4.1). The legacy company credit card is
+    // read-only; new money is loaded onto one SIM card at a time. Each form
+    // carries an idempotency key that survives a failed or repeated submit, so
+    // a double tap or a retry can never credit the SIM card twice.
+    const messages = {{ {
+        'invalidAmount': 'أدخل مبلغاً صحيحاً بالليرة السورية أكبر من صفر.' if ar else 'Enter a whole amount in SYP, greater than zero.',
+        'topupRecorded': 'تم تسجيل التعبئة.' if ar else 'Top-up recorded.',
+        'updateFailed': 'تعذر تسجيل التعبئة. حاول مرة أخرى.' if ar else 'Could not record the top-up. Try again.',
+        'archived': 'هذه الشريحة مؤرشفة أو لم تعد متاحة. أعد تحميل الصفحة.' if ar else 'This SIM card is archived or no longer available. Reload the page.',
+        'overflow': 'المبلغ كبير جداً لهذه الشريحة.' if ar else 'This amount is too large for this SIM card.'
+    }|tojson }};
+    const pageLang = {{ lang|default('en')|tojson }};
+    const cards = [...document.querySelectorAll('[data-operator-card]')];
+
+    function formatAmount(cents) {
+        return (Number(cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    }
+    function formatDate(value) {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value || '';
+        return date.toLocaleString(pageLang === 'ar' ? 'ar-SY' : 'en-GB', {
+            dateStyle: 'short',
+            timeStyle: 'short'
+        });
+    }
+    function setFeedback(form, text, tone) {
+        const feedback = form.querySelector('.feedback');
+        feedback.textContent = text;
+        feedback.className = 'feedback min-h-[1.25rem] w-full text-sm font-medium ' + (tone === 'error' ? 'text-red-700' : 'text-green-700');
+    }
+    function newKey() {
+        const random = (window.crypto && typeof window.crypto.randomUUID === 'function')
+            ? window.crypto.randomUUID().replace(/-/g, '')
+            : Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+        return ('simtopup' + random).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64).padEnd(16, '0');
+    }
+
+    // Locale-format the server-rendered legacy last top-up timestamps.
+    cards.forEach((card) => {
+        const lastTopup = card.querySelector('[data-field="last-topup"]');
+        if (lastTopup && lastTopup.dataset.iso) lastTopup.textContent = formatDate(lastTopup.dataset.iso);
+    });
+
+    document.querySelectorAll('.topup-form').forEach((form) => {
+        let key = newKey();
+        let busy = false;
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (busy) return;
+            const amountInput = form.querySelector('input[name="amount"]');
+            const raw = String(amountInput.value || '').trim();
+            const amount = Number(raw);
+            if (!raw || !/^\d+$/.test(raw) || !Number.isSafeInteger(amount * 100) || amount <= 0) {
+                setFeedback(form, messages.invalidAmount, 'error');
+                amountInput.focus();
+                return;
+            }
+            busy = true;
+            try {
+                const response = await fetch('/api/sims/' + encodeURIComponent(form.dataset.simId) + '/topup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ amount_cents: amount * 100, topup_key: key })
+                });
+                if (!response.ok) {
+                    let detail = '';
+                    try { detail = String((await response.json()).detail || ''); } catch (_) { detail = ''; }
+                    let text = messages.updateFailed;
+                    if (response.status === 422) text = messages.invalidAmount;
+                    else if (response.status === 404 || (response.status === 409 && /restore/i.test(detail))) text = messages.archived;
+                    else if (response.status === 409 && /largest/i.test(detail)) text = messages.overflow;
+                    setFeedback(form, text, 'error');
+                    return;
+                }
+                const topup = await response.json();
+                const row = form.closest('[data-sim-id]');
+                const balance = row ? row.querySelector('[data-field="sim-balance"]') : null;
+                if (balance) balance.textContent = formatAmount(topup.balance_cents);
+                setFeedback(form, messages.topupRecorded + ' (' + topup.reference + ')', 'success');
+                amountInput.value = '';
+                key = newKey();  // recorded: the next top-up is a new one
+            } catch (_) {
+                // Unknown outcome: keep the key, so retrying cannot credit twice.
+                setFeedback(form, messages.updateFailed, 'error');
+            } finally {
+                busy = false;
+            }
+        });
+    });
+})();
+</script>
+<script>
+(() => {
+    'use strict';
+    const text = {{ {
+        'invalid': 'تحقق من الاسم الظاهر (1 إلى 80 حرفاً) ومن رقم الهاتف (10 أرقام تبدأ بـ 093 أو 094 أو 095 أو 096 أو 098 أو 099).' if ar else 'Check the display name (1 to 80 characters) and the phone number (10 digits starting with 093, 094, 095, 096, 098 or 099).',
+        'owner': 'اختر الحساب النشط الذي يملك هذه الشريحة الخاصة.' if ar else 'Choose the active account that owns this private SIM card.',
+        'forbidden': 'لا يُسمح لك بتغيير هذه الشريحة.' if ar else 'You are not allowed to change this SIM card.',
+        'missing': 'لم تعد هذه الشريحة متاحة. أعد تحميل الصفحة.' if ar else 'This SIM card is no longer available. Reload the page.',
+        'archived': 'استعد هذه الشريحة قبل تعديلها.' if ar else 'Restore this SIM card before editing it.',
+        'failed': 'تعذر الحفظ. حاول مرة أخرى.' if ar else 'Could not save. Try again.',
+        'confirmArchive': 'أرشفة هذه الشريحة؟ تبقى بياناتها وسجلها ويمكن استعادتها.' if ar else 'Archive this SIM card? Its details and history are kept and it can be restored.',
+        'saving': 'جارٍ الحفظ…' if ar else 'Saving…',
+        'saved': 'تم الحفظ.' if ar else 'Saved.'
+    }|tojson }};
+    const dialog = document.getElementById('sim-dialog');
+    const form = document.getElementById('sim-form');
+    const errorBox = document.getElementById('sim-form-error');
+    const statusBox = document.getElementById('sim-status');
+    const title = document.getElementById('sim-dialog-title');
+    const ownerField = document.getElementById('sim-owner-field');
+    const ownerSelect = document.getElementById('sim-owner');
+    const sharedNote = document.getElementById('sim-shared-note');
+    const visibilityField = document.getElementById('sim-visibility-field');
+    let editing = null;  // {id, company} when editing, null when adding
+    let busy = false;
+
+    function messageFor(status, detail) {
+        if (status === 422) return text.invalid;
+        if (status === 400) return /owner/i.test(detail || '') ? text.owner : text.invalid;
+        if (status === 403) return text.forbidden;
+        if (status === 404) return text.missing;
+        if (status === 409) return text.archived;
+        return text.failed;
+    }
+    function showError(message) {
+        errorBox.textContent = message;
+        errorBox.classList.toggle('hidden', !message);
+    }
+    function selectedVisibility() {
+        const checked = form.querySelector('input[name="visibility"]:checked');
+        return checked ? checked.value : 'private';
+    }
+    function syncVisibility() {
+        const shared = selectedVisibility() === 'shared';
+        if (ownerField) ownerField.hidden = shared;
+        if (sharedNote) sharedNote.classList.toggle('hidden', !shared);
+    }
+    function openDialog(company, companyName, row) {
+        editing = row ? { id: row.dataset.simId, company } : { id: null, company };
+        title.textContent = row ? title.dataset.titleEdit : title.dataset.titleAdd;
+        document.getElementById('sim-company-name').textContent = companyName;
+        form.elements.display_name.value = row ? row.dataset.simName : '';
+        form.elements.phone.value = row ? row.dataset.simPhone : '';
+        const visibility = row ? row.dataset.simVisibility : 'private';
+        form.querySelectorAll('input[name="visibility"]').forEach((input) => { input.checked = input.value === visibility; });
+        // Sellers choose visibility only when adding; only admins change it later.
+        visibilityField.hidden = Boolean(row) && !ownerSelect;
+        if (ownerSelect) ownerSelect.value = row ? row.dataset.simOwner : '';
+        syncVisibility();
+        showError('');
+        if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
+        form.elements.display_name.focus();
+    }
+    function closeDialog() {
+        if (typeof dialog.close === 'function') dialog.close(); else dialog.removeAttribute('open');
+        editing = null;
+    }
+    async function send(method, url, body) {
+        const response = await fetch(url, {
+            method,
+            headers: body ? { 'Content-Type': 'application/json' } : {},
+            body: body ? JSON.stringify(body) : undefined
+        });
+        let detail = '';
+        if (!response.ok) {
+            try { detail = String((await response.json()).detail || ''); } catch (_) { detail = ''; }
+        }
+        return { ok: response.ok, status: response.status, detail };
+    }
+
+    form.querySelectorAll('input[name="visibility"]').forEach((input) => input.addEventListener('change', syncVisibility));
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (busy || !editing) return;
+        const body = {
+            display_name: form.elements.display_name.value.trim(),
+            phone: form.elements.phone.value.trim()
+        };
+        const visibility = selectedVisibility();
+        if (!body.display_name || !body.phone) { showError(text.invalid); return; }
+        if (!editing.id || ownerSelect) {
+            body.visibility = visibility;
+            if (ownerSelect && visibility === 'private') {
+                if (!ownerSelect.value) { showError(text.owner); ownerSelect.focus(); return; }
+                body.owner_user_id = Number(ownerSelect.value);
+            }
+        }
+        if (!editing.id) body.operator_code = editing.company;
+        busy = true;
+        statusBox.textContent = text.saving;
+        try {
+            const result = editing.id
+                ? await send('PATCH', '/api/sims/' + encodeURIComponent(editing.id), body)
+                : await send('POST', '/api/sims', body);
+            if (!result.ok) {
+                showError(messageFor(result.status, result.detail));
+                statusBox.textContent = '';
+                return;
+            }
+            statusBox.textContent = text.saved;
+            window.location.reload();
+        } catch (_) {
+            showError(text.failed);
+            statusBox.textContent = '';
+        } finally {
+            busy = false;
+        }
+    });
+
+    document.addEventListener('click', async (event) => {
+        const button = event.target.closest('[data-action]');
+        if (!button || button.closest('.topup-form')) return;
+        const action = button.dataset.action;
+        if (action === 'cancel') { closeDialog(); return; }
+        if (action === 'add') { openDialog(button.dataset.company, button.dataset.companyName, null); return; }
+        const row = button.closest('[data-sim-id]');
+        if (!row) return;
+        if (action === 'edit') { openDialog(row.dataset.company, row.dataset.companyName, row); return; }
+        if (action === 'default') {
+            if (busy) return;
+            busy = true;
+            button.disabled = true;
+            try {
+                const result = await send('PUT', '/api/pos/default-sim', { operator_code: row.dataset.company, sim_id: Number(row.dataset.simId) });
+                if (!result.ok) {
+                    statusBox.textContent = result.status === 400 ? text.missing : text.failed;
+                    window.alert(statusBox.textContent);
+                    return;
+                }
+                window.location.reload();
+            } catch (_) {
+                window.alert(text.failed);
+            } finally {
+                busy = false;
+                button.disabled = false;
+            }
+            return;
+        }
+        if (action !== 'archive' && action !== 'restore') return;
+        if (action === 'archive' && !window.confirm(text.confirmArchive)) return;
+        if (busy) return;
+        busy = true;
+        button.disabled = true;
+        try {
+            const result = await send('POST', '/api/sims/' + encodeURIComponent(row.dataset.simId) + '/' + action);
+            if (!result.ok) {
+                statusBox.textContent = messageFor(result.status, result.detail);
+                window.alert(statusBox.textContent);
+                return;
+            }
+            window.location.reload();
+        } catch (_) {
+            window.alert(text.failed);
+        } finally {
+            busy = false;
+            button.disabled = false;
+        }
+    });
+})();
+</script>
+{% endblock %}

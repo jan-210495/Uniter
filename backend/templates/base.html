@@ -4,6 +4,11 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Uniter{% endblock %}</title>
+    {%- set session_csrf = csrf_token_for(request) if csrf_token_for is defined and request is defined else '' %}
+    <meta name="csrf-token" content="{{ session_csrf }}">
+    <!-- Loaded synchronously, before any page script, so every same-origin
+         state-changing fetch carries the session's CSRF token. -->
+    <script src="/static/csrf.js"></script>
     <link rel="manifest" href="/manifest.webmanifest">
     <meta name="theme-color" content="#1e3a8a">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -69,18 +74,29 @@
         </div>
         <div class="nav-pages flex flex-col gap-1 px-3 py-4" aria-label="Pages">
             <a href="/pos" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'pos' %} aria-current="page"{% endif %}>{{ 'نقطة البيع' if lang|default('en') == 'ar' else 'POS' }}</a>
-            <a href="/topup" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'topup' %} aria-current="page"{% endif %}>{{ 'تعبئة الرصيد' if lang|default('en') == 'ar' else 'Top-up' }}</a>
+            <a href="/operators" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'operators' %} aria-current="page"{% endif %}>{{ 'المشغّلون' if lang|default('en') == 'ar' else 'Operators' }}</a>
             <a href="/transactions" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'transactions' %} aria-current="page"{% endif %}>{{ 'المعاملات' if lang|default('en') == 'ar' else 'Transactions' }}</a>
             <a href="/customers" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'customers' %} aria-current="page"{% endif %}>{{ 'العملاء' if lang|default('en') == 'ar' else 'Customers' }}</a>
             <a href="/settlement" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'settlement' %} aria-current="page"{% endif %}>{{ 'تسوية الديون' if lang|default('en') == 'ar' else 'Settlement' }}</a>
             <a href="/stats" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'stats' %} aria-current="page"{% endif %}>{{ 'الإحصائيات' if lang|default('en') == 'ar' else 'Stats' }}</a>
             <a href="/settings" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'settings' %} aria-current="page"{% endif %}>{{ 'الإعدادات' if lang|default('en') == 'ar' else 'Settings' }}</a>
+            {% if is_admin is defined and request is defined and is_admin(request) %}
+            <a href="/users{{ '?lang=ar' if lang == 'ar' else '' }}" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'users' %} aria-current="page"{% endif %}>{{ 'المستخدمون' if lang|default('en') == 'ar' else 'Users' }}</a>
+            {% endif %}
         </div>
         <div class="nav-languages flex flex-wrap items-center gap-3 border-t border-slate-100 px-4 py-4 text-sm font-semibold text-slate-600">
             <span class="text-xs font-bold uppercase tracking-widest text-slate-400">{{ 'اللغة' if lang|default('en') == 'ar' else 'Language' }}</span>
             <a href="?lang=en" lang="en" class="hover:text-blue-800"{% if lang|default('en') == 'en' %} aria-current="true"{% endif %}>English</a>
             <span aria-hidden="true" class="text-slate-300">|</span>
             <a href="?lang=ar" lang="ar" class="hover:text-blue-800"{% if lang == 'ar' %} aria-current="true"{% endif %}>العربية</a>
+        </div>
+        <div class="nav-account flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-4 py-4 text-sm font-semibold text-slate-600">
+            <a href="/change-password{{ '?lang=ar' if lang == 'ar' else '' }}" class="hover:text-blue-800">{{ 'تغيير كلمة المرور' if lang|default('en') == 'ar' else 'Change password' }}</a>
+            <form method="post" action="/logout">
+                <input type="hidden" name="csrf_token" value="{{ session_csrf }}">
+                <input type="hidden" name="lang" value="{{ 'ar' if lang == 'ar' else 'en' }}">
+                <button type="submit" class="rounded-lg border border-slate-200 px-3 py-1.5 text-slate-700 transition hover:border-red-200 hover:bg-red-50 hover:text-red-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تسجيل الخروج' if lang|default('en') == 'ar' else 'Sign out' }}</button>
+            </form>
         </div>
     </nav>
     <div class="shell-content">

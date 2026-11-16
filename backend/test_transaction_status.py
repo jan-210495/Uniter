@@ -25,6 +25,8 @@ from backend.database import (
     enable_sqlite_foreign_keys,
     get_db,
 )
+from backend.auth_test_support import sign_in
+from backend.sim_test_support import fund_company, sim_for, sim_total_statement, with_sim
 from backend.main import app
 from backend.seed import seed_data
 
@@ -51,6 +53,7 @@ def client(tmp_path) -> Iterator[tuple[TestClient, async_sessionmaker]]:
     app.dependency_overrides[get_db] = override_db
     try:
         with TestClient(app) as test_client:
+            sign_in(test_client, sessions)
             yield test_client, sessions
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -66,13 +69,8 @@ def run_db(sessions: async_sessionmaker, coroutine_factory):
 
 
 def fund(client: TestClient, operator_code: str = "mtn", amount_cents: int = 5_000_000) -> None:
-    assert (
-        client.post(
-            "/api/operators/topup",
-            json={"operator_code": operator_code, "amount_cents": amount_cents},
-        ).status_code
-        == 200
-    )
+    # Slice 4.1: sales are charged to a SIM card, funded by its own top-up.
+    fund_company(client, operator_code, amount_cents)
 
 
 _KEYS = 0
@@ -91,14 +89,14 @@ def create_transaction(
     client.commit_keys = getattr(client, "commit_keys", 0) + 1
     response = client.post(
         "/api/transactions",
-        json={
+        json=with_sim(client, {
             "customer_phone": phone,
             "operator_code": operator_code,
             "service_code": service_code,
             "amount_cents": amount_cents,
             "commit_key": f"statuskey{client.commit_keys:022d}",
             **({"customer_name": customer_name} if customer_name else {}),
-        },
+        }),
     )
     assert response.status_code == 200, response.text
     return response.json()
@@ -106,11 +104,8 @@ def create_transaction(
 
 def balance(sessions: async_sessionmaker, operator_code: str = "mtn") -> int:
     async def read(session: AsyncSession) -> int:
-        value = await session.scalar(
-            select(OperatorBalance.balance_cents)
-            .join(Operator, OperatorBalance.operator_id == Operator.id)
-            .where(Operator.code == operator_code)
-        )
+        # Slice 4.1: the balance a sale debits is the company's SIM card.
+        value = await session.scalar(sim_total_statement(operator_code))
         return int(value or 0)
 
     return run_db(sessions, read)
@@ -168,8 +163,16 @@ def test_marking_successful_as_failed_refunds_the_stored_face_amount(client, cus
     assert profits(sessions) == profit_before
     async def audit(session):
         from sqlalchemy import text
-        return (await session.execute(text("SELECT transaction_id, operator_id, amount_cents FROM operator_credit_refund"))).all()
-    assert [tuple(row) for row in run_db(sessions, audit)] == [(transaction["id"], 1, 5000)]
+        return (await session.execute(text(
+            "SELECT transaction_id, sim_card_id, amount_cents FROM sim_ledger WHERE kind = 'refund'"
+        ))).all()
+    # Slice 4.1: the refund goes back to the SIM card the sale debited ...
+    assert [tuple(row) for row in run_db(sessions, audit)] == [(transaction["id"], sim_for(test_client, "mtn"), 5000)]
+    async def legacy_audit(session):
+        from sqlalchemy import text
+        return (await session.execute(text("SELECT COUNT(*) FROM operator_credit_refund"))).scalar_one()
+    # ... and never to the legacy company credit.
+    assert run_db(sessions, legacy_audit) == 0
     assert raw_row(sessions, transaction["id"])["status"] == "failed"
     listed = {row["id"]: row["status"] for row in test_client.get("/api/transactions").json()}
     assert listed[transaction["id"]] == "failed"

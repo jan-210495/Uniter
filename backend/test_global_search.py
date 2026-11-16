@@ -9,6 +9,8 @@ from sqlalchemy import URL, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.database import Base, enable_sqlite_foreign_keys, get_db
+from backend.sim_test_support import add_legacy_credit, fund_company, with_sim
+from backend.auth_test_support import sign_in
 from backend.main import app
 from backend.seed import seed_data
 
@@ -35,6 +37,7 @@ def client(tmp_path) -> Iterator[TestClient]:
     app.dependency_overrides[get_db] = override_db
     try:
         with TestClient(app) as test_client:
+            sign_in(test_client, sessions)
             yield test_client
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -42,9 +45,8 @@ def client(tmp_path) -> Iterator[TestClient]:
 
 
 def topup(client: TestClient, operator_code: str, amount_cents: int) -> None:
-    assert client.post(
-        "/api/operators/topup", json={"operator_code": operator_code, "amount_cents": amount_cents}
-    ).status_code == 200
+    # Slice 4.1: sales are charged to a SIM card, funded by its own top-up.
+    fund_company(client, operator_code, amount_cents)
 
 
 def post_transaction(
@@ -64,7 +66,7 @@ def post_transaction(
     }
     if customer_name is not None:
         body["customer_name"] = customer_name
-    response = client.post("/api/transactions", json=body)
+    response = client.post("/api/transactions", json=with_sim(client, body))
     assert response.status_code == 200
     return response.json()
 
@@ -163,7 +165,8 @@ def test_search_finds_committed_one_time_sales(client: TestClient) -> None:
 
 
 def test_search_operators_by_code_or_name(client: TestClient) -> None:
-    topup(client, "mtn", 50000)
+    # The operator result shows the (historical, read-only) legacy company credit.
+    add_legacy_credit("mtn", 50000)
 
     results = search(client, "mt")
     assert results["operators"] == [{"code": "mtn", "name": "MTN", "balance_cents": 50000}]

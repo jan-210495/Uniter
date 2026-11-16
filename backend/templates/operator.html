@@ -16,14 +16,14 @@
                 <span>{{ operator.name }}</span>
                 <span class="rounded-full border border-slate-200 bg-white px-3 py-1 font-mono text-sm font-semibold text-slate-600" dir="ltr">{{ operator.code }}</span>
             </h1>
-            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{{ 'رصيد المتجر المسبق الدفع لدى هذا المشغّل وأحدث معاملاته.' if ar else "The shop's prepaid credit with this operator and its latest transactions." }}</p>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{{ 'رصيد الشركة القديم لدى هذا المشغّل وأحدث معاملاته. المبيعات الجديدة تُخصم من رصيد الشريحة المختارة.' if ar else "This operator's legacy company credit and its latest transactions. New sales are charged to the selected SIM card." }}</p>
         </div>
-        <a href="/topup" class="rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تعبئة الرصيد' if ar else 'Top up' }}</a>
+        <a href="/operators{{ '?lang=ar' if ar else '' }}#{{ operator.code }}" class="rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تعبئة شريحة' if ar else 'Top up a SIM card' }}</a>
     </header>
 
     <div class="mb-6 grid gap-4 sm:grid-cols-2">
         <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'الرصيد المتبقي' if ar else 'Remaining balance' }}</p>
+            <p class="text-xs font-bold uppercase tracking-widest text-slate-500">{{ 'رصيد الشركة القديم' if ar else 'Legacy company credit' }} · {{ 'الرصيد المتبقي' if ar else 'Remaining balance' }}</p>
             <p class="mt-2 text-2xl font-bold tabular-nums text-blue-950"><span id="operator-balance" dir="ltr">{{ "{:,.2f}".format(balance_cents / 100).rstrip('0').rstrip('.') }}</span> <span class="text-sm font-semibold text-slate-500">{{ currency }}</span></p>
         </div>
         <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 from jinja2 import Environment, FileSystemLoader
 
+from backend.sim_test_support import fund_company, with_sim
 from backend.test_pos import client  # isolated, freshly seeded tmp_path database
 
 ENV = Environment(loader=FileSystemLoader("backend/templates"), autoescape=True)
@@ -46,8 +47,22 @@ GROUP_PATTERN = re.compile(
 AMOUNT_PATTERN = re.compile(r'data-amount="([^"]*)"')
 
 
-def render(lang: str = "en") -> str:
-    return ENV.get_template("pos.html").render(lang=lang)
+#: v1.0.4 slice 4.1: one usable SIM card per company, each the saved default,
+#: as /pos renders them for an account that may sell from them.
+POS_SIMS = {
+    "companies": [
+        {"operator_code": "mtn", "operator_name": "MTN", "default_sim_id": 1,
+         "sims": [{"id": 1, "display_name": "Counter MTN", "phone": "0944000001",
+                   "visibility": "shared", "balance_cents": 100000000}]},
+        {"operator_code": "syriatel", "operator_name": "Syriatel", "default_sim_id": 2,
+         "sims": [{"id": 2, "display_name": "Counter Syriatel", "phone": "0933000002",
+                   "visibility": "shared", "balance_cents": 100000000}]},
+    ]
+}
+
+
+def render(lang: str = "en", pos_sims: dict | None = None) -> str:
+    return ENV.get_template("pos.html").render(lang=lang, pos_sims=POS_SIMS if pos_sims is None else pos_sims)
 
 
 def voucher_groups(html: str) -> dict[str, tuple[str, list[str]]]:
@@ -260,6 +275,7 @@ def test_voucher_selection_fills_custom_amount_summary_and_payload() -> None:
         "operator_code": "syriatel",
         "service_code": "prepaid",
         "amount_cents": 480,
+        "sim_card_id": 2,  # Slice 4.1: the selected (default) Syriatel SIM card
     }
 
 
@@ -312,6 +328,7 @@ def test_postpaid_hides_vouchers_and_keeps_the_custom_amount_editable() -> None:
         "operator_code": "syriatel",
         "service_code": "postpaid",
         "amount_cents": 7500,
+        "sim_card_id": 2,  # Slice 4.1: the selected (default) Syriatel SIM card
     }
 
 
@@ -342,21 +359,16 @@ def test_switching_service_back_to_prepaid_restores_the_operator_vouchers() -> N
 def test_voucher_cents_reach_the_transaction_api(
     client, operator_code: str, phone: str, amount_cents: int, ussd_suffix: str
 ) -> None:
-    assert (
-        client.post(
-            "/api/operators/topup", json={"operator_code": operator_code, "amount_cents": 5_000_000}
-        ).status_code
-        == 200
-    )
+    fund_company(client, operator_code, 5_000_000)  # Slice 4.1: a funded SIM card
     response = client.post(
         "/api/transactions",
-        json={
+        json=with_sim(client, {
             "customer_phone": phone,
             "operator_code": operator_code,
             "service_code": "prepaid",
             "amount_cents": amount_cents,
             "commit_key": new_commit_key(),
-        },
+        }),
     )
     assert response.status_code == 200
     assert response.json()["amount_cents"] == amount_cents
@@ -364,21 +376,16 @@ def test_voucher_cents_reach_the_transaction_api(
 
 
 def test_postpaid_custom_amount_still_posts(client) -> None:
-    assert (
-        client.post(
-            "/api/operators/topup", json={"operator_code": "syriatel", "amount_cents": 5_000_000}
-        ).status_code
-        == 200
-    )
+    fund_company(client, "syriatel", 5_000_000)  # Slice 4.1: a funded SIM card
     response = client.post(
         "/api/transactions",
-        json={
+        json=with_sim(client, {
             "customer_phone": "0933123456",
             "operator_code": "syriatel",
             "service_code": "postpaid",
             "amount_cents": 12_345,
             "commit_key": new_commit_key(),
-        },
+        }),
     )
     assert response.status_code == 200
     assert response.json()["amount_cents"] == 12_345

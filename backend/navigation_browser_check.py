@@ -3,6 +3,8 @@
 Usage: python navigation_browser_check.py http://127.0.0.1:8765 /tmp/nav-evidence
 Requires development-only Playwright; never targets a production database.
 Set CHROMIUM_EXECUTABLE to use an existing Chromium installation.
+The app requires sign-in: set UNITER_CHECK_USERNAME and UNITER_CHECK_PASSWORD
+to an account on the disposable server (never commit those values).
 """
 import json
 import os
@@ -10,6 +12,15 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
+
+
+def sign_in(page, base):
+    """Sign in through the real login form; credentials come from the env."""
+    page.goto(base + '/login')
+    page.fill('#login-username', os.environ['UNITER_CHECK_USERNAME'])
+    page.fill('#login-password', os.environ['UNITER_CHECK_PASSWORD'])
+    page.click('button[type="submit"]')
+    assert urlparse(page.url).path == '/pos', 'sign-in failed or a password change is pending'
 
 
 def main():
@@ -22,6 +33,7 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=os.getenv('CHROMIUM_EXECUTABLE'), headless=True)
         page = browser.new_page()
+        sign_in(page, base)
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.on('console', lambda msg: errors.append({'text': msg.text, 'url': msg.location.get('url')}) if msg.type == 'error' else None)
@@ -107,6 +119,7 @@ def main():
         for width in [320, 1280]:
             context = browser.new_context(java_script_enabled=False, viewport={'width': width, 'height': 850})
             plain = context.new_page()
+            sign_in(plain, base)
             plain.goto(base + '/pos')
             for link in plain.locator('#app-drawer .nav-pages a').all():
                 assert link.is_visible()
