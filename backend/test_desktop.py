@@ -55,10 +55,19 @@ def desktop(monkeypatch, tmp_path):
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     dependencies = {
         "backend.main": {"app": object(), "templates": object()},
-        "backend.database": {name: Mock() for name in (
-            "Base", "engine", "SessionLocal", "migrate_operator_credit_refunds",
-            "validate_existing_refund_schema", "migrate_sim_cards", "validate_existing_sim_schema",
-            "migrate_sim_balances", "validate_existing_sim_balance_schema")},
+        "backend.database": {
+            **{name: Mock() for name in (
+                "Base", "engine", "SessionLocal", "migrate_operator_credit_refunds",
+                "validate_existing_refund_schema", "migrate_sim_cards", "validate_existing_sim_schema",
+                "migrate_sim_balances", "validate_existing_sim_balance_schema")},
+            # auth.py imports these models at module import time. Real
+            # database.py may already be cached by other tests, but this
+            # fixture replaces the module wholesale, so provide its names too.
+            "LoginAttempt": type("LoginAttempt", (), {"__table__": Mock()}),
+            "User": type("User", (), {"__table__": Mock()}),
+            "UserSession": type("UserSession", (), {"__table__": Mock()}),
+            "get_db": Mock(),
+        },
         "backend.migrations": {"SchemaUpgradeError": type("SchemaUpgradeError", (Exception,), {}),
                                "migrate_transaction_lifecycle": Mock()},
         "backend.seed": {"seed_data": Mock()},
