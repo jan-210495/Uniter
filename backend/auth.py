@@ -62,6 +62,7 @@ CSRF_FIELD = "csrf_token"
 
 SESSION_IDLE_TIMEOUT = timedelta(hours=4)
 SESSION_ABSOLUTE_LIFETIME = timedelta(hours=12)
+REMEMBER_ME_LIFETIME = timedelta(days=90)
 SESSION_TOUCH_INTERVAL = timedelta(minutes=1)
 LOGIN_FORM_LIFETIME = timedelta(hours=1)
 
@@ -358,7 +359,9 @@ async def _purge_expired_sessions(db: AsyncSession, now: datetime) -> None:
     )))
 
 
-async def _start_session(db: AsyncSession, user: User) -> str:
+async def _start_session(
+    db: AsyncSession, user: User, *, lifetime: timedelta = SESSION_ABSOLUTE_LIFETIME,
+) -> str:
     """Create a fresh session (new id, hence new CSRF token); the caller commits."""
     token = secrets.token_urlsafe(32)
     now = utc_now()
@@ -367,7 +370,7 @@ async def _start_session(db: AsyncSession, user: User) -> str:
         user_id=user.id,
         created_at=now,
         last_seen_at=now,
-        expires_at=now + SESSION_ABSOLUTE_LIFETIME,
+        expires_at=now + lifetime,
     ))
     return token
 
@@ -771,9 +774,12 @@ def create_router(templates: Jinja2Templates) -> APIRouter:
             headers={"Cache-Control": "no-store"},
         )
 
-    def signed_in_redirect(request: Request, token: str, location: str) -> Response:
+    def signed_in_redirect(
+        request: Request, token: str, location: str,
+        lifetime: timedelta = SESSION_ABSOLUTE_LIFETIME,
+    ) -> Response:
         response = RedirectResponse(location, status_code=303, headers={"Cache-Control": "no-store"})
-        _set_cookie(response, request, SESSION_COOKIE, token, SESSION_ABSOLUTE_LIFETIME)
+        _set_cookie(response, request, SESSION_COOKIE, token, lifetime)
         _clear_cookie(response, request, LOGIN_CSRF_COOKIE)
         return response
 
@@ -834,13 +840,15 @@ def create_router(templates: Jinja2Templates) -> APIRouter:
             if presented and len(presented) <= 128:  # never keep a pre-login session id
                 await db.execute(delete(UserSession).where(UserSession.token_hash == _digest(presented)))
             await _purge_expired_sessions(db, now)
-            token = await _start_session(db, user)
+            remember_me = form.get("remember_me") == "on"
+            lifetime = REMEMBER_ME_LIFETIME if remember_me else SESSION_ABSOLUTE_LIFETIME
+            token = await _start_session(db, user, lifetime=lifetime)
             location = (
                 _with_lang("/change-password", lang) if user.must_change_password
                 else next_path or _with_lang("/pos", lang)
             )
             await db.commit()
-            return signed_in_redirect(request, token, location)
+            return signed_in_redirect(request, token, location, lifetime)
 
         if user is None or not password:
             _burn_password_check(password)

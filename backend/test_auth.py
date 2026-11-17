@@ -606,6 +606,46 @@ def test_session_cookie_flags_over_http(client, pending):
     assert session_cookie(client) not in fresh.run(hashes)
 
 
+def test_remember_me_extends_cookie_and_server_session_to_90_days(client, pending):
+    fresh = pending
+    page = client.get("/login")
+    assert page.status_code == 200
+    assert 'name="remember_me"' in page.text
+    assert client.get("/login?lang=ar").status_code == 200
+    assert 'name="remember_me"' in client.get("/login?lang=ar").text
+
+    response = login(client, "admin", TEMPORARY, remember_me="on")
+    assert response.status_code == 303
+    cookie = _set_cookie(response, auth.SESSION_COOKIE).lower()
+    assert f"max-age={int(auth.REMEMBER_ME_LIFETIME.total_seconds())}" in cookie
+
+    token = session_cookie(client)
+    async def session_expiry(session):
+        row = await session.scalar(select(UserSession).where(
+            UserSession.token_hash == auth._digest(token)
+        ))
+        return row.created_at, row.expires_at
+    created_at, expires_at = fresh.run(session_expiry)
+    assert (expires_at - created_at).total_seconds() == auth.REMEMBER_ME_LIFETIME.total_seconds()
+
+
+def test_unchecked_login_keeps_short_session_lifetime(client, pending):
+    fresh = pending
+    response = login(client, "admin", TEMPORARY)
+    assert response.status_code == 303
+    cookie = _set_cookie(response, auth.SESSION_COOKIE).lower()
+    assert f"max-age={int(auth.SESSION_ABSOLUTE_LIFETIME.total_seconds())}" in cookie
+
+    token = session_cookie(client)
+    async def session_expiry(session):
+        row = await session.scalar(select(UserSession).where(
+            UserSession.token_hash == auth._digest(token)
+        ))
+        return row.created_at, row.expires_at
+    created_at, expires_at = fresh.run(session_expiry)
+    assert (expires_at - created_at).total_seconds() == auth.SESSION_ABSOLUTE_LIFETIME.total_seconds()
+
+
 def test_session_cookie_is_secure_over_https(pending):
     with TestClient(app, base_url="https://testserver") as secure:
         response = login(secure, "admin", TEMPORARY)
