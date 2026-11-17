@@ -20,6 +20,13 @@
         <label for="login-password" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'كلمة المرور' if ar else 'Password' }}</label>
         <input id="login-password" name="password" type="password" dir="ltr" required maxlength="1024" autocomplete="current-password" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
     </div>
+    {% set remember_me = form.get('remember_me') == 'on' if form is defined else false %}
+    <div>
+        <label for="login-remember" class="flex items-center gap-2 text-sm text-slate-700">
+            <input id="login-remember" name="remember_me" type="checkbox" value="on"{% if remember_me %} checked{% endif %} class="rounded border-slate-300 text-blue-900 focus:ring-blue-700">
+            <span>{{ 'تذكرني على هذا الجهاز لمدة 90 يوماً' if ar else 'Remember me on this device for 90 days' }}</span>
+        </label>
+    </div>
     <button type="submit" class="w-full rounded-lg bg-blue-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'دخول' if ar else 'Sign in' }}</button>
 </form>
 {% endblock %}
