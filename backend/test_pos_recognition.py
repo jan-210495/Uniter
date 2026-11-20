@@ -221,24 +221,24 @@ def test_pos_page_has_auto_operator_and_named_recognition(client: TestClient) ->
         assert "'096': 'mtn'" in rendered
         # A manual operator choice is never overridden by later typing.
         assert "operatorTouched" in rendered
-        # A named sale is recognized by exact name; registering the customer is
-        # left to the commit call, so preparing a code writes nothing.
-        assert "'/api/customers/lookup-by-name?name=' + encodeURIComponent(name)" in rendered
-        assert "resolveNamedCustomer" in rendered
+        # A sale name is a snapshot, never an identity lookup.
+        assert "/api/customers/lookup-by-name" not in rendered
+        assert "resolveNamedCustomer" not in rendered
+        assert "{ input: nameInput, anchor: nameAnchor }" not in rendered
         assert "fetch('/api/customers'" not in rendered
         # A blank name is a one-time sale with no customer record.
         assert "messages.oneTimeSale" in rendered
         # Feedback live region below the form.
         assert 'id="register-status"' in rendered
         assert 'role="status"' in rendered
-    assert "A regular customer will be registered when the sale is recorded." in english.text
+    assert "The name will be saved for this sale only, without a customer account." in english.text
     assert "One-time sale with no customer account." in english.text
     assert "Customer found:" in english.text
     # Arabic script messages are emitted by tojson as escaped unicode.
     import json
 
     for message in (
-        "سيُسجَّل عميل دائم عند تسجيل البيع.",
+        "سيُحفظ الاسم لهذا البيع فقط دون إنشاء حساب عميل.",
         "بيع لمرة واحدة بلا حساب عميل.",
         "تم العثور على العميل:",
     ):

@@ -302,6 +302,15 @@ def test_slice4_upgrade_with_sims_and_legacy_money_moves_nothing(env) -> None:
 
     assert _snapshot(env) == before
     _assert_installed_and_empty(env)
+    # This old-schema fixture needs the fresh-only v1.0.5 column before
+    # exercising current API serialization; no production migration is added.
+    async def current_fixture_schema():
+        async with env.engine.begin() as connection:
+            await connection.exec_driver_sql(
+                "ALTER TABLE transactions ADD COLUMN customer_name VARCHAR(255)"
+            )
+
+    asyncio.run(current_fixture_schema())
     # The legacy company credit still reads exactly as before, as legacy.
     with TestClient(app) as client:
         sign_in(client, env.sessions, username="owner")
@@ -338,6 +347,9 @@ def test_fresh_install_matches_an_upgraded_schema(env, tmp_path, entry) -> None:
             connection.close()
 
     fresh_shape = shape(env.engine.url.database)
+    # v1.0.5 adds a fresh-install-only snapshot, outside this historical migration.
+    assert fresh_shape["transactions"][-1][1:4] == ("customer_name", "VARCHAR(255)", 0)
+    fresh_shape["transactions"] = fresh_shape["transactions"][:-1]
     upgraded = tmp_path / "upgraded.db"
     _load_slice4(str(upgraded))
     engine = create_async_engine(URL.create("sqlite+aiosqlite", database=str(upgraded)))

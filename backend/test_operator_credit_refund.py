@@ -174,10 +174,11 @@ def test_missing_original_accounting_fails_closed(client, missing):
 def test_customer_deletion_preserves_refund_audit_and_existing_history_policy(client, legacy):
     http, sessions = client
     fund(http)
+    customer = http.post('/api/customers', json={'phone': '0944123456', 'name': 'Ahmad'}).json()
     sale = create_transaction(http)
     if legacy:
         async def old_row(session):
-            await session.execute(update(Transaction).where(Transaction.id == sale['id']).values(customer_phone=None))
+            await session.execute(update(Transaction).where(Transaction.id == sale['id']).values(customer_phone=None, customer_id=customer['id']))
             await session.commit()
         run_db(sessions, old_row)
     assert set_failed(http, sale['id']).status_code == 200

@@ -117,12 +117,12 @@ def test_pos_description_is_hidden_on_mobile_only(lang: str) -> None:
     assert paragraph is not None, "the title paragraph must keep its classes"
     assert "max-w-xl" in paragraph.group(0)
     # Hidden by default, shown from the md breakpoint (the form's two-column
-    # desktop layout) so desktop copy is untouched.
+    # desktop layout); the bilingual copy describes the snapshot semantics.
     assert "md:block" in paragraph.group(0)
     if lang == "en":
-        assert "Enter a customer phone" in paragraph.group(1)
+        assert "Enter a phone" in paragraph.group(1)
     else:
-        assert "أدخل رقم العميل" in paragraph.group(1)
+        assert "أدخل رقم الهاتف" in paragraph.group(1)
 
 
 # --- Item 2: exact voucher values -----------------------------------------

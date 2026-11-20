@@ -245,6 +245,15 @@ def test_migrated_rows_still_flow_through_the_app(tmp_path, monkeypatch) -> None
     engine = build_legacy(tmp_path)
     try:
         asyncio.run(migrate_transaction_lifecycle(engine))
+        # This historical migration does not install the v1.0.5 fresh-only
+        # column. Supply the current schema in this ORM/report fixture only.
+        async def current_fixture_schema():
+            async with engine.begin() as connection:
+                await connection.exec_driver_sql(
+                    "ALTER TABLE transactions ADD COLUMN customer_name VARCHAR(255)"
+                )
+
+        asyncio.run(current_fixture_schema())
         sessions = async_sessionmaker(engine, expire_on_commit=False)
 
         async def read():
@@ -566,7 +575,9 @@ def test_upgraded_schema_matches_a_freshly_created_database(tmp_path) -> None:
         asyncio.run(fresh.dispose())
 
     # Column order, types, NOT NULL, DEFAULTs and primary keys match exactly.
-    assert migrated["columns"] == created["columns"]
+    # The v1.0.5 snapshot is fresh-install-only; historical migrations stay unchanged.
+    assert created["columns"][-1][1:4] == ("customer_name", "VARCHAR(255)", 0)
+    assert migrated["columns"] == created["columns"][:-1]
     # Same foreign keys, same unique columns, same index shapes (autoindex names
     # may be numbered differently, so they are compared by uniqueness/columns).
     assert migrated["foreign_keys"] == created["foreign_keys"]
@@ -1198,7 +1209,9 @@ def test_widened_schema_matches_a_freshly_created_database(tmp_path) -> None:
         asyncio.run(engine.dispose())
         asyncio.run(fresh.dispose())
 
-    assert migrated["columns"] == created["columns"]
+    # The v1.0.5 snapshot is fresh-install-only; historical migrations stay unchanged.
+    assert created["columns"][-1][1:4] == ("customer_name", "VARCHAR(255)", 0)
+    assert migrated["columns"] == created["columns"][:-1]
     assert migrated["foreign_keys"] == created["foreign_keys"]
 
 

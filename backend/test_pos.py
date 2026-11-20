@@ -186,8 +186,8 @@ def test_normalized_customer_and_transaction_phones(client: TestClient) -> None:
     assert transaction.status_code == 200
     assert transaction.json()["ussd_string"] == "*150*65477*0944123456*50#"
     created = client.get("/api/customers/lookup", params={"phone": "0944123456"})
-    assert created.status_code == 200
-    assert created.json()["phone"] == "0944123456" and created.json()["name"] == "Rami"
+    assert created.status_code == 404
+    assert transaction.json()["customer_name"] == "Rami"
 
 
 def test_phone_validation_errors(client: TestClient) -> None:

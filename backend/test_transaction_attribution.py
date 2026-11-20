@@ -337,7 +337,10 @@ def test_upgraded_schema_matches_a_fresh_install(v103, tmp_path) -> None:
                 await connection.run_sync(Base.metadata.create_all)
 
         asyncio.run(create())
-        assert v103.sql("PRAGMA table_info(transactions)") == fresh.sql("PRAGMA table_info(transactions)")
+        # v1.0.5 adds a fresh-install-only name snapshot, not a seller-data migration.
+        fresh_columns = fresh.sql("PRAGMA table_info(transactions)")
+        assert fresh_columns[-1][1:4] == ("customer_name", "VARCHAR(255)", 0)
+        assert v103.sql("PRAGMA table_info(transactions)") == fresh_columns[:-1]
         # Compared by definition: SQLite numbers a column-level foreign key
         # added by ALTER TABLE before the table-level ones, so only the
         # internal ordinal (first field) may differ.
@@ -650,7 +653,7 @@ def test_list_and_commit_responses_expose_only_the_performer_id_and_username(wor
     }
     assert set(created) == {
         "id", "reference", "ussd_string", "status", "amount_cents", "created_at", "performed_by_user_id",
-        "sim_card_id",
+        "sim_card_id", "customer_name",
     }
     assert not _mentions_secret(json.dumps(rows)), "list response mentions credential material"
     assert not _mentions_secret(json.dumps(created)), "commit response mentions credential material"

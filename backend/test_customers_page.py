@@ -8,7 +8,7 @@ from contextlib import aclosing
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import URL, event, select
+from sqlalchemy import URL, event, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.database import Base, Customer, enable_sqlite_foreign_keys, get_db
@@ -234,6 +234,15 @@ def test_remove_customer_is_refused_while_removed_transactions_exist(
     ).status_code == 200
     assert client.delete(f"/api/transactions/{transaction_id}").status_code == 204
 
+    # Explicitly model historical customer-linked audit history. New POS sales
+    # are unlinked, but the existing deletion safeguard must still hold.
+    async def link_historical_row():
+        async with engine.begin() as connection:
+            await connection.execute(text(
+                "UPDATE transactions SET customer_id=:customer WHERE id=:transaction"
+            ), {"customer": customer["id"], "transaction": transaction_id})
+
+    asyncio.run(link_historical_row())
     before = _database_rows(engine)
     response = client.delete(f"/api/customers/{customer['id']}")
     assert response.status_code == 409

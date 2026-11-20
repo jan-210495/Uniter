@@ -93,9 +93,7 @@ class Transaction(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # A sale to a one-time (phone-only) buyer has no customer record: the link
-    # stays NULL and the phone is kept on the row itself, see ``customer_phone``.
-    # Customer records exist for repeat, named customers only.
+    # Retained for customer/debt workflows; new POS sales are never linked.
     customer_id: Mapped[int | None] = mapped_column(
         ForeignKey("customers.id"), nullable=True, default=None
     )
@@ -137,6 +135,9 @@ class Transaction(Base):
     sim_card_id: Mapped[int | None] = mapped_column(
         ForeignKey("sim_cards.id", ondelete="RESTRICT"), nullable=True, default=None
     )
+
+    # Seller-entered per-sale snapshot, independent of the customer database.
+    customer_name: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
 
     customer: Mapped[Customer | None] = relationship(back_populates="transactions")
     service: Mapped[Service] = relationship(back_populates="transactions")

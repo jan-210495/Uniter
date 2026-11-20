@@ -16,7 +16,7 @@
         <div>
             <p class="mb-2 text-xs font-bold uppercase tracking-widest text-blue-800">{{ 'نقطة البيع' if ar else 'Point of sale' }}</p>
             <h1 class="text-3xl font-bold tracking-tight text-blue-950 sm:text-4xl">{{ 'الشحن السريع' if ar else 'POS Quick Charge' }}</h1>
-            <p class="mt-2 hidden max-w-xl text-sm leading-6 text-slate-600 md:block">{{ 'أدخل رقم العميل أو اسمه واختر الخدمة والمبلغ لإنشاء رمز الشحن.' if ar else 'Enter a customer phone or name, choose a service and amount, then generate the charging code.' }}</p>
+            <p class="mt-2 hidden max-w-xl text-sm leading-6 text-slate-600 md:block">{{ 'أدخل رقم الهاتف واختر الخدمة والمبلغ، مع اسم اختياري لهذا البيع.' if ar else 'Enter a phone, choose a service and amount, and optionally name this sale.' }}</p>
         </div>
         <span class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">{{ 'معاملة مباشرة' if ar else 'Live transaction' }}</span>
     </div>
@@ -40,9 +40,9 @@
                     <div>
                         <label for="customer-name" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'اسم العميل' if ar else 'Customer name' }}</label>
                         <div id="name-anchor" class="relative">
-                            <input id="customer-name" name="customer-name" type="text" autocomplete="off" maxlength="255" placeholder="{{ 'مثال: Ahmad' if ar else 'e.g. Ahmad' }}" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="customer-suggestions" aria-autocomplete="list" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                            <input id="customer-name" name="customer-name" type="text" autocomplete="off" maxlength="255" placeholder="{{ 'مثال: Ahmad' if ar else 'e.g. Ahmad' }}" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
                         </div>
-                        <p class="mt-1.5 text-xs text-slate-500">{{ 'ابدأ الكتابة بالرقم أو الاسم لعرض العملاء المطابقين.' if ar else 'Start typing a phone or name to list matching customers.' }}</p>
+                        <p class="mt-1.5 text-xs text-slate-500">{{ 'الاسم اختياري ويُحفظ لهذا البيع فقط.' if ar else 'The optional name is saved for this sale only.' }}</p>
                     </div>
                 </div>
                 <div id="customer-info" class="hidden rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
@@ -188,7 +188,7 @@
         'searchError': 'تعذر البحث عن العملاء. حاول مرة أخرى.' if ar else 'Could not search customers. Try again.',
         'customerSelected': 'تم اختيار العميل.' if ar else 'Customer selected.',
         'customerFound': 'تم العثور على العميل:' if ar else 'Customer found:',
-        'willRegister': 'سيُسجَّل عميل دائم عند تسجيل البيع.' if ar else 'A regular customer will be registered when the sale is recorded.',
+        'willRegister': 'سيُحفظ الاسم لهذا البيع فقط دون إنشاء حساب عميل.' if ar else 'The name will be saved for this sale only, without a customer account.',
         'oneTimeSale': 'بيع لمرة واحدة بلا حساب عميل.' if ar else 'One-time sale with no customer account.',
         'registerError': 'تعذر البحث عن العميل. حاول مرة أخرى.' if ar else 'Could not look up the customer. Try again.',
         'namePhoneMismatch': 'هذا الاسم مسجل برقم آخر. تحقق من الاسم أو الرقم.' if ar else 'That name is registered under a different number. Check the name or the number.',
@@ -774,8 +774,7 @@
         }
     }
     const searchFields = [
-        { input: phone, anchor: phoneAnchor },
-        { input: nameInput, anchor: nameAnchor }
+        { input: phone, anchor: phoneAnchor }
     ];
 
     // --- Auto-operator selection from the phone prefix ---
@@ -817,6 +816,14 @@
         input.addEventListener('focus', () => {
             if (activeInput && activeInput !== input) closeSuggestions();
         });
+    });
+    nameInput.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        if (searchAbort) searchAbort.abort();
+        closeSuggestions();
+        hideCustomerInfo();
+        showStatus('');
+        clearResult();
     });
     suggestions.addEventListener('mousedown', (event) => event.preventDefault());
     suggestions.addEventListener('mouseover', (event) => {
@@ -877,61 +884,10 @@
         clearResult();
     });
     document.getElementById('refresh-rate').addEventListener('click', loadRate);
-    // --- Named customer recognition on Generate USSD ---
-    // Preparing a code never writes anything: no customer, no transaction, no
-    // accounting. A typed name only resolves which customer this sale belongs
-    // to — the same exact-name match the API uses — so the charge goes to that
-    // person's canonical number. Registration of a new named regular happens
-    // on the commit call (Copy / dialer), never here; a blank or
-    // whitespace-only name is a one-time sale with no customer record at all.
-    // Returns whether the sale may go ahead: false means the seller must fix
-    // the name or the number first, and nothing is previewed or recorded.
-    async function resolveNamedCustomer() {
-        const name = nameInput.value.trim();
-        if (!name) {
-            // No name: this is a one-time sale, so no customer is registered.
-            registerStatus.textContent = messages.oneTimeSale;
-            return true;
-        }
-        try {
-            const response = await fetch(
-                '/api/customers/lookup-by-name?name=' + encodeURIComponent(name),
-                { cache: 'no-store' }
-            );
-            if (response.ok) {
-                const customer = await response.json();
-                const typed = normalizePhone(phone.value);
-                // The server resolves a name to that person's registered number,
-                // but a number the seller typed for somebody else is never
-                // silently replaced: the seller has to confirm which is right.
-                if (typed && typed !== customer.phone) {
-                    registerStatus.textContent = messages.namePhoneMismatch;
-                    return false;
-                }
-                phone.value = customer.phone;
-                phone.setCustomValidity('');
-                showCustomerInfo(customer);
-                registerStatus.textContent = messages.customerFound + ' ' + customer.name;
-                return true;
-            }
-            if (response.status !== 404) throw new Error('lookup failed');
-            // A new name is registered by the commit; the typed number stands.
-            registerStatus.textContent = messages.willRegister;
-            return true;
-        } catch (_) {
-            // Which customer this name belongs to is unknown, so nothing is
-            // previewed or recorded until the lookup works again.
-            registerStatus.textContent = messages.registerError;
-            return false;
-        }
-    }
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
-        registerStatus.textContent = '';
-        if (!(await resolveNamedCustomer())) {
-            clearResult();
-            return;
-        }
+        // Names are sale snapshots, never customer identities or lookups.
+        registerStatus.textContent = nameInput.value.trim() ? messages.willRegister : messages.oneTimeSale;
         const normalized = normalizePhone(phone.value);
         const cents = parseAmount(amount.value);
         phone.setCustomValidity(normalized ? '' : messages.invalidPhone);

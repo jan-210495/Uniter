@@ -444,6 +444,8 @@ def test_operator_page_shows_both_statuses_in_both_languages(client) -> None:
 def test_customer_accounting_is_untouched_by_status_changes(client) -> None:
     test_client, sessions = client
     fund(test_client, amount_cents=100_000)
+    # Customer registration is explicit; a named POS sale no longer registers one.
+    assert test_client.post("/api/customers", json={"phone": PHONE, "name": "Ahmad"}).status_code == 200
     transaction = create_transaction(test_client, amount_cents=5000)
     customer = test_client.get("/api/customers/lookup", params={"phone": PHONE}).json()
 

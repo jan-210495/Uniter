@@ -172,13 +172,7 @@ async def _upgrade_schema_on_startup() -> None:
 
 
 def normalize_customer_name(name: str | None) -> str | None:
-    """Return a usable customer name, or ``None`` when there is none.
-
-    Customer records are for repeat (named) customers. A blank or
-    whitespace-only name means the buyer is a one-time, phone-only customer:
-    no customer record is created or modified. A number is never accepted as a
-    stand-in for a name here.
-    """
+    """Normalize the optional per-sale name snapshot; blank names stay absent."""
     cleaned = (name or "").strip()
     return cleaned or None
 
@@ -186,9 +180,7 @@ def normalize_customer_name(name: str | None) -> str | None:
 class TransactionRequest(BaseModel):
     """Sale details shared by the preview and the commit call.
 
-    ``customer_name`` is optional: with a name the sale belongs to a repeat
-    customer (linked, and registered on first use); without one it is a
-    one-time sale recorded against the phone alone.
+    ``customer_name`` is an optional transaction snapshot, not a customer identity.
     """
 
     customer_phone: str
@@ -262,6 +254,7 @@ class TransactionResponse(BaseModel):
     #: The SIM card the sale was charged to; ``None`` for legacy rows, which
     #: were charged to the company's legacy credit.
     sim_card_id: int | None = None
+    customer_name: str | None = None
 
 
 class TransactionStatusUpdate(BaseModel):
@@ -277,8 +270,8 @@ class TransactionStatusUpdate(BaseModel):
 class TransactionListItem(BaseModel):
     """A transaction enriched with customer, operator and service labels.
 
-    ``customer_id`` and ``customer_name`` are ``None`` for a one-time sale: no
-    customer record exists for it, and its phone is never repeated as a name.
+    New sales have no customer link. The optional name is the stored snapshot,
+    never a live customer label or a phone substituted for a name.
     """
 
     id: int
@@ -624,7 +617,7 @@ async def global_search(
             Transaction.status,
             Transaction.customer_id.label("customer_id"),
             customer_phone_label.label("customer_phone"),
-            Customer.name.label("customer_name"),
+            Transaction.customer_name.label("customer_name"),
             Operator.code.label("operator_code"),
             Operator.name.label("operator_name"),
         )
@@ -633,7 +626,11 @@ async def global_search(
         .join(Service, Transaction.service_id == Service.id)
         .join(Operator, Service.operator_id == Operator.id)
         .where(
-            or_(Transaction.reference.ilike(like), customer_phone_label.ilike(like)),
+            or_(
+                Transaction.reference.ilike(like),
+                customer_phone_label.ilike(like),
+                Transaction.customer_name.ilike(like),
+            ),
             Transaction.deleted_at.is_(None),
         )
         .order_by(Transaction.created_at.desc(), Transaction.id.desc())
@@ -1569,11 +1566,8 @@ async def create_transaction(
     is either fully recorded or not recorded at all. Replaying the same
     ``commit_key`` returns the stored sale without touching the ledger again.
 
-    Customer records are for repeat customers only. A sale with a name is
-    linked to (or registers) that named regular customer; a sale with a blank
-    or whitespace-only name is a one-time sale: it commits and is accounted for
-    normally, keeps its phone on the row, and no customer record is created or
-    modified. A number is never used as a name.
+    The optional normalized name is stored on this sale only. No customer
+    record is searched, created, modified or linked.
 
     The performer is the session's account. A replay returns the stored row
     unchanged, so it keeps the account that originally committed it.
@@ -1613,24 +1607,6 @@ async def create_transaction(
 
     transaction: Transaction | None = None
     try:
-        customer: Customer | None = None
-        if data.customer_name is not None:
-            # A named sale belongs to a repeat customer: link an existing
-            # record (by exact name) or register this one as a named regular.
-            # An ambiguous name aborts before anything is written.
-            customer, conflict = await _resolve_sale_customer(
-                db,
-                data.customer_name,
-                data.customer_phone,
-                data.operator_code,
-                data.service_code,
-            )
-            if conflict is not None:
-                await db.rollback()
-                raise HTTPException(status_code=409, detail=conflict)
-        # A blank name is a one-time sale: no customer record is created,
-        # modified or linked, and the phone is kept on the transaction row.
-
         # Atomic, non-negative debit of the selected SIM card only: two
         # concurrent commits can never overdraw it, and the legacy company
         # credit is never touched.
@@ -1648,7 +1624,8 @@ async def create_transaction(
             raise HTTPException(status_code=400, detail=sims.INSUFFICIENT_SIM_BALANCE)
 
         transaction = Transaction(
-            customer_id=None if customer is None else customer.id,
+            customer_id=None,
+            customer_name=data.customer_name,
             service_id=service.id,
             amount_cents=data.amount_cents,
             status="successful",
@@ -1824,7 +1801,7 @@ _TRANSACTION_LABELS = (
     Transaction.created_at,
     Transaction.customer_id.label("customer_id"),
     func.coalesce(Transaction.customer_phone, Customer.phone).label("customer_phone"),
-    Customer.name.label("customer_name"),
+    Transaction.customer_name.label("customer_name"),
     Operator.code.label("operator_code"),
     Operator.name.label("operator_name"),
     Service.code.label("service_code"),

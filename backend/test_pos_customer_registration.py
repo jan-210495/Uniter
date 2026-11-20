@@ -1,13 +1,4 @@
-"""Slice 2.3b: customer records are for named regular customers only.
-
-A POS sale is committed by the seller's Copy or dialer tap. With a name, the
-sale belongs to a repeat customer: an existing record is reused where it is
-unambiguous, or the number is registered as a named regular customer.
-Without a name (blank or whitespace-only) the sale is a one-time sale: it is
-recorded and accounted for normally, keeps its phone on the transaction row,
-and never creates, changes or links a customer record. A phone number is never
-used as a name anywhere in this flow.
-"""
+"""POS names are per-transaction snapshots, independent of customer records."""
 
 import asyncio
 import itertools
@@ -203,6 +194,7 @@ def stored(sessions: async_sessionmaker) -> list[dict]:
             {
                 "id": row.id,
                 "customer_id": row.customer_id,
+                "customer_name": row.customer_name,
                 "customer_phone": row.customer_phone,
                 "amount_cents": row.amount_cents,
                 "status": row.status,
@@ -234,15 +226,15 @@ def test_preview_never_creates_a_customer_or_moves_money(client, name: str) -> N
     assert test_client.get("/api/transactions").json() == []
 
 
-# --- 2. A named sale links to (or registers) a regular customer ------------
+# --- 2. A named sale stores a snapshot without resolving a customer -------
 
 
-def test_named_copy_commit_registers_one_regular_customer(client) -> None:
+def test_named_copy_commit_stores_normalized_snapshot_without_customer(client) -> None:
     test_client, sessions = client
     fund(test_client, amount_cents=100_000)
     before = screenshot(sessions)
 
-    response = commit(test_client, name="Ahmad")
+    response = commit(test_client, name="  Ahmad  ")
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "successful"
@@ -250,40 +242,32 @@ def test_named_copy_commit_registers_one_regular_customer(client) -> None:
     after = screenshot(sessions)
     assert after["transactions"] == before["transactions"] + 1
     assert after["ledger"] == before["ledger"] + 1
-    assert after["customers"] == before["customers"] + 1
+    assert after["customers"] == before["customers"]
     assert after["balances"]["mtn"] == before["balances"]["mtn"] - 5000
     assert after["debt"] == before["debt"]
 
-    # The registered customer holds phone, name and the sale's preferences.
-    assert customers(sessions) == [
-        {
-            "id": 1,
-            "phone": PHONE,
-            "name": "Ahmad",
-            "operator_code": "mtn",
-            "service_code": "prepaid",
-        }
-    ]
+    assert customers(sessions) == []
+    assert payload["customer_name"] == "Ahmad"
     rows = stored(sessions)
     assert len(rows) == 1
-    assert rows[0]["customer_id"] == 1
+    assert rows[0]["customer_id"] is None
     assert rows[0]["customer_phone"] == PHONE
     assert rows[0]["status"] == "successful"
 
     listed = test_client.get("/api/transactions").json()
     assert [(row["id"], row["customer_id"], row["customer_name"]) for row in listed] == [
-        (payload["id"], 1, "Ahmad")
+        (payload["id"], None, "Ahmad")
     ]
 
 
-def test_named_commit_reuses_an_existing_customer_without_duplicating(client) -> None:
+def test_named_commit_leaves_existing_customer_and_preferences_unchanged(client) -> None:
     test_client, sessions = client
     fund(test_client, amount_cents=100_000)
     created = test_client.post("/api/customers", json={"phone": PHONE, "name": "Ahmad"}).json()
     assert created["name"] == "Ahmad"
 
     assert commit(test_client, name="Ahmad").status_code == 200
-    # Same person, same name, a different sale: the record is reused.
+    # Different sale and spelling: the customer record is untouched.
     assert commit(test_client, name="ahmad", amount_cents=2500).status_code == 200
 
     assert customers(sessions) == [
@@ -291,13 +275,13 @@ def test_named_commit_reuses_an_existing_customer_without_duplicating(client) ->
             "id": created["id"],
             "phone": PHONE,
             "name": "Ahmad",
-            "operator_code": "mtn",
-            "service_code": "prepaid",
+            "operator_code": None,
+            "service_code": None,
         }
     ]
     rows = stored(sessions)
     assert len(rows) == 2
-    assert {row["customer_id"] for row in rows} == {created["id"]}
+    assert {row["customer_id"] for row in rows} == {None}
     assert [row["customer_phone"] for row in rows] == [PHONE, PHONE]
 
 
@@ -312,7 +296,7 @@ def test_name_lookup_keeps_returning_the_first_of_duplicate_names(client) -> Non
     assert response.json()["id"] == first["id"]
 
 
-def test_named_sale_uses_the_canonical_phone_of_the_matched_customer(client) -> None:
+def test_named_sale_normalizes_its_own_phone_without_linking(client) -> None:
     test_client, sessions = client
     fund(test_client, amount_cents=100_000)
     test_client.post("/api/customers", json={"phone": PHONE, "name": "Ahmad"})
@@ -322,11 +306,11 @@ def test_named_sale_uses_the_canonical_phone_of_the_matched_customer(client) -> 
     assert response.status_code == 200
     rows = stored(sessions)
     assert rows[0]["customer_phone"] == PHONE
-    assert rows[0]["customer_id"] is not None
+    assert rows[0]["customer_id"] is None
 
 
-def test_ambiguous_name_with_a_foreign_phone_registers_and_links_nothing(client) -> None:
-    """Never guess: two same-name people plus their numbers is a conflict."""
+def test_ambiguous_customer_names_do_not_block_sale(client) -> None:
+    """Customer ambiguity is irrelevant to a sale snapshot."""
     test_client, sessions = client
     fund(test_client, amount_cents=100_000)
     test_client.post("/api/customers", json={"phone": PHONE, "name": "Ahmad"})
@@ -334,15 +318,14 @@ def test_ambiguous_name_with_a_foreign_phone_registers_and_links_nothing(client)
     before = screenshot(sessions)
 
     response = commit(test_client, phone="0955123456", name="Ahmad")
-    assert response.status_code == 409
-    assert "customer" in response.json()["detail"].lower()
-
-    # Nothing happened: no transaction, no debit, no ledger row, no customer.
-    assert screenshot(sessions) == before
+    assert response.status_code == 200
+    assert stored(sessions)[0]["customer_id"] is None
+    assert screenshot(sessions)["customers"] == before["customers"]
+    assert screenshot(sessions)["balances"]["mtn"] == before["balances"]["mtn"] - 5000
     assert len(customers(sessions)) == 2
 
 
-def test_duplicate_names_are_resolved_by_the_typed_phone(client) -> None:
+def test_duplicate_customer_names_never_link_sale(client) -> None:
     test_client, sessions = client
     fund(test_client, amount_cents=100_000)
     first = test_client.post("/api/customers", json={"phone": PHONE, "name": "Ahmad"}).json()
@@ -351,11 +334,11 @@ def test_duplicate_names_are_resolved_by_the_typed_phone(client) -> None:
     response = commit(test_client, phone=PHONE, name="Ahmad")
     assert response.status_code == 200
     rows = stored(sessions)
-    assert rows[0]["customer_id"] == first["id"]
+    assert rows[0]["customer_id"] is None
 
 
-def test_a_same_name_record_never_absorbs_another_persons_phone(client) -> None:
-    """The phone belongs to someone else: refuse instead of mis-attributing."""
+def test_conflicting_customer_name_and_phone_do_not_block_sale(client) -> None:
+    """A sale snapshot never changes either existing customer."""
     test_client, sessions = client
     fund(test_client, amount_cents=100_000)
     test_client.post("/api/customers", json={"phone": OTHER_PHONE, "name": "Ahmad"})
@@ -363,8 +346,9 @@ def test_a_same_name_record_never_absorbs_another_persons_phone(client) -> None:
     before = screenshot(sessions)
 
     response = commit(test_client, phone=PHONE, name="Ahmad")
-    assert response.status_code == 409
-    assert screenshot(sessions) == before
+    assert response.status_code == 200
+    assert stored(sessions)[0]["customer_name"] == "Ahmad"
+    assert stored(sessions)[0]["customer_id"] is None
     # Neither record was renamed or re-numbered.
     assert customers(sessions) == [
         {
@@ -384,7 +368,7 @@ def test_a_same_name_record_never_absorbs_another_persons_phone(client) -> None:
     ]
 
 
-def test_one_registered_name_with_a_different_number_refuses_and_keeps_the_number(client) -> None:
+def test_registered_name_with_different_number_does_not_block_sale(client) -> None:
     """The typed number is not written over the registered customer's number."""
     test_client, sessions = client
     fund(test_client, amount_cents=100_000)
@@ -392,10 +376,9 @@ def test_one_registered_name_with_a_different_number_refuses_and_keeps_the_numbe
     before = screenshot(sessions)
 
     response = commit(test_client, phone=OTHER_PHONE, name="Ahmad")
-    assert response.status_code == 409
-    assert "different number" in response.json()["detail"]
-    # Neither the sale nor the customer record moved.
-    assert screenshot(sessions) == before
+    assert response.status_code == 200
+    assert stored(sessions)[0]["customer_phone"] == OTHER_PHONE
+    assert stored(sessions)[0]["customer_id"] is None
     assert customers(sessions) == [
         {
             "id": existing["id"],
@@ -405,7 +388,7 @@ def test_one_registered_name_with_a_different_number_refuses_and_keeps_the_numbe
             "service_code": None,
         }
     ]
-    assert test_client.get("/api/transactions").json() == []
+    assert len(test_client.get("/api/transactions").json()) == 1
 
 
 def test_a_new_name_for_an_existing_phone_is_not_silently_reused(client) -> None:
@@ -416,9 +399,9 @@ def test_a_new_name_for_an_existing_phone_is_not_silently_reused(client) -> None
     before = screenshot(sessions)
 
     response = commit(test_client, phone=PHONE, name="Ahmad")
-    assert response.status_code == 409
-    assert "belongs to a different customer" in response.json()["detail"]
-    assert screenshot(sessions) == before
+    assert response.status_code == 200
+    assert stored(sessions)[0]["customer_name"] == "Ahmad"
+    assert stored(sessions)[0]["customer_id"] is None
     assert [row["name"] for row in customers(sessions)] == ["Rami"]
 
 
@@ -492,7 +475,7 @@ def test_the_phone_is_never_used_as_a_customer_name(client) -> None:
     assert commit(test_client, name=None, phone=OTHER_PHONE).status_code == 200
 
     installed = customers(sessions)
-    assert [row["name"] for row in installed] == ["Ayah"]
+    assert [row["name"] for row in installed] == []
     assert all(row["name"] != row["phone"] for row in installed)
 
 
@@ -516,7 +499,7 @@ def test_replaying_one_commit_key_never_duplicates_anything(client, name: str) -
 
     assert snapshot["transactions"] == 1
     assert snapshot["ledger"] == 1
-    assert snapshot["customers"] == (1 if name else 0)
+    assert snapshot["customers"] == 0
     assert snapshot["balances"]["mtn"] == 95_000
 
 
@@ -541,7 +524,7 @@ def test_concurrent_retries_of_one_key_commit_once(client, name: str) -> None:
     snapshot = screenshot(sessions)
     assert snapshot["transactions"] == 1
     assert snapshot["ledger"] == 1
-    assert snapshot["customers"] == (1 if name else 0)
+    assert snapshot["customers"] == 0
     assert snapshot["balances"]["mtn"] == 95_000
 
 
@@ -558,7 +541,7 @@ def test_distinct_keys_stay_distinct_sales_for_both_kinds(client) -> None:
     snapshot = screenshot(sessions)
     assert snapshot["transactions"] == 3
     assert snapshot["ledger"] == 3
-    assert snapshot["customers"] == 1
+    assert snapshot["customers"] == 0
     assert snapshot["balances"]["mtn"] == 100_000 - 15_000
 
 
@@ -605,7 +588,7 @@ def test_a_colliding_reference_rolls_the_whole_commit_back(client, monkeypatch) 
     assert commit(test_client, name=None, phone="0955123456").status_code == 409
 
     assert screenshot(sessions) == snapshot
-    assert [row["name"] for row in customers(sessions)] == ["Ahmad"]
+    assert [row["name"] for row in customers(sessions)] == []
 
 
 # --- 6. Reports and filters keep both kinds of sale -----------------------
@@ -662,10 +645,10 @@ def test_search_lists_one_time_sales_without_treating_them_as_customers(client) 
     assert [row["id"] for row in by_phone["transactions"]] == [anonymous["id"]]
     assert by_phone["customers"] == []
 
-    # A linked sale is found by its customer: name in the customer section,
-    # phone in the transaction section (transactions match reference or phone).
+    # Name search matches the transaction snapshot, not a customer record.
     by_name = test_client.get("/api/search", params={"q": "ahmad"}).json()
-    assert [row["name"] for row in by_name["customers"]] == ["Ahmad"]
+    assert by_name["customers"] == []
+    assert [row["id"] for row in by_name["transactions"]] == [named["id"]]
     by_named_phone = test_client.get("/api/search", params={"q": "0944"}).json()
     assert [row["id"] for row in by_named_phone["transactions"]] == [named["id"]]
     assert by_named_phone["transactions"][0]["customer_name"] == "Ahmad"
@@ -714,8 +697,8 @@ def test_customer_page_queries_stay_customer_only(client) -> None:
     commit(test_client, name=None, phone="0955123456")
 
     listing = test_client.get("/api/customers").json()
-    assert [row["name"] for row in listing] == ["Ahmad"]
-    assert [row["phone"] for row in listing] == [PHONE]
+    assert [row["name"] for row in listing] == []
+    assert [row["phone"] for row in listing] == []
     # No one-time sale leaked into the customer search either.
     matches = test_client.get("/api/customers/search", params={"q": "0933"}).json()
     assert matches == []
@@ -771,7 +754,7 @@ def test_an_explicit_customer_needs_no_transaction(client) -> None:
 # --- 8. Deleting a customer keeps committed sales -------------------------
 
 
-def test_deleting_a_customer_keeps_the_sale_as_a_one_time_sale(client) -> None:
+def test_deleting_a_customer_keeps_the_sale_snapshot(client) -> None:
     test_client, sessions = client
     fund(test_client, amount_cents=100_000)
     created = test_client.post("/api/customers", json={"phone": PHONE, "name": "Ahmad"}).json()
@@ -785,7 +768,7 @@ def test_deleting_a_customer_keeps_the_sale_as_a_one_time_sale(client) -> None:
     ]
     listed = test_client.get("/api/transactions").json()
     assert [(row["id"], row["customer_phone"], row["customer_name"]) for row in listed] == [
-        (sale["id"], PHONE, None)
+        (sale["id"], PHONE, "Ahmad")
     ]
     # Its accounting is untouched: no refund, no ledger change.
     assert screenshot(sessions)["ledger"] == 1
@@ -841,3 +824,50 @@ def test_imported_rows_without_their_own_phone_are_still_removed_with_the_custom
 
     assert test_client.delete(f"/api/customers/{created['id']}").status_code == 204
     assert stored(sessions) == []
+
+
+@pytest.mark.parametrize("name", ["  أحمد علي  ", "\tAhmad\n", "", " \t\n", None])
+def test_snapshot_is_stored_directly_and_replay_keeps_original_name(client, name) -> None:
+    test_client, sessions = client
+    fund(test_client, amount_cents=100_000)
+    key = commit_key()
+    expected = (name or "").strip() or None
+    first = commit(test_client, key=key, name=name)
+    assert first.status_code == 200
+    assert first.json()["customer_name"] == expected
+    assert stored(sessions)[0]["customer_name"] == expected
+    assert stored(sessions)[0]["customer_id"] is None
+    assert customers(sessions) == []
+    before = screenshot(sessions)
+    # Preserve existing key semantics: changing only the name on retry does
+    # not overwrite the original sale or trigger another accounting entry.
+    retry = commit(test_client, key=key, name="Different name")
+    assert retry.json() == first.json()
+    assert screenshot(sessions) == before
+    listed = test_client.get("/api/transactions").json()
+    assert listed[0]["customer_name"] == expected
+    searched = test_client.get("/api/search", params={"q": first.json()["reference"]}).json()
+    assert searched["transactions"][0]["customer_name"] == expected
+
+
+def test_customer_edits_and_deletion_never_change_sale_snapshot(client) -> None:
+    test_client, sessions = client
+    fund(test_client, amount_cents=100_000)
+    customer = test_client.post("/api/customers", json={"phone": PHONE, "name": "Ahmad"}).json()
+    before_customer = customers(sessions)
+    sale = commit(test_client, name="  Ahmad  ").json()
+    assert customers(sessions) == before_customer
+    assert stored(sessions)[0]["customer_id"] is None
+    before_accounting = screenshot(sessions)
+    assert test_client.put(f"/api/customers/{customer['id']}", json={"name": "Renamed"}).status_code == 200
+    for action in ("edited", "deleted"):
+        if action == "deleted":
+            assert test_client.delete(f"/api/customers/{customer['id']}").status_code == 204
+        assert stored(sessions)[0]["customer_name"] == "Ahmad"
+        assert test_client.get("/api/transactions").json()[0]["customer_name"] == "Ahmad"
+        matches = test_client.get("/api/search", params={"q": "ahmad"}).json()
+        assert matches["customers"] == []
+        assert [(row["id"], row["customer_name"]) for row in matches["transactions"]] == [(sale["id"], "Ahmad")]
+        after = screenshot(sessions)
+        for field in ("transactions", "ledger", "debt", "balances", "legacy"):
+            assert after[field] == before_accounting[field]
