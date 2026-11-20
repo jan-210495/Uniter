@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, literal, or_, select, union_all, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 if __package__:
     from . import auth, sims, users
     from .commission import get_commission_for_transaction
-    from .database import TRANSACTION_STATUSES, MAX_MINOR_UNITS, Operator, Service, SimCard, SimLedger, Transaction, User, OperatorBalance, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
+    from .database import TRANSACTION_STATUSES, MAX_MINOR_UNITS, Operator, Service, SimCard, SimLedger, Transaction, User, OperatorTopup, OperatorBalance, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from .seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from .validation import validate_syrian_phone
 else:
@@ -27,7 +27,7 @@ else:
     import sims
     import users
     from commission import get_commission_for_transaction
-    from database import TRANSACTION_STATUSES, MAX_MINOR_UNITS, Operator, Service, SimCard, SimLedger, Transaction, User, OperatorBalance, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
+    from database import TRANSACTION_STATUSES, MAX_MINOR_UNITS, Operator, Service, SimCard, SimLedger, Transaction, User, OperatorTopup, OperatorBalance, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from validation import validate_syrian_phone
 
@@ -1280,6 +1280,137 @@ async def list_transactions(
         statement = statement.where(Transaction.performed_by_user_id == performed_by)
     rows = await db.execute(statement.order_by(Transaction.created_at.desc(), Transaction.id.desc()))
     return _list_items(rows.all(), _auth_context(request))
+
+
+class LedgerSaleItem(TransactionListItem):
+    record_type: Literal["sale"] = "sale"
+    source: Literal["transaction"] = "transaction"
+
+
+class LedgerTopupItem(BaseModel):
+    record_type: Literal["topup"] = "topup"
+    source: Literal["operator_topup", "sim_topup"]
+    id: int
+    reference: str
+    created_at: datetime
+    amount_cents: int
+    status: Literal["successful"] = "successful"
+    operator_code: str
+    operator_name: str
+    sim_card_id: int | None = None
+    sim_display_name: str | None = None
+    performed_by_user_id: int | None = None
+    performed_by_username: str | None = None
+
+
+class TransactionLedgerPage(BaseModel):
+    items: list[Annotated[LedgerSaleItem | LedgerTopupItem, Field(discriminator="record_type")]]
+    total: int
+    limit: int
+    offset: int
+
+
+@app.get("/api/transaction-ledger", response_model=TransactionLedgerPage)
+async def transaction_ledger(
+    request: Request,
+    db: DbSession,
+    record_type: Literal["all", "sale", "topup"] = "all",
+    operator_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
+    service_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
+    performed_by: Annotated[int | None, Query(ge=1, le=MAX_MINOR_UNITS)] = None,
+    customer_phone: Annotated[str | None, Query(min_length=1, max_length=32)] = None,
+    status: Literal["successful", "failed"] = "successful",
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0, le=MAX_MINOR_UNITS)] = 0,
+) -> TransactionLedgerPage:
+    """Successful sales and persisted top-ups; read-only, not a revenue report.
+
+    SQL UNION ALL is ordered by (created_at DESC, source DESC, id DESC), then
+    paginated. IDs are source-local: (source, id) identifies a ledger record.
+    Operator filters both types. Sale-only filters require record_type=sale
+    (422 otherwise), never silently remove top-ups from an all-types view.
+    status=failed returns an empty page: failed sales/attempts are never listed.
+    The original /api/transactions remains the sales-management API.
+    Offset pages describe current history, not a frozen snapshot across writes.
+    """
+    if record_type != "sale" and any(value is not None for value in (service_code, performed_by, customer_phone)):
+        raise HTTPException(status_code=422, detail="Sale-only filters require record_type=sale")
+    if status == "failed":
+        return TransactionLedgerPage(items=[], total=0, limit=limit, offset=offset)
+
+    sales = (
+        select(literal("transaction").label("source"), Transaction.id, Transaction.created_at)
+        .join(Service, Transaction.service_id == Service.id)
+        .join(Operator, Service.operator_id == Operator.id)
+        .where(Transaction.status == "successful", Transaction.deleted_at.is_(None))
+    )
+    operator_topups = select(
+        literal("operator_topup").label("source"), OperatorTopup.id, OperatorTopup.created_at
+    ).join(Operator, OperatorTopup.operator_id == Operator.id)
+    sim_topups = select(
+        literal("sim_topup").label("source"), SimLedger.id, SimLedger.created_at
+    ).join(SimCard, SimLedger.sim_card_id == SimCard.id).join(
+        Operator, SimCard.operator_id == Operator.id
+    ).where(SimLedger.kind == "topup")
+    if operator_code is not None:
+        sales = sales.where(Operator.code == operator_code)
+        operator_topups = operator_topups.where(Operator.code == operator_code)
+        sim_topups = sim_topups.where(Operator.code == operator_code)
+    if service_code is not None:
+        sales = sales.where(Service.code == service_code)
+    if performed_by is not None:
+        sales = sales.where(Transaction.performed_by_user_id == performed_by)
+    if customer_phone is not None:
+        sales = sales.where(Transaction.customer_phone.ilike(f"%{customer_phone}%"))
+    sources = [sales] if record_type == "sale" else [operator_topups, sim_topups]
+    if record_type == "all":
+        sources.insert(0, sales)
+    combined = union_all(*sources).subquery()
+    total = await db.scalar(select(func.count()).select_from(combined))
+    keys = (await db.execute(select(combined).order_by(
+        combined.c.created_at.desc(), combined.c.source.desc(), combined.c.id.desc()
+    ).limit(limit).offset(offset))).all()
+    context = _auth_context(request)
+    items = {}
+    sale_ids = [row.id for row in keys if row.source == "transaction"]
+    if sale_ids:
+        rows = await db.execute(_transaction_list_statement().where(Transaction.id.in_(sale_ids)))
+        for sale in _list_items(rows.all(), context):
+            items[("transaction", sale.id)] = LedgerSaleItem(**sale.model_dump())
+    operator_ids = [row.id for row in keys if row.source == "operator_topup"]
+    if operator_ids:
+        rows = await db.execute(select(
+            OperatorTopup, Operator.code, Operator.name
+        ).join(Operator, OperatorTopup.operator_id == Operator.id).where(OperatorTopup.id.in_(operator_ids)))
+        for entry, code, name in rows:
+            items[("operator_topup", entry.id)] = LedgerTopupItem(
+                source="operator_topup", id=entry.id, reference=entry.reference,
+                amount_cents=entry.amount_cents, created_at=entry.created_at,
+                operator_code=code, operator_name=name,
+            )
+    sim_ids = [row.id for row in keys if row.source == "sim_topup"]
+    if sim_ids:
+        rows = await db.execute(select(
+            SimLedger, SimCard, Operator.code, Operator.name, User.username
+        ).join(SimCard, SimLedger.sim_card_id == SimCard.id).join(
+            Operator, SimCard.operator_id == Operator.id
+        ).join(User, SimLedger.performed_by_user_id == User.id).where(SimLedger.id.in_(sim_ids)))
+        for entry, sim, code, name, username in rows:
+            visible = context.role == "admin" or (sim.is_shared and sim.archived_at is None) or (
+                not sim.is_shared and sim.owner_user_id == context.user_id
+            )
+            items[("sim_topup", entry.id)] = LedgerTopupItem(
+                source="sim_topup", id=entry.id, reference=entry.reference,
+                amount_cents=entry.amount_cents, created_at=entry.created_at,
+                operator_code=code, operator_name=name,
+                sim_card_id=sim.id if visible else None,
+                sim_display_name=sim.display_name if visible else None,
+                performed_by_user_id=entry.performed_by_user_id, performed_by_username=username,
+            )
+    return TransactionLedgerPage(
+        items=[items[(row.source, row.id)] for row in keys],
+        total=total, limit=limit, offset=offset,
+    )
 
 
 @app.get("/api/currency/denomination", response_model=CurrencyDenominationResponse)

@@ -272,7 +272,7 @@ def test_transactions_template_markup() -> None:
         # Debounced, abortable client-side fetches.
         assert "const DEBOUNCE_MS = 220;" in rendered
         assert "new AbortController()" in rendered
-        assert "fetch('/api/transactions' + buildQuery()" in rendered
+        assert "fetch('/api/transaction-ledger' + buildQuery()" in rendered
         assert "/api/customers" not in rendered
         assert "tx-customer-suggestions" not in rendered
         # Ten table columns: Slice 2.3 added actions, v1.0.4 Slice 3 the performer.
@@ -286,11 +286,11 @@ def test_transactions_template_markup() -> None:
                    "المبلغ", "الحالة", "نفّذها", "USSD", "إجراءات"):
         assert header in arabic
     # Status vocabulary and the two row actions.
-    assert ">Successful<" in english and ">Failed<" in english
-    assert 'value="successful"' in english and 'value="failed"' in english
+    assert ">Successful<" in english and ">Failed<" not in english
+    assert 'value="successful"' in english and 'value="failed"' not in english
     assert "pending" not in english.split("<table", 1)[1].split("</table>", 1)[0]
     assert "Mark charge failed" in english and '"remove"' in english
-    assert ">ناجحة<" in arabic and ">فاشلة<" in arabic
+    assert ">ناجحة<" in arabic and ">فاشلة<" not in arabic
     assert '"remove"' in arabic and '"markFailed"' in arabic
 
 

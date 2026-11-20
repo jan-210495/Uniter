@@ -102,7 +102,7 @@ def row(result, tx_id: int):
 
 def test_only_allowed_actions_are_rendered_per_status() -> None:
     result = run([])
-    assert [entry["id"] for entry in result["rows"]] == ["3", "2", "1"]
+    assert [entry["id"] for entry in result["rows"]] == ["3", "1"]
 
     successful = row(result, 3)
     assert successful["status"] == "Successful"
@@ -112,12 +112,7 @@ def test_only_allowed_actions_are_rendered_per_status() -> None:
     assert fail_action["label"] == "Mark charge failed · TXN-c"
     assert "text-red-700" in " ".join(result["elements"]["tx-rows"]["classes"]) or True
 
-    failed = row(result, 2)
-    assert failed["status"] == "Failed"
-    assert [action["action"] for action in failed["actions"]] == ["remove"]
-    remove_action = failed["actions"][0]
-    assert remove_action["text"] == "Remove"
-    assert remove_action["label"] == "Remove · TXN-b"
+    assert all(entry["id"] != "2" for entry in result["rows"])
 
     # Every row keeps its ten cells, including the performer and actions columns.
     assert all(entry["cells"] == 10 for entry in result["rows"])
@@ -158,9 +153,6 @@ def test_arabic_actions_are_translated() -> None:
     assert successful["status"] == "ناجحة"
     assert successful["actions"][0]["label"].startswith("تسجيل فشل الشحن")
     assert successful["actions"][0]["text"] == "✕ فشل الشحن"
-    failed = row(result, 2)
-    assert failed["status"] == "فاشلة"
-    assert failed["actions"][0]["label"].startswith("إزالة")
 
 
 def test_empty_list_uses_the_full_ten_column_row() -> None:
@@ -181,8 +173,7 @@ def test_mark_failed_calls_the_api_and_announces_it() -> None:
         {"url": "/api/transactions/3/status", "method": "PATCH", "body": {"status": "failed"}}
     ]
     assert result["elements"]["tx-action-status"]["text"] == "Charge marked as failed."
-    assert row(result, 3)["status"] == "Failed"
-    assert [action["action"] for action in row(result, 3)["actions"]] == ["remove"]
+    assert all(entry["id"] != "3" for entry in result["rows"])
     # Focus returns to the list heading after the row re-renders.
     assert result["elements"]["tx-table-title"]["focused"] is True
     # No delete call is made by a status change.
@@ -218,51 +209,17 @@ def test_arabic_mark_failed_feedback() -> None:
     assert result["elements"]["tx-action-status"]["text"] == "تم تسجيل فشل الشحن."
 
 
-# --- Removing a failed row ------------------------------------------------
-
-
-def test_removal_asks_for_confirmation_then_deletes() -> None:
-    result = run([{"clickAction": {"txId": 2, "action": "remove"}}])
-    assert result["confirmCalls"] == 1
-    assert result["confirmMessage"] == (
-        "Remove this failed transaction from the lists? It stays in the audit trail "
-        "and no money is refunded."
-    )
-    delete = [request for request in result["requests"] if request["method"] == "DELETE"]
-    assert delete == [{"url": "/api/transactions/2", "method": "DELETE", "body": None}]
-    assert result["elements"]["tx-action-status"]["text"] == "Failed transaction removed."
-    assert [entry["id"] for entry in result["rows"]] == ["3", "1"]
-
-
-def test_cancelling_the_confirmation_deletes_nothing() -> None:
-    result = run([{"clickAction": {"txId": 2, "action": "remove"}}], confirm="cancel")
-    assert result["confirmCalls"] == 1
-    assert [request for request in result["requests"] if request["method"] == "DELETE"] == []
-    assert [entry["id"] for entry in result["rows"]] == ["3", "2", "1"]
-    assert result["elements"]["tx-action-status"]["text"] == ""
-
-
-def test_removal_double_click_asks_once_and_deletes_once() -> None:
-    result = run([{"clickTwice": {"txId": 2, "action": "remove"}}])
-    assert result["confirmCalls"] == 1
-    assert len([request for request in result["requests"] if request["method"] == "DELETE"]) == 1
-
-
-def test_removal_guard_message() -> None:
-    result = run([{"clickAction": {"txId": 2, "action": "remove"}}], delete="conflict")
-    assert result["elements"]["tx-action-status"]["text"] == (
-        "This action is not allowed for that transaction."
-    )
-    assert [entry["id"] for entry in result["rows"]] == ["3", "2", "1"]
-    assert row(result, 2)["actions"][0]["disabled"] is False
-
-
-def test_arabic_removal_confirmation_and_feedback() -> None:
-    result = run([{"clickAction": {"txId": 2, "action": "remove"}}], lang="ar")
-    assert result["confirmMessage"] == (
-        "إزالة هذه المعاملة الفاشلة من القوائم؟ ستبقى في السجل للمراجعة ولن تُرد أي مبالغ."
-    )
-    assert result["elements"]["tx-action-status"]["text"] == "تمت إزالة المعاملة الفاشلة."
+# Failed rows are excluded from this page; delete guards remain covered by
+# test_transaction_status.py (the sales-management API is unchanged).
+@pytest.mark.parametrize("lang", ["en", "ar"])
+def test_topups_with_colliding_sale_ids_have_no_sale_actions(lang):
+    topups = [dict(ROWS[0], record_type="topup", source=source, reference=source)
+              for source in ("operator_topup", "sim_topup")]
+    result = run([], rows=[ROWS[0], *topups, ROWS[1]], lang=lang)
+    assert [r["id"] for r in result["rows"]] == ["3", "operator_topup:3", "sim_topup:3"]
+    assert row(result, 3)["actions"][0]["action"] == "fail"
+    assert all(not r["actions"] for r in result["rows"][1:])
+    assert all(r["method"] == "GET" for r in result["requests"])
 
 
 # --- Markup and accessibility --------------------------------------------

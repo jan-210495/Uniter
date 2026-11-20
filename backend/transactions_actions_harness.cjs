@@ -167,8 +167,13 @@ const context = {
   fetch: async (url, options = {}) => {
     const method = options.method || 'GET';
     requests.push({ url, method, body: options.body ? JSON.parse(options.body) : null });
-    if (url.startsWith('/api/transactions') && method === 'GET') {
-      return jsonResponse(true, 200, rows);
+    if (url.startsWith('/api/transaction-ledger') && method === 'GET') {
+      const params = new URL(url, 'https://example.test').searchParams;
+      const type = params.get('record_type') || 'all';
+      const visible = rows.map((row) => ({ record_type: 'sale', source: 'transaction', ...row }))
+        .filter((row) => row.status === 'successful' && (type === 'all' || row.record_type === type));
+      const offset = Number(params.get('offset') || 0);
+      return jsonResponse(true, 200, { items: visible.slice(offset, offset + 50), total: visible.length, limit: 50, offset });
     }
     if (/^\/api\/transactions\/\d+\/status$/.test(url) && method === 'PATCH') {
       if (patchMode === 'conflict') return jsonResponse(false, 409, { detail: 'Transaction is already failed' });

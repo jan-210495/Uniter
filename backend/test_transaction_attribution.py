@@ -750,7 +750,7 @@ def run_page(steps, lang: str = "en") -> dict:
 
 
 def list_requests(result: dict) -> list[str]:
-    return [r["url"] for r in result["requests"] if r["method"] == "GET" and r["url"].startswith("/api/transactions")]
+    return [r["url"] for r in result["requests"] if r["method"] == "GET" and r["url"].startswith("/api/transaction-ledger")]
 
 
 def test_page_shows_the_performer_and_a_neutral_legacy_label() -> None:
@@ -759,7 +759,7 @@ def test_page_shows_the_performer_and_a_neutral_legacy_label() -> None:
     assert performers == {"2": "sara", "1": "Legacy / unknown"}
     assert all(row["cells"] == 10 for row in result["rows"])
     # Unfiltered by default: the first request carries no performer filter.
-    assert list_requests(result)[0] == "/api/transactions"
+    assert list_requests(result)[0] == "/api/transaction-ledger"
 
     arabic = run_page([], lang="ar")
     assert {row["id"]: row["performer"] for row in arabic["rows"]} == {"2": "sara", "1": "قديمة / غير معروف"}
@@ -768,15 +768,17 @@ def test_page_shows_the_performer_and_a_neutral_legacy_label() -> None:
 def test_choosing_a_performer_queries_the_server_with_the_other_filters() -> None:
     result = run_page([
         {"setFilter": {"id": "filter-operator", "value": "mtn"}},
+        {"setFilter": {"id": "filter-type", "value": "sale"}},
         {"setFilter": {"id": "filter-performer", "value": "2"}},
     ])
-    assert list_requests(result)[-1] == "/api/transactions?operator_code=mtn&performed_by=2"
+    assert list_requests(result)[-1] == "/api/transaction-ledger?record_type=sale&operator_code=mtn&performed_by=2"
 
 
 def test_clear_filters_resets_the_performer_to_all_sellers() -> None:
     result = run_page([
+        {"setFilter": {"id": "filter-type", "value": "sale"}},
         {"setFilter": {"id": "filter-performer", "value": "2"}},
         {"click": "tx-reset"},
     ])
     assert result["elements"]["filter-performer"]["value"] == ""
-    assert list_requests(result)[-1] == "/api/transactions"
+    assert list_requests(result)[-1] == "/api/transaction-ledger"

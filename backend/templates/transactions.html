@@ -12,12 +12,12 @@
         <div>
             <p class="mb-2 text-xs font-bold uppercase tracking-widest text-blue-800">{{ 'سجل المعاملات' if ar else 'Transaction history' }}</p>
             <h1 class="text-3xl font-bold tracking-tight text-blue-950 sm:text-4xl">{{ 'المعاملات' if ar else 'Transactions' }}</h1>
-            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{{ 'استعرض المعاملات وصفِّها حسب المشغّل والخدمة والحالة والبائع ورقم العميل.' if ar else 'Browse charging and billing transactions, filtered by operator, service, status, seller and customer phone.' }}</p>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{{ 'المبيعات الناجحة وتعبئات الرصيد فقط؛ التعبئات ليست إيرادات مبيعات.' if ar else 'Successful sales and credit top-ups only. Top-ups are not sale revenue.' }}</p>
         </div>
         <span id="tx-count" class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">—</span>
     </header>
 
-    {# Filtering approach: client-side fetch to /api/transactions with query params,
+    {# Filtering approach: server-side listing via /api/transaction-ledger with query params,
        debounced and abortable, matching the stored transaction phone directly. #}
     <form id="tx-filters" class="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="filters-title" novalidate>
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
@@ -27,7 +27,16 @@
             </div>
             <button id="tx-reset" type="button" class="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-blue-800 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'مسح التصفية' if ar else 'Clear filters' }}</button>
         </div>
+        <p id="sale-filter-help" class="mb-4 text-xs text-slate-500">{{ 'اختر «المبيعات فقط» لتصفية الخدمة والبائع ورقم الهاتف.' if ar else 'Choose Sales only to filter service, performer and phone.' }}</p>
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <div>
+                <label for="filter-type" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'نوع السجل' if ar else 'Record type' }}</label>
+                <select id="filter-type" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                    <option value="all">{{ 'المبيعات والتعبئات' if ar else 'Sales and top-ups' }}</option>
+                    <option value="sale">{{ 'المبيعات فقط' if ar else 'Sales only' }}</option>
+                    <option value="topup">{{ 'التعبئات فقط' if ar else 'Top-ups only' }}</option>
+                </select>
+            </div>
             <div>
                 <label for="filter-operator" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'المشغّل' if ar else 'Operator' }}</label>
                 <select id="filter-operator" name="operator" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
@@ -47,9 +56,7 @@
             <div>
                 <label for="filter-status" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'الحالة' if ar else 'Status' }}</label>
                 <select id="filter-status" name="status" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
-                    <option value="">{{ 'كل الحالات' if ar else 'All statuses' }}</option>
                     <option value="successful">{{ 'ناجحة' if ar else 'Successful' }}</option>
-                    <option value="failed">{{ 'فاشلة' if ar else 'Failed' }}</option>
                 </select>
             </div>
             {# Every account (admins and sellers, including deactivated ones) so
@@ -91,7 +98,7 @@
                 <caption class="sr-only">{{ 'المعاملات مع تفاصيل العميل والمشغّل والخدمة والبائع' if ar else 'Transactions with customer, operator, service and seller details' }}</caption>
                 <thead class="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
                     <tr>
-                        <th scope="col" class="px-4 py-3 text-start">{{ 'المرجع' if ar else 'Reference' }}</th>
+                        <th scope="col" class="px-4 py-3 text-start">{{ 'المرجع / النوع' if ar else 'Reference / Type' }}</th>
                         <th scope="col" class="px-4 py-3 text-start">{{ 'التاريخ والوقت' if ar else 'Date/time' }}</th>
                         <th scope="col" class="px-4 py-3 text-start">{{ 'العميل' if ar else 'Customer' }}</th>
                         <th scope="col" class="px-4 py-3 text-start">{{ 'المشغّل' if ar else 'Operator' }}</th>
@@ -106,6 +113,10 @@
                 <tbody id="tx-rows" class="divide-y divide-slate-100"></tbody>
             </table>
         </div>
+        <nav class="flex items-center justify-between gap-3 border-t border-slate-100 px-5 py-3" aria-label="{{ 'صفحات السجل' if ar else 'Ledger pagination' }}">
+            <button id="tx-prev" type="button" disabled class="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50">{{ 'السابق' if ar else 'Previous' }}</button>
+            <button id="tx-next" type="button" disabled class="rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:opacity-50">{{ 'التالي' if ar else 'Next' }}</button>
+        </nav>
         <p id="tx-action-status" role="status" aria-live="polite" class="border-t border-slate-100 px-5 py-3 text-xs font-semibold text-slate-600 sm:px-6"></p>
     </section>
 
@@ -131,6 +142,10 @@
         'loadFailed': 'تعذر تحميل المعاملات. حاول التحديث.' if ar else 'Could not load transactions. Try refreshing.',
         'empty': 'لا توجد معاملات مطابقة.' if ar else 'No matching transactions.',
         'countLabel': 'معاملات' if ar else 'transactions',
+        'successOnly': 'المبيعات الناجحة والتعبئات فقط؛ التعبئات ليست إيرادات مبيعات.' if ar else 'Successful sales and top-ups only; top-ups are not sale revenue.',
+        'sale': 'بيع' if ar else 'Sale',
+        'simTopup': 'تعبئة شريحة' if ar else 'SIM top-up',
+        'operatorTopup': 'تعبئة رصيد المشغّل' if ar else 'Operator top-up',
         'total': 'الإجمالي' if ar else 'Total',
         'currency': 'ل.س' if ar else 'SYP',
         'statusSuccessful': 'ناجحة' if ar else 'Successful',
@@ -154,6 +169,11 @@
         'legacyRefundDenied': 'هذه بيعة قديمة خُصمت من رصيد الشركة القديم، ولا توجد شريحة لاسترداد المبلغ إليها.' if ar else 'This older sale was charged to the legacy company credit; there is no SIM card to refund it to.'
     }|tojson }};
     const pageLang = {{ lang|default('en')|tojson }};
+    const typeFilter = document.getElementById('filter-type');
+    const previousPage = document.getElementById('tx-prev');
+    const nextPage = document.getElementById('tx-next');
+    const PAGE_SIZE = 50;
+    let pageOffset = 0;
     const filterForm = document.getElementById('tx-filters');
     const operatorFilter = document.getElementById('filter-operator');
     const serviceFilter = document.getElementById('filter-service');
@@ -194,18 +214,19 @@
 
     phoneFilter.addEventListener('input', queueList);
 
-    // --- Transactions list (client-side filtering via /api/transactions) ---
+    // --- Combined ledger: server-side filtering and pagination ---
     let listTimer = null;
     let listAbort = null;
 
     function buildQuery() {
         const params = new URLSearchParams();
+        if (typeFilter.value !== 'all') params.set('record_type', typeFilter.value);
+        if (pageOffset) params.set('offset', String(pageOffset));
         if (operatorFilter.value) params.set('operator_code', operatorFilter.value);
-        if (serviceFilter.value) params.set('service_code', serviceFilter.value);
-        if (statusFilter.value) params.set('status', statusFilter.value);
+        if (typeFilter.value === 'sale' && serviceFilter.value) params.set('service_code', serviceFilter.value);
         const phone = phoneFilter.value.trim();
-        if (phone) params.set('customer_phone', phone);
-        if (performerFilter.value) params.set('performed_by', performerFilter.value);
+        if (typeFilter.value === 'sale' && phone) params.set('customer_phone', phone);
+        if (typeFilter.value === 'sale' && performerFilter.value) params.set('performed_by', performerFilter.value);
         const query = params.toString();
         return query ? '?' + query : '';
     }
@@ -236,6 +257,7 @@
     }
     function renderActions(transaction) {
         const cell = makeCell('px-4 py-3 text-end');
+        if (transaction.record_type !== 'sale') return cell;
         const group = document.createElement('div');
         group.className = 'inline-flex flex-wrap items-center justify-end gap-2';
         if (transaction.status === 'successful') {
@@ -264,11 +286,19 @@
     function renderRow(transaction) {
         const tr = document.createElement('tr');
         tr.className = 'hover:bg-slate-50';
-        tr.dataset.txId = String(transaction.id);
+        const topup = transaction.record_type === 'topup';
+        tr.dataset.txId = topup ? transaction.source + ':' + transaction.id : String(transaction.id);
 
         const reference = makeCell('px-4 py-3 font-mono text-xs text-slate-500');
         reference.dir = 'ltr';
         reference.textContent = transaction.reference;
+        const typeBadge = document.createElement('span');
+        typeBadge.className = 'mt-1 block w-fit rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-sans text-xs font-semibold text-slate-700';
+        typeBadge.dir = pageLang === 'ar' ? 'rtl' : 'ltr';
+        typeBadge.textContent = topup
+            ? (transaction.source === 'sim_topup' ? messages.simTopup : messages.operatorTopup)
+            : messages.sale;
+        reference.appendChild(typeBadge);
 
         const created = makeCell('px-4 py-3 text-xs text-slate-600');
         created.textContent = formatDate(transaction.created_at);
@@ -288,7 +318,8 @@
             customerName.className = 'block font-semibold text-slate-500';
             customerName.textContent = messages.oneTimeCustomer;
         }
-        customer.append(customerName, customerPhone);
+        if (topup) customer.textContent = '—';
+        else customer.append(customerName, customerPhone);
 
         const operator = makeCell('px-4 py-3 text-slate-700');
         const operatorLink = document.createElement('a');
@@ -301,7 +332,7 @@
         const funding = document.createElement('span');
         funding.className = 'mt-0.5 block text-xs text-slate-500';
         funding.dataset.field = 'funding';
-        if (transaction.funding === 'sim') {
+        if (transaction.funding === 'sim' || transaction.source === 'sim_topup') {
             funding.textContent = transaction.sim_display_name
                 ? messages.simPrefix + ': ' + transaction.sim_display_name
                 : messages.simHidden;
@@ -311,7 +342,7 @@
         operator.appendChild(funding);
 
         const service = makeCell('px-4 py-3 text-slate-700');
-        service.textContent = SERVICE_LABELS[transaction.service_code] || transaction.service_name;
+        service.textContent = topup ? '—' : (SERVICE_LABELS[transaction.service_code] || transaction.service_name);
 
         const amount = makeCell('px-4 py-3 tabular-nums text-slate-700');
         amount.append(makeAmount(transaction.amount_cents));
@@ -329,12 +360,12 @@
             performer.textContent = transaction.performed_by_username;
         } else {
             performer.className = 'px-4 py-3 text-xs text-slate-500';
-            performer.textContent = messages.legacyPerformer;
+            performer.textContent = topup ? '—' : messages.legacyPerformer;
         }
 
         const ussd = makeCell('px-4 py-3 font-mono text-xs text-slate-700');
         ussd.dir = 'ltr';
-        ussd.textContent = transaction.ussd_string;
+        ussd.textContent = topup ? '—' : transaction.ussd_string;
 
         tr.append(reference, created, customer, operator, service, amount, status, performer, ussd, renderActions(transaction));
         return tr;
@@ -363,7 +394,7 @@
         return status === 409 || status === 404 ? messages.actionDenied : messages.actionError;
     }
     async function markChargeFailed(transaction, button) {
-        if (actionInFlight) return;
+        if (transaction.record_type !== 'sale' || actionInFlight) return;
         actionInFlight = true;
         setActionBusy(button, true);
         actionStatusEl.textContent = messages.actionWorking;
@@ -391,7 +422,7 @@
         }
     }
     async function removeFailed(transaction, button) {
-        if (actionInFlight) return;
+        if (transaction.record_type !== 'sale' || actionInFlight) return;
         if (typeof window.confirm === 'function' && !window.confirm(messages.removeConfirm)) return;
         actionInFlight = true;
         setActionBusy(button, true);
@@ -414,7 +445,8 @@
         }
     }
 
-    function renderTransactions(transactions) {
+    function renderTransactions(page) {
+        const transactions = page.items.filter((item) => item.status === 'successful');
         rowsBody.replaceChildren(...(transactions.length ? transactions.map(renderRow) : [renderEmpty()]));
         if (pendingFocus) {
             // The acted-on row may be gone; hand focus back to the list header.
@@ -423,11 +455,10 @@
                 tableTitle.focus({ preventScroll: true });
             }
         }
-        const total = transactions.reduce((sum, transaction) => sum + (Number(transaction.amount_cents) || 0), 0);
-        countEl.textContent = transactions.length + ' ' + messages.countLabel;
-        statusEl.textContent = transactions.length
-            ? messages.total + ': ' + formatAmount(total) + ' ' + messages.currency
-            : messages.empty;
+        countEl.textContent = (transactions.length ? pageOffset + 1 : 0) + '–' + (pageOffset + transactions.length) + ' / ' + page.total + ' ' + messages.countLabel;
+        statusEl.textContent = transactions.length ? messages.successOnly : messages.empty;
+        previousPage.disabled = pageOffset === 0;
+        nextPage.disabled = pageOffset + PAGE_SIZE >= page.total;
     }
     async function fetchTransactions() {
         if (listAbort) listAbort.abort();
@@ -435,10 +466,15 @@
         listAbort = controller;
         statusEl.textContent = messages.loading;
         try {
-            const response = await fetch('/api/transactions' + buildQuery(), { cache: 'no-store', signal: controller.signal });
+            const response = await fetch('/api/transaction-ledger' + buildQuery(), { cache: 'no-store', signal: controller.signal });
             if (!response.ok) throw new Error('list request failed');
             const transactions = await response.json();
             if (listAbort !== controller) return;
+            if (!transactions.items.length && transactions.total && pageOffset >= transactions.total) {
+                pageOffset = Math.floor((transactions.total - 1) / PAGE_SIZE) * PAGE_SIZE;
+                await fetchTransactions();
+                return;
+            }
             renderTransactions(transactions);
         } catch (error) {
             if (listAbort !== controller) return;
@@ -446,9 +482,22 @@
         }
     }
     function queueList() {
+        pageOffset = 0;
         clearTimeout(listTimer);
         listTimer = setTimeout(fetchTransactions, DEBOUNCE_MS);
     }
+    function syncSaleFilters() {
+        [serviceFilter, performerFilter, phoneFilter].forEach((filter) => {
+            filter.disabled = typeFilter.value !== 'sale';
+            filter.setAttribute('aria-describedby', 'sale-filter-help');
+            if (filter.disabled) filter.value = '';
+        });
+    }
+    typeFilter.value = 'all';
+    syncSaleFilters();
+    typeFilter.addEventListener('change', () => { syncSaleFilters(); queueList(); });
+    previousPage.addEventListener('click', () => { pageOffset = Math.max(0, pageOffset - PAGE_SIZE); fetchTransactions(); });
+    nextPage.addEventListener('click', () => { pageOffset += PAGE_SIZE; fetchTransactions(); });
     filterForm.addEventListener('submit', (event) => event.preventDefault());
     [operatorFilter, serviceFilter, statusFilter, performerFilter].forEach((filter) => {
         filter.addEventListener('change', queueList);
@@ -458,9 +507,12 @@
         fetchTransactions();
     });
     document.getElementById('tx-reset').addEventListener('click', () => {
+        typeFilter.value = 'all';
+        syncSaleFilters();
+        pageOffset = 0;
         operatorFilter.value = '';
         serviceFilter.value = '';
-        statusFilter.value = '';
+        statusFilter.value = 'successful';
         performerFilter.value = '';
         phoneFilter.value = '';
         clearTimeout(listTimer);
