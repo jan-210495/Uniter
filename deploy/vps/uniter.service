@@ -1,0 +1,26 @@
+[Unit]
+Description=Uniter owner-operated web service
+After=network.target
+
+[Service]
+Type=simple
+User=uniter
+Group=uniter
+WorkingDirectory=/opt/uniter/current
+EnvironmentFile=/etc/uniter/uniter.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/uniter/current/.venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1 --no-access-log
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+UMask=0077
+StateDirectory=uniter
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/uniter
+
+[Install]
+WantedBy=multi-user.target

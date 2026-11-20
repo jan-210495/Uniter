@@ -1,0 +1,28 @@
+# Included inside nginx's http context, e.g. /etc/nginx/sites-enabled/uniter.
+# Replace REPLACE_WITH_DOMAIN in all four places after obtaining the certificate.
+# Initially reachable ONLY over a local/SSH tunnel. Remove the two allow/deny
+# lines only after completing the owner checklist; firewall controls still apply.
+server {
+    listen 443 ssl;
+    server_name REPLACE_WITH_DOMAIN;
+    ssl_certificate /etc/letsencrypt/live/REPLACE_WITH_DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/REPLACE_WITH_DOMAIN/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    if ($host != REPLACE_WITH_DOMAIN) { return 444; }
+    allow 127.0.0.1;
+    deny all;
+    access_log off;
+    client_max_body_size 1m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Overwrite, do not append/trust a client-supplied forwarding chain.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Host "";
+        proxy_set_header X-Forwarded-Port "";
+        proxy_set_header Forwarded "";
+        proxy_read_timeout 120s;
+    }
+}

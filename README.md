@@ -57,3 +57,11 @@ There is no recovery screen and no reset password. If an initialised database ha
   - **Failed sales**: marking a sale failed returns the stored original debit to the same SIM card exactly once (also when the card has since been archived), with a `REFUND-…` ledger row; removing a failed sale never refunds again. Sales recorded before SIM balances show "Legacy company credit" on the Transactions page and cannot be marked failed, so no SIM card is ever guessed for them.
 - **Upgrading:** the SIM card table is added automatically on start-up (recorded as `v1.0.4-sim-cards` in `schema_migrations`). No SIM card is created and no money is moved: every existing shop credit balance, top-up, refund and sale stays attached to its company exactly as before. If a database already contains a `sim_cards` table with a different structure, Uniter refuses to start and leaves the file unchanged.
 - **Upgrading to SIM balances:** the `sim_balances`, `sim_ledger` and `sim_defaults` tables and the nullable `transactions.sim_card_id` column are added automatically on start-up (recorded as `v1.0.4-sim-balances` in `schema_migrations`). Existing sales keep an empty SIM card, no SIM card is created and no money is moved; every legacy credit balance, top-up, refund and sale keeps its exact value. If those tables or that column already exist with a different structure, Uniter refuses to start and leaves the file unchanged.
+
+## Owner-operated Linux VPS (fresh install)
+
+For the Python 3.12 web-service path (not the Windows executable), see
+[the VPS installation and recovery guide](docs/vps-deployment.md) and the
+[owner-run configuration bundle](deploy/vps/). It covers private first setup,
+HTTPS/proxy trust, persistent SQLite state, backups, updates and recovery.
+These files do not deploy or modify any server automatically.
