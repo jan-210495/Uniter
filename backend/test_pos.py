@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import URL, event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from backend.database import Base, Customer, Operator, Service, Transaction, enable_sqlite_foreign_keys, get_db
+from backend.database import Base, Operator, Service, Transaction, enable_sqlite_foreign_keys, get_db
 from backend.auth_test_support import sign_in
 from backend.sim_test_support import fund_company, sim_balance, with_sim
 from backend.main import app
@@ -42,26 +42,10 @@ def client(tmp_path) -> Iterator[TestClient]:
         asyncio.run(engine.dispose())
 
 
-def test_customer_creation_lookup_and_duplicates(client: TestClient) -> None:
-    assert client.get("/api/customers/lookup", params={"phone": "0933123456"}).status_code == 404
-    response = client.post("/api/customers", json={"phone": "0933123456", "name": "Customer"})
-    assert response.status_code == 200
-    customer = response.json()
-    assert customer == {"id": customer["id"], "phone": "0933123456", "name": "Customer", "balance_cents": 0}
-    assert client.get("/api/customers/lookup", params={"phone": "0933123456"}).json() == customer
-    assert client.post("/api/customers", json={"phone": "0933123456", "name": "Duplicate"}).status_code == 409
-    assert client.post("/api/customers", json={"phone": "123#*1", "name": "Bad"}).status_code == 422
-
-
-def test_transaction_existing_and_one_time_customers(client: TestClient) -> None:
-    """A linked sale reuses its customer; a named one registers a regular.
-
-    A sale carrying no customer name is a one-time sale: it is recorded with
-    its phone and never leaves a customer record behind.
-    """
+def test_named_and_unnamed_sales_keep_their_own_phone_and_name(client: TestClient) -> None:
+    """The sale's optional name is a snapshot; the phone is always stored."""
     for operator_code in ("mtn", "syriatel"):
         fund_company(client, operator_code, 100000)  # Slice 4.1: a funded SIM card
-    customer = client.post("/api/customers", json={"phone": "0933123456", "name": "Customer"}).json()
     payload = {
         "customer_phone": "0933123456",
         "customer_name": "Customer",
@@ -75,7 +59,6 @@ def test_transaction_existing_and_one_time_customers(client: TestClient) -> None
     assert result["ussd_string"] == "*150*65477*0933123456*50#"
     assert result["status"] == "successful" and result["amount_cents"] == 5000
     assert result["reference"].startswith("TXN-") and result["created_at"]
-    assert client.get("/api/customers/lookup", params={"phone": "0933123456"}).json() == customer
 
     # No name: committed and accounted for, but no customer record at all.
     payload.update(
@@ -86,7 +69,6 @@ def test_transaction_existing_and_one_time_customers(client: TestClient) -> None
     assert response2.status_code == 200
     assert response2.json()["ussd_string"] == "*150*1*67858*5*0*0944123456*0944123456#"
     assert response2.json()["reference"] != result["reference"]
-    assert client.get("/api/customers/lookup", params={"phone": "0944123456"}).status_code == 404
 
     async def check_persisted() -> None:
         async with aclosing(app.dependency_overrides[get_db]()) as dependency:
@@ -102,9 +84,8 @@ def test_transaction_existing_and_one_time_customers(client: TestClient) -> None
             assert [(row.Transaction.customer_phone, row[1], row[2]) for row in rows] == [
                 ("0933123456", "mtn", "prepaid"), ("0944123456", "syriatel", "postpaid")
             ]
-            # Only the named sale is linked to a customer record.
-            installed = (await session.execute(select(Customer.phone))).scalars().all()
-            assert list(installed) == ["0933123456"]
+            # Only the named sale has a name snapshot.
+            assert [row.Transaction.customer_name for row in rows] == ["Customer", None]
             assert [row.Transaction.ussd_string for row in rows] == [
                 "*150*65477*0933123456*50#", "*150*1*67858*5*0*0944123456*0944123456#"
             ]
@@ -124,7 +105,6 @@ def test_invalid_transaction_has_no_customer_side_effect(client: TestClient) -> 
     payload["amount_cents"] = 5000
     payload["customer_phone"] = "0999#*1"
     assert post_transaction(client, payload).status_code == 422
-    assert client.get("/api/customers/lookup", params={"phone": "0999999999"}).status_code == 404
 
 
 def test_inactive_configuration_is_not_used(client: TestClient) -> None:
@@ -141,7 +121,6 @@ def test_inactive_configuration_is_not_used(client: TestClient) -> None:
     asyncio.run(disable_service())
     payload = {"customer_phone": "0999999999", "operator_code": "mtn", "service_code": "prepaid", "amount_cents": 5000}
     assert post_transaction(client, payload).status_code == 400
-    assert client.get("/api/customers/lookup", params={"phone": "0999999999"}).status_code == 404
 
 
 def test_failed_transaction_does_not_leave_new_customer(client: TestClient, monkeypatch) -> None:
@@ -155,48 +134,27 @@ def test_failed_transaction_does_not_leave_new_customer(client: TestClient, monk
     # The frozen uuid4 makes the reference collide, so the second commit fails
     # atomically: no customer, no row, no debit, and a retryable 409.
     assert post_transaction(client, payload).status_code == 409
-    assert client.get("/api/customers/lookup", params={"phone": "0944123456"}).status_code == 404
     assert len(client.get("/api/transactions").json()) == 1
     assert sim_balance(client, client.sim_ids["mtn"]) == 20000  # debited once only
 
 
 def test_normalized_customer_and_transaction_phones(client: TestClient) -> None:
     fund_company(client, "mtn", 100000)  # Slice 4.1: a funded SIM card
-    response = client.post("/api/customers", json={"phone": "+963 933-123-456", "name": "Customer"})
-    assert response.status_code == 200
-    customer = response.json()
-    assert customer["phone"] == "0933123456"
-    for phone in ("0933123456", "+963933123456", "00963 933-123-456"):
-        lookup = client.get("/api/customers/lookup", params={"phone": phone})
-        assert lookup.status_code == 200
-        assert lookup.json() == customer
-    duplicate = client.post("/api/customers", json={"phone": "00963933123456", "name": "Duplicate"})
-    assert duplicate.status_code == 409
-
     payload = {"customer_phone": "+963933123456", "customer_name": "Customer",
                "operator_code": "mtn", "service_code": "prepaid", "amount_cents": 5000}
     transaction = post_transaction(client, payload)
     assert transaction.status_code == 200
     assert transaction.json()["ussd_string"] == "*150*65477*0933123456*50#"
-    assert client.get("/api/customers/lookup", params={"phone": "0933123456"}).json() == customer
 
     payload["customer_phone"] = "00963 944-123-456"
     payload["customer_name"] = "Rami"
     transaction = post_transaction(client, payload)
     assert transaction.status_code == 200
     assert transaction.json()["ussd_string"] == "*150*65477*0944123456*50#"
-    created = client.get("/api/customers/lookup", params={"phone": "0944123456"})
-    assert created.status_code == 404
     assert transaction.json()["customer_name"] == "Rami"
 
 
 def test_phone_validation_errors(client: TestClient) -> None:
-    response = client.get("/api/customers/lookup", params={"phone": "0923123456"})
-    assert response.status_code == 422
-    assert "Invalid Syrian mobile number" in response.json()["detail"]
-    response = client.post("/api/customers", json={"phone": "0923123456", "name": "Customer"})
-    assert response.status_code == 422
-    assert "Invalid Syrian mobile number" in response.json()["detail"][0]["msg"]
     payload = {"customer_phone": "0923123456", "operator_code": "mtn",
                "service_code": "prepaid", "amount_cents": 5000}
     response = post_transaction(client, payload)
@@ -230,102 +188,6 @@ def test_commission_settings_and_calculation(client: TestClient) -> None:
 def test_invalid_commission_setting(client: TestClient, rate: str) -> None:
     assert client.put("/api/settings/commission", json={"rate": rate}).status_code == 422
     assert client.get("/api/settings/commission").json() == {"commission_rate": "0.05"}
-
-
-def test_customer_search_by_phone(client: TestClient) -> None:
-    client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
-    client.post("/api/customers", json={"phone": "0944123456", "name": "Rami"})
-    client.post("/api/customers", json={"phone": "0955123456", "name": "Leila"})
-
-    response = client.get("/api/customers/search", params={"q": "0933"})
-    assert response.status_code == 200
-    results = response.json()
-    assert len(results) == 1
-    assert results[0]["phone"] == "0933123456"
-    assert results[0]["name"] == "Ahmad"
-
-
-def test_customer_search_by_name(client: TestClient) -> None:
-    client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
-    client.post("/api/customers", json={"phone": "0944123456", "name": "Rami"})
-    client.post("/api/customers", json={"phone": "0955123456", "name": "Amira"})
-
-    response = client.get("/api/customers/search", params={"q": "ami"})
-    assert response.status_code == 200
-    results = response.json()
-    names = {r["name"] for r in results}
-    assert names == {"Rami", "Amira"}
-
-
-def test_customer_search_case_insensitive(client: TestClient) -> None:
-    client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
-
-    response = client.get("/api/customers/search", params={"q": "AHMAD"})
-    assert response.status_code == 200
-    results = response.json()
-    assert len(results) == 1
-    assert results[0]["name"] == "Ahmad"
-
-
-def test_customer_search_includes_debt_and_balance(client: TestClient) -> None:
-    customer = client.post(
-        "/api/customers", json={"phone": "0933123456", "name": "Ahmad"}
-    ).json()
-    client.post(
-        "/api/customers/1/debt",
-        json={"amount_cents": 5000, "description": "charge", "type": "charge"},
-    )
-
-    response = client.get("/api/customers/search", params={"q": "Ahmad"})
-    assert response.status_code == 200
-    result = response.json()[0]
-    assert result["balance_cents"] == customer["balance_cents"]
-    assert result["debt_cents"] == 5000
-
-
-def test_customer_search_empty_query_rejected(client: TestClient) -> None:
-    assert client.get("/api/customers/search", params={"q": ""}).status_code == 422
-
-
-def test_customer_search_no_match(client: TestClient) -> None:
-    client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
-    response = client.get("/api/customers/search", params={"q": "0999"})
-    assert response.status_code == 200
-    assert response.json() == []
-
-
-def test_customer_search_limit(client: TestClient) -> None:
-    for i in range(25):
-        client.post(
-            "/api/customers",
-            json={"phone": f"0933{i:06d}", "name": f"Customer {i}"},
-        )
-    response = client.get("/api/customers/search", params={"q": "0933"})
-    assert response.status_code == 200
-    assert len(response.json()) == 20
-
-
-def test_customer_search_returns_list_item_shape(client: TestClient) -> None:
-    """The suggestion dropdown relies on the exact CustomerListItem fields."""
-    created = client.post(
-        "/api/customers", json={"phone": "0933123456", "name": "Ahmad"}
-    ).json()
-    client.post(
-        f"/api/customers/{created['id']}/debt",
-        json={"amount_cents": 5000, "description": "charge", "type": "charge"},
-    )
-    client.post(
-        f"/api/customers/{created['id']}/debt",
-        json={"amount_cents": 2000, "description": "payment", "type": "payment"},
-    )
-
-    response = client.get("/api/customers/search", params={"q": "Ahmad"})
-    assert response.status_code == 200
-    results = response.json()
-    assert len(results) == 1
-    assert set(results[0]) == {"id", "phone", "name", "balance_cents", "debt_cents"}
-    assert results[0]["phone"] == "0933123456"
-    assert results[0]["debt_cents"] == 3000
 
 
 _COMMIT_KEYS = itertools.count(1)

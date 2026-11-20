@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from backend.database import (
     Base,
-    Customer,
     Operator,
     OperatorBalance,
     ProfitLedger,
@@ -132,6 +131,7 @@ def raw_row(sessions: async_sessionmaker, transaction_id: int) -> dict | None:
             "ussd_string": row.ussd_string,
             "deleted_at": row.deleted_at,
             "idempotency_key": row.idempotency_key,
+            "customer_name": row.customer_name,
         }
 
     return run_db(sessions, read)
@@ -258,7 +258,7 @@ def test_removing_a_failed_transaction_tombstones_it_without_refunding(client) -
     assert set_failed(test_client, transaction["id"]).status_code == 200
     profit_before = profits(sessions)
     balance_before = balance(sessions)
-    customer_before = test_client.get("/api/customers/lookup", params={"phone": PHONE}).json()
+    name_before = raw_row(sessions, transaction["id"])["customer_name"]
 
     response = test_client.delete(f"/api/transactions/{transaction['id']}")
     assert response.status_code == 204
@@ -279,10 +279,10 @@ def test_removing_a_failed_transaction_tombstones_it_without_refunding(client) -
     assert row["amount_cents"] == 5000
     assert row["idempotency_key"] == f"statuskey{test_client.commit_keys:022d}"
 
-    # No refund, no commission reversal, no customer balance change.
+    # No refund, no commission reversal, no snapshot change.
     assert profits(sessions) == profit_before
     assert balance(sessions) == balance_before
-    assert test_client.get("/api/customers/lookup", params={"phone": PHONE}).json() == customer_before
+    assert raw_row(sessions, transaction["id"])["customer_name"] == name_before
 
 
 def test_removal_is_safe_to_repeat(client) -> None:
@@ -441,23 +441,15 @@ def test_operator_page_shows_both_statuses_in_both_languages(client) -> None:
     assert "Successful" in english
 
 
-def test_customer_accounting_is_untouched_by_status_changes(client) -> None:
+def test_status_changes_keep_transaction_phone_and_name_snapshot(client) -> None:
     test_client, sessions = client
     fund(test_client, amount_cents=100_000)
-    # Customer registration is explicit; a named POS sale no longer registers one.
-    assert test_client.post("/api/customers", json={"phone": PHONE, "name": "Ahmad"}).status_code == 200
-    transaction = create_transaction(test_client, amount_cents=5000)
-    customer = test_client.get("/api/customers/lookup", params={"phone": PHONE}).json()
-
+    transaction = create_transaction(test_client, amount_cents=5000, customer_name="  Ahmad  ")
     assert set_failed(test_client, transaction["id"]).status_code == 200
-    assert test_client.get("/api/customers/lookup", params={"phone": PHONE}).json() == customer
-    balance_payload = test_client.get(f"/api/customers/{customer['id']}/balance").json()
-    assert balance_payload["total_debt_cents"] == 0
-    # The customer keeps their (now failed) transaction history.
-    customer_transactions = test_client.get(
-        "/api/transactions", params={"customer_phone": PHONE}
-    ).json()
-    assert [row["id"] for row in customer_transactions] == [transaction["id"]]
+    history = test_client.get("/api/transactions", params={"customer_phone": PHONE}).json()
+    assert [(row["id"], row["customer_phone"], row["customer_name"]) for row in history] == [
+        (transaction["id"], PHONE, "Ahmad")
+    ]
     assert test_client.delete(f"/api/transactions/{transaction['id']}").status_code == 204
-    assert test_client.get("/api/customers/lookup", params={"phone": PHONE}).json() == customer
+    assert raw_row(sessions, transaction["id"])["customer_name"] == "Ahmad"
     assert balance(sessions) == 100_000

@@ -204,8 +204,8 @@ def test_insufficient_balance_rejects_transaction(client: TestClient) -> None:
             assert (await session.scalars(select(ProfitLedger))).all() == []
 
     asyncio.run(check_nothing_created())
-    # No customer placeholder was left behind and the balance is untouched.
-    assert client.get("/api/customers").json() == []
+    # No sale was left behind and the balance is untouched.
+    assert client.get("/api/transactions").json() == []
     balances = {item["operator_code"]: item for item in client.get("/api/operators/balance").json()}
     assert balances["mtn"]["balance_cents"] == 0
 

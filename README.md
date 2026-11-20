@@ -5,7 +5,7 @@ A bilingual (Arabic/English) web application for managing mobile units charging 
 ## Tech Stack
 - **Backend**: FastAPI (Python 3.12) + SQLAlchemy + SQLite
 - **Frontend**: Responsive HTML5 / Tailwind CSS (Monochrome Precision theme) + Vanilla JS with Arabic RTL support (Noto Sans Arabic)
-- **Features**: Dual operators (MTN, Syriatel), Pre-Paid & Post-Paid charging, USSD quick-copy workflow, transaction logs, debt/cash ledger.
+- **Features**: Dual operators (MTN, Syriatel), Pre-Paid & Post-Paid charging, USSD quick-copy workflow, transaction logs, SIM balances, and sales/profit reporting.
 
 ## Sign-in and accounts
 - Every page and API requires signing in; only the sign-in page, the one-time setup page, static assets, the web manifest and `/api/health` are public.
@@ -27,6 +27,17 @@ There is no recovery screen and no reset password. If an initialised database ha
    `python -c "import getpass, sqlite3, sys; from backend.auth import hash_password; db = sqlite3.connect(sys.argv[1]); db.execute('UPDATE users SET password_hash = ?, must_change_password = 1, is_active = 1 WHERE username = ?', (hash_password(getpass.getpass('New password: ')), 'admin')); db.commit()" <database file>`
    The account must choose a new password at its next sign-in.
 4. Start Uniter again and sign in.
+
+## Sale identity
+- Enter the phone manually in POS. The optional name is a per-sale snapshot,
+  trimmed on commit (blank becomes NULL), not a customer account or lookup.
+- Transaction history and search use that stored name and phone. The phone
+  filter works directly on sale rows.
+- Customer directories, debt ledgers and settlement workflows are no longer
+  supported. Global search covers transactions and operators only.
+- This release is for fresh installs. No customer/debt data migration or
+  snapshot backfill is provided; historical migration code/tests are retained
+  only to verify earlier schema and accounting changes.
 
 ## Operators and SIM cards
 - The **Operators** page (side menu) lists MTN first and Syriatel second. MTN and Syriatel are the two supported companies; their services and USSD settings are unchanged. Each company section shows:

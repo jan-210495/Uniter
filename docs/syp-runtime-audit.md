@@ -1,5 +1,8 @@
 # Uniter monetary and runtime audit
 
+> Historical verification record, not current workflow documentation. Customer,
+> debt and settlement features have since been removed; see README for supported flows.
+
 Scope: recheck recent release fixes; actual form inputs, commission, USSD generation, related debt/payment flow, and startup/build assumptions.
 Baseline: main at 2e33776. Baseline suite: 232 passed, 166 warnings. This did NOT prove browser money flows.
 

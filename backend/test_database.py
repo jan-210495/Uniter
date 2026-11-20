@@ -20,8 +20,8 @@ def test_models_and_relationships(tmp_path, monkeypatch) -> None:
         try:
             await database.init_db()
             assert set(database.Base.metadata.tables) == {
-                "operators", "services", "customers", "transactions", "settings",
-                "debt_ledger", "cash_register", "operator_balance",
+                "operators", "services", "transactions", "settings",
+                "cash_register", "operator_balance",
                 "operator_topup", "operator_credit_refund", "profit_ledger", "currency_denomination",
                 "sim_cards", "sim_balances", "sim_ledger", "sim_defaults",
                 "users", "user_sessions", "login_attempts",
@@ -33,30 +33,28 @@ def test_models_and_relationships(tmp_path, monkeypatch) -> None:
                     operator=operator, name="Prepaid", code="prepaid",
                     ussd_suffix="#", price_per_unit=Decimal("1.25"),
                 )
-                customer = database.Customer(phone="123", name="Customer")
                 transaction = database.Transaction(
-                    customer=customer, service=service, amount_cents=125,
+                    customer_phone="0944123456", customer_name="Ahmad", service=service, amount_cents=125,
                     status="successful", ussd_string="*123*123#", reference="ref-1",
                 )
                 session.add(transaction)
                 await session.commit()
                 assert operator.is_active and service.is_active
-                assert customer.balance_cents == 0
-                assert all((operator.created_at, service.created_at, customer.created_at,
-                            customer.updated_at, transaction.created_at))
-                previous_updated_at = customer.updated_at
-                customer.name = "Updated"
-                await session.commit()
-                assert customer.updated_at > previous_updated_at
+                assert all((operator.created_at, service.created_at, transaction.created_at))
+                assert not hasattr(database, "Customer")
+                assert not hasattr(database, "DebtLedger")
+                assert "customer_id" not in database.Transaction.__table__.columns
+                assert not any(fk.target_fullname.startswith("customers.")
+                               for fk in database.Transaction.__table__.foreign_keys)
 
             async with sessions() as session:
                 row = (await session.scalars(
                     select(database.Transaction).options(
-                        selectinload(database.Transaction.customer),
                         selectinload(database.Transaction.service).selectinload(database.Service.operator),
                     )
                 )).one()
-                assert row.customer.name == "Updated"
+                assert row.customer_name == "Ahmad"
+                assert row.customer_phone == "0944123456"
                 assert row.service.operator.code == "mtn"
                 assert row.service.price_per_unit == Decimal("1.25")
         finally:
@@ -94,8 +92,7 @@ def test_constraints_and_foreign_keys(tmp_path, monkeypatch) -> None:
                 operator = database.Operator(name="MTN", code="mtn", ussd_prefix="*1*")
                 service = database.Service(operator=operator, name="Prepaid", code="prepaid",
                                            ussd_suffix="#", price_per_unit=Decimal("1.00"))
-                customer = database.Customer(phone="123", name="Customer")
-                session.add(database.Transaction(customer=customer, service=service,
+                session.add(database.Transaction(customer_phone="0944123456", customer_name="Ahmad", service=service,
                     amount_cents=100, status="invalid", ussd_string="*1#", reference="ref"))
                 with pytest.raises(IntegrityError):
                     await session.commit()

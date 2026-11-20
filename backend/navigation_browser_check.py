@@ -28,7 +28,7 @@ def main():
     assert urlparse(base).hostname in ('127.0.0.1', 'localhost', '::1')
     out = Path(output)
     out.mkdir(parents=True, exist_ok=True)
-    routes = ['/pos', '/topup', '/transactions', '/customers', '/settlement', '/stats', '/settings']
+    routes = ['/pos', '/topup', '/transactions', '/stats', '/settings']
     evidence = []
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=os.getenv('CHROMIUM_EXECUTABLE'), headless=True)

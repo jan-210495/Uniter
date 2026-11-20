@@ -88,7 +88,7 @@ def test_preview_commit_persistence_and_accounting(client, service, mode, cents)
     assert sim_balance(client, sim_id) == funding
     assert client.get('/api/operators/balance').json() == legacy_before
     assert client.get('/api/transactions').json() == []
-    assert client.get('/api/customers').json() == []
+    assert client.get('/api/transactions').json() == []
 
     async def ledger_rows():
         async with aclosing(app.dependency_overrides[get_db]()) as dependency:

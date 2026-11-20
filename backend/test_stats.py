@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from backend.database import (
     Base,
-    Customer,
     Operator,
     ProfitLedger,
     Service,
@@ -69,11 +68,6 @@ def insert_transaction(
 
     async def insert() -> None:
         async with sessions() as session:
-            customer = await session.scalar(select(Customer).where(Customer.phone == phone))
-            if customer is None:
-                customer = Customer(phone=phone, name=name)
-                session.add(customer)
-                await session.flush()
             operator = await session.scalar(select(Operator).where(Operator.code == operator_code))
             assert operator is not None
             service = await session.scalar(
@@ -81,7 +75,8 @@ def insert_transaction(
             )
             assert service is not None
             transaction = Transaction(
-                customer_id=customer.id,
+                customer_phone=phone,
+                customer_name=name,
                 service_id=service.id,
                 amount_cents=amount_cents,
                 status=status,
@@ -383,7 +378,7 @@ def test_stats_page_english_and_arabic(stats_env) -> None:
 
 def test_stats_nav_link_on_other_pages(stats_env) -> None:
     client, _ = stats_env
-    for page in ("pos", "settings", "customers"):
+    for page in ("pos", "settings", "transactions"):
         for lang in ("en", "ar"):
             response = client.get(f"/{page}", params={"lang": lang})
             assert response.status_code == 200, (page, lang)

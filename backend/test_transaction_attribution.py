@@ -30,6 +30,7 @@ from sqlalchemy import URL, event, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
+from backend.historical_test_support import install_historical_directory, current_transaction_columns
 from backend import database, seed
 from backend.auth_test_support import sign_in
 from backend.sim_test_support import fund_company, remember_sim
@@ -39,7 +40,6 @@ from backend.database import (
     SimBalance,
     SimLedger,
     ProfitLedger,
-    Customer,
     Transaction,
     User,
     get_db,
@@ -156,6 +156,7 @@ async def _build_v103(engine: AsyncEngine, sessions: async_sessionmaker) -> None
         if table.name not in AUTH_TABLES | {"transactions", "sim_cards", "sim_balances", "sim_ledger", "sim_defaults"}
     ]
     async with engine.begin() as connection:
+        await install_historical_directory(connection)
         await connection.exec_driver_sql(V103_TRANSACTIONS_DDL)
         await connection.run_sync(lambda sync: Base.metadata.create_all(sync, tables=v103_tables))
         await connection.exec_driver_sql(
@@ -340,11 +341,11 @@ def test_upgraded_schema_matches_a_fresh_install(v103, tmp_path) -> None:
         # v1.0.5 adds a fresh-install-only name snapshot, not a seller-data migration.
         fresh_columns = fresh.sql("PRAGMA table_info(transactions)")
         assert fresh_columns[-1][1:4] == ("customer_name", "VARCHAR(255)", 0)
-        assert v103.sql("PRAGMA table_info(transactions)") == fresh_columns[:-1]
+        assert current_transaction_columns(v103.sql("PRAGMA table_info(transactions)")) == current_transaction_columns(fresh_columns[:-1])
         # Compared by definition: SQLite numbers a column-level foreign key
         # added by ALTER TABLE before the table-level ones, so only the
         # internal ordinal (first field) may differ.
-        assert sorted(row[1:] for row in v103.sql("PRAGMA foreign_key_list(transactions)")) == sorted(
+        assert sorted(row[1:] for row in v103.sql("PRAGMA foreign_key_list(transactions)") if row[2] != "customers") == sorted(
             row[1:] for row in fresh.sql("PRAGMA foreign_key_list(transactions)")
         )
     finally:
@@ -414,7 +415,6 @@ class World:
             return {
                 "transactions": await session.scalar(select(func.count()).select_from(Transaction)),
                 "profit": await session.scalar(select(func.count()).select_from(ProfitLedger)),
-                "customers": await session.scalar(select(func.count()).select_from(Customer)),
                 "balances": tuple(
                     (await session.execute(
                         select(OperatorBalance.operator_id, OperatorBalance.balance_cents)
@@ -646,7 +646,7 @@ def test_list_and_commit_responses_expose_only_the_performer_id_and_username(wor
     rows = listed(world.admin)
     assert set(rows[0]) == {
         "id", "reference", "ussd_string", "status", "amount_cents", "created_at",
-        "customer_id", "customer_phone", "customer_name", "operator_code", "operator_name",
+        "customer_phone", "customer_name", "operator_code", "operator_name",
         "service_code", "service_name", "performed_by_user_id", "performed_by_username",
         # Slice 4.1: what funded the sale (a SIM card or the legacy credit).
         "funding", "sim_card_id", "sim_display_name",
@@ -719,14 +719,14 @@ PERFORMERS = [{"id": 2, "username": "sara"}, {"id": 1, "username": "test-admin"}
 ROWS = [
     {
         "id": 2, "reference": "TXN-new", "ussd_string": "*150*1#", "status": "successful",
-        "amount_cents": 1000, "created_at": "2026-11-05T09:00:00+00:00", "customer_id": None,
+        "amount_cents": 1000, "created_at": "2026-11-05T09:00:00+00:00",
         "customer_phone": "0933123456", "customer_name": None, "operator_code": "mtn",
         "operator_name": "MTN", "service_code": "prepaid", "service_name": "Pre-Paid Charging",
         "performed_by_user_id": 2, "performed_by_username": "sara",
     },
     {
         "id": 1, "reference": "TXN-old", "ussd_string": "*150*2#", "status": "successful",
-        "amount_cents": 900, "created_at": "2026-01-05T09:00:00+00:00", "customer_id": None,
+        "amount_cents": 900, "created_at": "2026-01-05T09:00:00+00:00",
         "customer_phone": "0955000000", "customer_name": None, "operator_code": "mtn",
         "operator_name": "MTN", "service_code": "prepaid", "service_name": "Pre-Paid Charging",
         "performed_by_user_id": None, "performed_by_username": None,

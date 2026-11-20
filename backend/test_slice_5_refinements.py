@@ -238,7 +238,7 @@ def test_mobile_header_burger_left_centered_logo(client) -> None:
 
 def test_pages_still_render(client) -> None:
     test_client, _ = client
-    for page in ("pos", "settlement", "transactions", "customers", "settings", "topup", "stats", "operators/mtn"):
+    for page in ("pos", "transactions", "settings", "topup", "stats", "operators/mtn"):
         for lang in ("en", "ar"):
             response = test_client.get(f"/{page}", params={"lang": lang})
             assert response.status_code == 200, (page, lang)

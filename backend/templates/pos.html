@@ -32,8 +32,7 @@
                     <div>
                         <label for="phone" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'رقم هاتف العميل' if ar else 'Customer phone' }}</label>
                         <div id="phone-anchor" class="relative">
-                            <input id="phone" name="phone" type="tel" dir="ltr" autocomplete="off" autofocus required pattern="[0-9+\s\x2D]+" placeholder="09XXXXXXXX" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="customer-suggestions" aria-autocomplete="list" aria-describedby="phone-help" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
-                            <ul id="customer-suggestions" role="listbox" aria-label="{{ 'العملاء المقترحون' if ar else 'Suggested customers' }}" class="absolute inset-x-0 top-full z-20 mt-1 hidden max-h-72 min-w-[16rem] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg"></ul>
+                            <input id="phone" name="phone" type="tel" dir="ltr" autocomplete="off" autofocus required pattern="[0-9+\s\x2D]+" placeholder="09XXXXXXXX" aria-describedby="phone-help" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
                         </div>
                         <p id="phone-help" class="mt-1.5 text-xs text-slate-500">{{ 'رقم سوري يبدأ بـ 093 أو 094 أو 095 أو 096 أو 098 أو 099.' if ar else 'Syrian mobile number starting with 093, 094, 095, 096, 098 or 099.' }}</p>
                     </div>
@@ -45,15 +44,6 @@
                         <p class="mt-1.5 text-xs text-slate-500">{{ 'الاسم اختياري ويُحفظ لهذا البيع فقط.' if ar else 'The optional name is saved for this sale only.' }}</p>
                     </div>
                 </div>
-                <div id="customer-info" class="hidden rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
-                    <p class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-slate-600">
-                        <span id="customer-info-name" class="text-sm font-semibold text-blue-950"></span>
-                        <span id="customer-info-phone" dir="ltr" class="font-mono text-slate-500"></span>
-                        <span id="customer-info-balance" class="text-slate-500"></span>
-                        <span id="customer-info-debt" class="font-semibold text-amber-700"></span>
-                    </p>
-                </div>
-                <p id="customer-search-status" role="status" aria-live="polite" class="mt-1.5 text-xs text-slate-500"></p>
                 <div class="grid grid-cols-2 gap-4">
                     <div>
                         <label for="operator" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'المشغّل' if ar else 'Operator' }}</label>
@@ -183,17 +173,8 @@
     const messages = {{ {
         'invalidPhone': 'أدخل رقم هاتف سوري صالحاً.' if ar else 'Enter a valid Syrian mobile number.',
         'invalidAmount': 'أدخل مبلغاً صالحاً بالـس.ل.' if ar else 'Enter a valid amount in SYP.',
-        'searching': 'يتم البحث عن العملاء…' if ar else 'Searching customers…',
-        'noResults': 'لا يوجد عملاء مطابقون.' if ar else 'No matching customers.',
-        'searchError': 'تعذر البحث عن العملاء. حاول مرة أخرى.' if ar else 'Could not search customers. Try again.',
-        'customerSelected': 'تم اختيار العميل.' if ar else 'Customer selected.',
-        'customerFound': 'تم العثور على العميل:' if ar else 'Customer found:',
-        'willRegister': 'سيُحفظ الاسم لهذا البيع فقط دون إنشاء حساب عميل.' if ar else 'The name will be saved for this sale only, without a customer account.',
-        'oneTimeSale': 'بيع لمرة واحدة بلا حساب عميل.' if ar else 'One-time sale with no customer account.',
-        'registerError': 'تعذر البحث عن العميل. حاول مرة أخرى.' if ar else 'Could not look up the customer. Try again.',
-        'namePhoneMismatch': 'هذا الاسم مسجل برقم آخر. تحقق من الاسم أو الرقم.' if ar else 'That name is registered under a different number. Check the name or the number.',
-        'balance': 'الرصيد' if ar else 'Balance',
-        'debt': 'الدين' if ar else 'Debt',
+        'willRegister': 'سيُحفظ الاسم لهذا البيع فقط.' if ar else 'The name will be saved for this sale only.',
+        'oneTimeSale': 'بيع بلا اسم.' if ar else 'Sale without a name.',
         'currency': 'ل.س' if ar else 'SYP',
         'rateLoaded': 'نسبة العمولة الحالية. اضغط تحديث للحصول على أحدث نسبة.' if ar else 'Current commission rate. Refresh to get the latest rate.',
         'rateError': 'تعذر تحميل نسبة العمولة. حاول التحديث.' if ar else 'Could not load the commission rate. Try refreshing.',
@@ -218,15 +199,6 @@
     const form = document.getElementById('charge-form');
     const phone = document.getElementById('phone');
     const nameInput = document.getElementById('customer-name');
-    const phoneAnchor = document.getElementById('phone-anchor');
-    const nameAnchor = document.getElementById('name-anchor');
-    const suggestions = document.getElementById('customer-suggestions');
-    const searchStatus = document.getElementById('customer-search-status');
-    const customerInfo = document.getElementById('customer-info');
-    const infoName = document.getElementById('customer-info-name');
-    const infoPhone = document.getElementById('customer-info-phone');
-    const infoBalance = document.getElementById('customer-info-balance');
-    const infoDebt = document.getElementById('customer-info-debt');
     const registerStatus = document.getElementById('register-status');
     const amount = document.getElementById('amount');
     const operator = document.getElementById('operator');
@@ -257,14 +229,6 @@
     const summaryCommission = document.getElementById('summary-commission');
     const summaryNet = document.getElementById('summary-net');
     let rate = null;
-
-    // --- Bidirectional customer suggestion dropdown (phone <-> name) ---
-    const DEBOUNCE_MS = 220;
-    let searchTimer = null;
-    let searchAbort = null;
-    let activeInput = null;
-    let results = [];
-    let highlightIndex = -1;
 
     function parseAmount(value) {
         const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(value.trim());
@@ -622,161 +586,6 @@
         return /^09[345689][0-9]{7}$/.test(cleaned) ? cleaned : null;
     }
 
-    function formatAmount(cents) {
-        return (Number(cents || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-    }
-    function showStatus(text) {
-        searchStatus.textContent = text;
-    }
-    function hideCustomerInfo() {
-        customerInfo.classList.add('hidden');
-        infoName.textContent = '';
-        infoPhone.textContent = '';
-        infoBalance.textContent = '';
-        infoDebt.textContent = '';
-    }
-    function showCustomerInfo(customer) {
-        infoName.textContent = customer.name;
-        infoPhone.textContent = customer.phone;
-        infoBalance.textContent = messages.balance + ': ' + formatAmount(customer.balance_cents) + ' ' + messages.currency;
-        const debt = Number(customer.debt_cents) || 0;
-        infoDebt.textContent = debt > 0 ? messages.debt + ': ' + formatAmount(debt) + ' ' + messages.currency : '';
-        customerInfo.classList.remove('hidden');
-    }
-    function closeSuggestions() {
-        if (searchAbort) {
-            searchAbort.abort();
-            searchAbort = null;
-        }
-        results = [];
-        highlightIndex = -1;
-        suggestions.innerHTML = '';
-        suggestions.classList.add('hidden');
-        if (activeInput) {
-            activeInput.setAttribute('aria-expanded', 'false');
-            activeInput.removeAttribute('aria-activedescendant');
-            activeInput = null;
-        }
-    }
-    function openSuggestions(input, anchor) {
-        if (activeInput !== input) {
-            if (activeInput) activeInput.setAttribute('aria-expanded', 'false');
-            activeInput = input;
-            anchor.appendChild(suggestions);
-        }
-        input.setAttribute('aria-expanded', 'true');
-        suggestions.classList.remove('hidden');
-    }
-    function renderSuggestions(customers, input, anchor) {
-        suggestions.innerHTML = '';
-        customers.forEach((customer, index) => {
-            const option = document.createElement('li');
-            option.id = 'customer-option-' + index;
-            option.setAttribute('role', 'option');
-            option.setAttribute('aria-selected', 'false');
-            option.dataset.index = String(index);
-            option.className = 'flex cursor-pointer items-baseline gap-2 px-3 py-2 text-sm';
-            const nameSpan = document.createElement('span');
-            nameSpan.className = 'min-w-0 truncate font-semibold text-slate-900';
-            nameSpan.textContent = customer.name;
-            const phoneSpan = document.createElement('span');
-            phoneSpan.dir = 'ltr';
-            phoneSpan.className = 'ms-auto shrink-0 font-mono text-xs text-slate-500';
-            phoneSpan.textContent = customer.phone;
-            option.appendChild(nameSpan);
-            option.appendChild(phoneSpan);
-            suggestions.appendChild(option);
-        });
-        results = customers;
-        highlightIndex = -1;
-        openSuggestions(input, anchor);
-    }
-    function setHighlight(index) {
-        highlightIndex = index;
-        const options = suggestions.children;
-        for (let i = 0; i < options.length; i += 1) {
-            const selected = i === index;
-            options[i].classList.toggle('bg-blue-50', selected);
-            options[i].classList.toggle('text-blue-950', selected);
-            options[i].setAttribute('aria-selected', String(selected));
-        }
-        const active = index >= 0 ? options[index] : null;
-        if (activeInput) {
-            if (active) activeInput.setAttribute('aria-activedescendant', active.id);
-            else activeInput.removeAttribute('aria-activedescendant');
-        }
-        if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest' });
-    }
-    async function fetchSuggestions(query, input, anchor) {
-        if (searchAbort) searchAbort.abort();
-        const controller = new AbortController();
-        searchAbort = controller;
-        showStatus(messages.searching);
-        try {
-            const response = await fetch('/api/customers/search?q=' + encodeURIComponent(query), { cache: 'no-store', signal: controller.signal });
-            if (!response.ok) throw new Error('search failed');
-            const customers = await response.json();
-            if (searchAbort !== controller) return;
-            if (!customers.length) {
-                closeSuggestions();
-                showStatus(messages.noResults);
-                return;
-            }
-            renderSuggestions(customers, input, anchor);
-            showStatus('');
-        } catch (error) {
-            if (searchAbort !== controller) return;
-            closeSuggestions();
-            showStatus(messages.searchError);
-        }
-    }
-    function queueSearch(input, anchor) {
-        clearTimeout(searchTimer);
-        const query = input.value.trim();
-        if (!query) {
-            closeSuggestions();
-            showStatus('');
-            return;
-        }
-        searchTimer = setTimeout(() => { fetchSuggestions(query, input, anchor); }, DEBOUNCE_MS);
-    }
-    function selectCustomer(customer) {
-        phone.value = customer.phone;
-        nameInput.value = customer.name;
-        phone.setCustomValidity('');
-        showCustomerInfo(customer);
-        closeSuggestions();
-        showStatus(messages.customerSelected);
-        clearResult();
-    }
-    function handleKeydown(event, input, anchor) {
-        const open = activeInput === input && !suggestions.classList.contains('hidden');
-        if (event.key === 'ArrowDown') {
-            if (!open) return;
-            event.preventDefault();
-            if (results.length) setHighlight((highlightIndex + 1) % results.length);
-        } else if (event.key === 'ArrowUp') {
-            if (!open) return;
-            event.preventDefault();
-            if (results.length) setHighlight((highlightIndex - 1 + results.length) % results.length);
-        } else if (event.key === 'Enter') {
-            if (open && highlightIndex >= 0 && results[highlightIndex]) {
-                event.preventDefault();
-                selectCustomer(results[highlightIndex]);
-            }
-        } else if (event.key === 'Escape') {
-            if (open) {
-                event.preventDefault();
-                closeSuggestions();
-            }
-        } else if (event.key === 'Tab') {
-            closeSuggestions();
-        }
-    }
-    const searchFields = [
-        { input: phone, anchor: phoneAnchor }
-    ];
-
     // --- Auto-operator selection from the phone prefix ---
     // MTN: 094/095/096 · Syriatel: 093/098/099. A manual operator choice is
     // never overridden by later typing.
@@ -792,53 +601,19 @@
         return AUTO_OPERATORS[digits.slice(0, 3)] || null;
     }
 
-    searchFields.forEach(({ input, anchor }) => {
-        input.addEventListener('input', () => {
-            input.setCustomValidity('');
-            hideCustomerInfo();
-            if (input === phone) {
-                clearResult();
-                // While typing: a known operator prefix selects the operator,
-                // unless the user picked one manually.
-                const operatorCode = operatorForPhonePrefix(phone.value);
-                if (operatorCode && !operatorTouched && operator.value !== operatorCode) {
-                    operator.value = operatorCode;
-                    // Typing a known prefix re-targets the vouchers and the
-                    // SIM card choices too.
-                    syncVoucherVisibility();
-                    syncButtons();
-                    syncSimOptions();
-                }
-            }
-            queueSearch(input, anchor);
-        });
-        input.addEventListener('keydown', (event) => handleKeydown(event, input, anchor));
-        input.addEventListener('focus', () => {
-            if (activeInput && activeInput !== input) closeSuggestions();
-        });
-    });
-    nameInput.addEventListener('input', () => {
-        clearTimeout(searchTimer);
-        if (searchAbort) searchAbort.abort();
-        closeSuggestions();
-        hideCustomerInfo();
-        showStatus('');
+    phone.addEventListener('input', () => {
+        phone.setCustomValidity('');
         clearResult();
+        // Preserve manual operator choices and prefix-based SIM defaults.
+        const operatorCode = operatorForPhonePrefix(phone.value);
+        if (operatorCode && !operatorTouched && operator.value !== operatorCode) {
+            operator.value = operatorCode;
+            syncVoucherVisibility();
+            syncButtons();
+            syncSimOptions();
+        }
     });
-    suggestions.addEventListener('mousedown', (event) => event.preventDefault());
-    suggestions.addEventListener('mouseover', (event) => {
-        const option = event.target.closest('li');
-        if (option) setHighlight(Number(option.dataset.index));
-    });
-    suggestions.addEventListener('click', (event) => {
-        const option = event.target.closest('li');
-        if (!option) return;
-        const customer = results[Number(option.dataset.index)];
-        if (customer) selectCustomer(customer);
-    });
-    document.addEventListener('click', (event) => {
-        if (activeInput && event.target !== activeInput && !suggestions.contains(event.target)) closeSuggestions();
-    });
+    nameInput.addEventListener('input', clearResult);
     async function loadRate() {
         rate = null;
         updateSummary();

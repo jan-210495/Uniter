@@ -1,8 +1,8 @@
 """Slice 7.6: every rendered amount is shown in SYP units, never raw cents.
 
-Server-side Jinja conversions (operator/customers/topup) are asserted on the
-rendered markup; the client-side scripts (transactions, stats, customers,
-topup, settlement, pos, base search) must define the shared SYP formatting
+Server-side Jinja conversions (operator/topup) are asserted on the
+rendered markup; the client-side scripts (transactions, stats,
+topup, pos, base search) must define the shared SYP formatting
 helper and use it for every money display."""
 
 import re
@@ -122,31 +122,6 @@ def test_operator_template_amounts_in_syp() -> None:
     assert "ل.س" in arabic
 
 
-def test_customers_template_totals_and_cells_in_syp() -> None:
-    customer = SimpleNamespace(
-        id=1,
-        name="Ahmad",
-        phone="0933123456",
-        balance_cents=2500,
-        debt_cents=250000,
-        operator_code=None,
-        service_code=None,
-    )
-    rendered = ENV.get_template("customers.html").render(
-        lang="en", customers=[customer], total_balance_cents=2500, total_debt_cents=250000
-    )
-    assert 'id="total-balance" dir="ltr">25</span>' in rendered
-    assert 'id="total-debt" dir="ltr">2,500</span>' in rendered
-    assert 'data-field="balance"><span dir="ltr">25</span>' in rendered
-    assert 'text-amber-800">2,500</span>' in rendered
-    assert "SYP" in rendered
-    arabic = ENV.get_template("customers.html").render(
-        lang="ar", customers=[customer], total_balance_cents=2500, total_debt_cents=250000
-    )
-    assert 'id="total-balance" dir="ltr">25</span>' in arabic
-    assert "ل.س" in arabic
-
-
 def test_topup_template_balance_in_syp() -> None:
     # The shop-credit top-up card now lives on the Operators page.
     companies = [{"code": "mtn", "name": "MTN", "balance_cents": 7482500, "last_topup_at": None,
@@ -164,11 +139,11 @@ def test_topup_template_balance_in_syp() -> None:
 
 
 @pytest.mark.parametrize(
-    "template_name", ["transactions.html", "stats.html", "customers.html", "operators.html", "settlement.html"]
+    "template_name", ["transactions.html", "stats.html", "operators.html"]
 )
 def test_client_scripts_use_shared_syp_formatter(template_name: str) -> None:
     rendered = ENV.get_template(template_name).render(
-        lang="en", customers=[], total_balance_cents=0, total_debt_cents=0, operators=[]
+        lang="en", operators=[]
     )
     scripts = re.findall(r"<script>(.*?)</script>", rendered, re.DOTALL)
     page_script = max(scripts, key=lambda s: "formatAmount" in s)
@@ -183,10 +158,9 @@ def test_client_scripts_use_shared_syp_formatter(template_name: str) -> None:
 
 def test_pos_template_formats_syp() -> None:
     rendered = ENV.get_template("pos.html").render(lang="en")
-    # Customer info balance/debt uses the shared SYP helper.
-    assert "formatAmount(customer.balance_cents)" in rendered
-    assert "formatAmount(debt)" in rendered
-    assert SHARED_FORMAT_BODY in rendered
+    # The POS summary retains its SYP formatting without directory balances.
+    assert "customer-info" not in rendered
+    assert "formatAmount(customer.balance_cents)" not in rendered
     # The amount summary renders SYP without a trailing ".00".
     assert "fraction === '00' ? ''" in rendered
 
@@ -199,11 +173,11 @@ def test_base_template_search_amounts_in_syp() -> None:
 
 
 def test_pages_render_both_languages(client: TestClient) -> None:
-    for page in ("pos", "settlement", "transactions", "customers", "topup", "stats", "operators/mtn"):
+    for page in ("pos", "transactions", "topup", "stats", "operators/mtn"):
         for lang in ("en", "ar"):
             response = client.get(f"/{page}", params={"lang": lang})
             assert response.status_code == 200, (page, lang)
-    english = client.get("/customers").text
-    arabic = client.get("/customers", params={"lang": "ar"}).text
+    english = client.get("/operators").text
+    arabic = client.get("/operators", params={"lang": "ar"}).text
     assert "SYP" in english
     assert "ل.س" in arabic

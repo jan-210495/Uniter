@@ -32,8 +32,8 @@ from backend.test_auth import CSRF_FIELD, Env, env  # noqa: F401 - shared fixtur
 CHOSEN = "Shop-Owner-Pass-41"
 OTHER = "Rival-Owner-Pass-93"
 ROOT = Path(__file__).resolve().parent.parent
-PROTECTED_PAGES = ("/pos", "/transactions", "/customers", "/settings", "/users", "/operators/mtn")
-PROTECTED_APIS = ("/api/customers", "/api/transactions", "/api/users", "/api/settings/commission")
+PROTECTED_PAGES = ("/pos", "/transactions", "/settings", "/users", "/operators/mtn")
+PROTECTED_APIS = ("/api/operators/balance", "/api/transactions", "/api/users", "/api/settings/commission")
 SETUP_ERROR = re.compile(r'<p id="setup-error"[^>]*>(.*?)</p>', re.S)
 
 
@@ -210,7 +210,7 @@ def test_apis_stay_closed_before_setup(client, blank) -> None:
         assert response.json() == {"detail": "Authentication required"}
     for method, path, body in (
         ("POST", "/api/users", {"username": "intruder"}),
-        ("POST", "/api/customers", {"phone": "0933123456", "name": "Intruder"}),
+        ("POST", "/api/register/open", {"opening_balance_cents": 0}),
         ("PUT", "/api/settings/timezone", {"timezone": "UTC"}),
     ):
         assert client.request(method, path, json=body).status_code == 401
@@ -269,7 +269,7 @@ def test_valid_setup_creates_exactly_one_admin_and_signs_in(client, blank, caplo
 
     page = client.get("/pos")
     assert page.status_code == 200 and page.url.path == "/pos"
-    assert client.get("/api/customers").status_code == 200
+    assert client.get("/api/transactions").status_code == 200
     assert client.get("/users").status_code == 200  # a real admin
 
     [admin] = users(blank)
@@ -580,7 +580,7 @@ def _assert_locked(env: Env, browser: TestClient) -> None:
     for path in ("/pos", "/login", "/users"):
         response = browser.get(path, follow_redirects=False)
         assert response.status_code == 303 and response.headers["location"] == "/setup"
-    assert browser.get("/api/customers").status_code == 503
+    assert browser.get("/api/transactions").status_code == 503
     # A well-formed setup POST cannot take the database over.
     browser.cookies.set(auth.LOGIN_CSRF_COOKIE, "t" * 43)
     takeover = browser.post("/setup", data={"new_password": CHOSEN, "confirm_password": CHOSEN,

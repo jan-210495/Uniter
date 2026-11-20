@@ -156,7 +156,6 @@ const context = {
     let data = {};
     if (url === '/api/settings/commission') data = { commission_rate: '0.05' };
     else if (url === '/api/transactions/preview') data = { ussd_string: '*stub*', commit_key: 'voucherpreviewkey000000000001' };
-    else if (url.startsWith('/api/customers/search')) data = [];
     return { ok: true, status: 200, json: async () => data };
   },
 };

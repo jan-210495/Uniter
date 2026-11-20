@@ -170,29 +170,6 @@ def test_missing_original_accounting_fails_closed(client, missing):
     assert refunds(sessions) == []
 
 
-@pytest.mark.parametrize('legacy', [False, True])
-def test_customer_deletion_preserves_refund_audit_and_existing_history_policy(client, legacy):
-    http, sessions = client
-    fund(http)
-    customer = http.post('/api/customers', json={'phone': '0944123456', 'name': 'Ahmad'}).json()
-    sale = create_transaction(http)
-    if legacy:
-        async def old_row(session):
-            await session.execute(update(Transaction).where(Transaction.id == sale['id']).values(customer_phone=None, customer_id=customer['id']))
-            await session.commit()
-        run_db(sessions, old_row)
-    assert set_failed(http, sale['id']).status_code == 200
-    before = refunds(sessions)[0]
-    customer = http.get('/api/customers/lookup', params={'phone': '0944123456'}).json()
-    # Slice 4.1: a SIM card sale is referenced by the append-only SIM ledger,
-    # so a phone-less (hand-edited) one keeps its customer instead of being
-    # deleted with it; a normal sale is unlinked and stays a one-time sale.
-    assert http.delete(f"/api/customers/{customer['id']}").status_code == (409 if legacy else 204)
-    assert refunds(sessions) == [before]
-    assert raw_row(sessions, sale['id']) is not None
-    assert balance(sessions) == 5_000_000
-
-
 def test_nameless_refund_reports_keep_existing_profit_and_register_policy(client):
     http, sessions = client
     fund(http, amount_cents=100_000)

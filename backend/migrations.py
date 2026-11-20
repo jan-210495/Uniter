@@ -476,7 +476,13 @@ def _build_plan(connection) -> _Plan | None:
 
     columns = _table_columns(connection, TABLE)
     names = {column.name for column in columns}
-    missing = sorted(REQUIRED_COLUMNS - names)
+    # Fresh v1.0.5 sales have a name snapshot and no directory linkage. This
+    # recognizes that schema without creating/preserving removed tables; old
+    # schemas still require their original customer_id for historical upgrades.
+    required = REQUIRED_COLUMNS
+    if "customer_id" not in names and "customer_name" in names:
+        required = required - {"customer_id"}
+    missing = sorted(required - names)
     if missing:
         raise SchemaUpgradeError(
             "transactions table is missing required columns: " + ", ".join(missing)
@@ -731,11 +737,18 @@ def _build_customer_plan(connection) -> _Plan | None:
 
     columns = _table_columns(connection, TABLE)
     names = {column.name for column in columns}
-    missing = sorted((REQUIRED_COLUMNS | {name for name, _ in ADDED_COLUMNS}) - names)
+    required = REQUIRED_COLUMNS | {name for name, _ in ADDED_COLUMNS}
+    directory_free = "customer_id" not in names and "customer_name" in names
+    if directory_free:
+        required = (required - {"customer_id"}) | {"customer_phone"}
+    missing = sorted(required - names)
     if missing:
         raise SchemaUpgradeError(
             "transactions table is missing required columns: " + ", ".join(missing)
         )
+
+    if directory_free:
+        return None  # Fresh-only schema: no historical customer widening applies.
 
     present = [name for name, _ in CUSTOMER_COLUMNS if name in names]
     if len(present) == len(CUSTOMER_COLUMNS):

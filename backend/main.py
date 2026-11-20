@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Annotated, Any, Dict, Literal
+from typing import Annotated, Literal
 from uuid import uuid4
 
 import sys
@@ -11,18 +11,15 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
-from sqlalchemy import case, func, or_, select, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy import delete as sql_delete
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import selectinload
-from sqlalchemy.sql.selectable import Subquery
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
     from . import auth, sims, users
     from .commission import get_commission_for_transaction
-    from .database import TRANSACTION_STATUSES, MAX_MINOR_UNITS, Customer, Operator, Service, SimCard, SimLedger, Transaction, User, DebtLedger, OperatorBalance, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
+    from .database import TRANSACTION_STATUSES, MAX_MINOR_UNITS, Operator, Service, SimCard, SimLedger, Transaction, User, OperatorBalance, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from .seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from .validation import validate_syrian_phone
 else:
@@ -30,7 +27,7 @@ else:
     import sims
     import users
     from commission import get_commission_for_transaction
-    from database import TRANSACTION_STATUSES, MAX_MINOR_UNITS, Customer, Operator, Service, SimCard, SimLedger, Transaction, User, DebtLedger, OperatorBalance, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
+    from database import TRANSACTION_STATUSES, MAX_MINOR_UNITS, Operator, Service, SimCard, SimLedger, Transaction, User, OperatorBalance, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from validation import validate_syrian_phone
 
@@ -80,67 +77,6 @@ TIMEZONE_OPTIONS = (
     "Asia/Dubai",
     "Asia/Riyadh",
 )
-
-
-class CustomerCreate(BaseModel):
-    phone: str
-    name: str = Field(min_length=1, max_length=255)
-    operator_code: str | None = Field(default=None, min_length=1, max_length=50)
-    service_code: str | None = Field(default=None, min_length=1, max_length=50)
-
-    @field_validator("phone")
-    @classmethod
-    def validate_phone(cls, phone: str) -> str:
-        return validate_syrian_phone(phone)
-
-
-class CustomerResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    phone: str
-    name: str
-    balance_cents: int
-
-
-class CustomerUpdate(BaseModel):
-    name: str = Field(min_length=1, max_length=255)
-
-    @field_validator("name")
-    @classmethod
-    def validate_name(cls, name: str) -> str:
-        cleaned = name.strip()
-        if not cleaned:
-            raise ValueError("Customer name cannot be empty")
-        return cleaned
-
-
-class CustomerListItem(CustomerResponse):
-    """A customer plus the debt balance aggregated from the debt ledger."""
-
-    debt_cents: int
-
-
-class CustomerDebtCreate(BaseModel):
-    """A debt entry created against a customer id (no phone lookup needed)."""
-
-    amount_cents: int = Field(ge=0, le=9223372036854775807)
-    description: str = Field(default="", max_length=512)
-    type: str = Field(default="charge", pattern="^(charge|payment)$")
-
-
-class CustomerDebtUpdate(BaseModel):
-    """Partial update of an existing debt entry."""
-
-    amount_cents: int | None = Field(default=None, ge=0, le=9223372036854775807)
-    description: str | None = Field(default=None, max_length=512)
-    type: str | None = Field(default=None, pattern="^(charge|payment)$")
-
-
-class CustomerBalanceResponse(BaseModel):
-    total_debt_cents: int
-    total_charges_cents: int
-    total_payments_cents: int
 
 
 class OperatorBalanceResponse(BaseModel):
@@ -270,7 +206,7 @@ class TransactionStatusUpdate(BaseModel):
 class TransactionListItem(BaseModel):
     """A transaction enriched with customer, operator and service labels.
 
-    New sales have no customer link. The optional name is the stored snapshot,
+    The optional name is the stored snapshot,
     never a live customer label or a phone substituted for a name.
     """
 
@@ -280,7 +216,6 @@ class TransactionListItem(BaseModel):
     status: str
     amount_cents: int
     created_at: datetime
-    customer_id: int | None
     customer_phone: str
     customer_name: str | None
     operator_code: str
@@ -307,7 +242,6 @@ class SearchTransactionItem(BaseModel):
     reference: str
     amount_cents: int
     status: str
-    customer_id: int | None
     customer_phone: str
     customer_name: str | None
     operator_code: str
@@ -323,9 +257,8 @@ class SearchOperatorItem(BaseModel):
 
 
 class SearchResults(BaseModel):
-    """Global search response: customers, transactions and operators."""
+    """Global search response: transactions and operators."""
 
-    customers: list[CustomerListItem]
     transactions: list[SearchTransactionItem]
     operators: list[SearchOperatorItem]
 
@@ -378,43 +311,6 @@ class StatsSummary(BaseModel):
     daily: list[StatsDailyRow]
 
 
-class DebtLedgerCreate(BaseModel):
-    customer_phone: str
-    amount_cents: int = Field(ge=0)
-    description: str = Field(default="", max_length=512)
-    type: str = Field(default="charge", pattern="^(charge|payment)$")
-
-    @field_validator("customer_phone")
-    @classmethod
-    def validate_customer_phone(cls, phone: str) -> str:
-        return validate_syrian_phone(phone)
-
-
-class DebtLedgerResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    customer_phone: str
-    amount_cents: int
-    description: str
-    type: str
-    created_at: datetime
-
-
-# --- Cash Register Models ---
-
-
-class DebtPaymentCreate(BaseModel):
-    customer_phone: str
-    amount_cents: int = Field(ge=0)
-    description: str = Field(default="")
-
-    @field_validator("customer_phone")
-    @classmethod
-    def validate_customer_phone(cls, phone: str) -> str:
-        return validate_syrian_phone(phone)
-
-
 class CashRegisterCreate(BaseModel):
     opening_balance_cents: int = Field(ge=0, default=0)
 
@@ -433,10 +329,8 @@ class CashRegisterResponse(BaseModel):
 class RegisterSummary(BaseModel):
     opening_balance_cents: int
     cash_collected_cents: int
-    debt_collected_cents: int
     closing_balance_cents: int | None
     transaction_count: int
-    debt_payment_count: int
 class CurrencyDenominationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -470,13 +364,6 @@ async def pos_page(request: Request, db: DbSession, lang: str = "en") -> HTMLRes
         context={"lang": language, "currency_denomination": denom, "pos_sims": pos_sims},
         headers={"Cache-Control": "no-store"},
     )
-
-@app.get("/settlement", response_class=HTMLResponse)
-async def settlement_page(request: Request, db: DbSession, lang: str = "en") -> HTMLResponse:
-    language = lang if lang in {"en", "ar"} else "en"
-    denom = await db.scalar(select(CurrencyDenomination).where(CurrencyDenomination.is_active == True))
-    return templates.TemplateResponse(request=request, name="settlement.html", context={"lang": language, "currency_denomination": denom})
-
 
 @app.get("/transactions", response_class=HTMLResponse)
 async def transactions_page(request: Request, db: DbSession, lang: str = "en") -> HTMLResponse:
@@ -579,56 +466,35 @@ async def global_search(
     db: DbSession,
     q: Annotated[str | None, Query(max_length=255)] = None,
 ) -> SearchResults:
-    """Global search across customers, transactions and operators.
+    """Global search across transactions and operators.
 
-    Matches customers by name or phone fragment, transactions by reference or
-    customer phone fragment, and operators by code or name fragment. Each
+    Matches transactions by reference, snapshot name or phone fragment,
+    and operators by code or name fragment. Each
     section is limited to 10 results; an empty query returns empty sections.
     """
     query = (q or "").strip()
     if not query:
-        return SearchResults(customers=[], transactions=[], operators=[])
+        return SearchResults(transactions=[], operators=[])
     like = f"%{query}%"
 
-    debt = _debt_totals_by_customer()
-    customer_rows = await db.execute(
-        select(
-            Customer.id,
-            Customer.phone,
-            Customer.name,
-            Customer.balance_cents,
-            func.coalesce(debt.c.debt_cents, 0).label("debt_cents"),
-        )
-        .outerjoin(debt, debt.c.customer_id == Customer.id)
-        .where(or_(Customer.phone.ilike(like), Customer.name.ilike(like)))
-        .order_by(Customer.name, Customer.id)
-        .limit(10)
-    )
-    customers = [CustomerListItem(**row._mapping) for row in customer_rows.all()]
-
-    # The customer join is an outer join and the phone match covers the row's
-    # own phone, so a one-time sale is searchable by reference and by number.
-    customer_phone_label = func.coalesce(Transaction.customer_phone, Customer.phone)
     transaction_rows = await db.execute(
         select(
             Transaction.id,
             Transaction.reference,
             Transaction.amount_cents,
             Transaction.status,
-            Transaction.customer_id.label("customer_id"),
-            customer_phone_label.label("customer_phone"),
+            Transaction.customer_phone.label("customer_phone"),
             Transaction.customer_name.label("customer_name"),
             Operator.code.label("operator_code"),
             Operator.name.label("operator_name"),
         )
         .select_from(Transaction)
-        .outerjoin(Customer, Transaction.customer_id == Customer.id)
         .join(Service, Transaction.service_id == Service.id)
         .join(Operator, Service.operator_id == Operator.id)
         .where(
             or_(
                 Transaction.reference.ilike(like),
-                customer_phone_label.ilike(like),
+                Transaction.customer_phone.ilike(like),
                 Transaction.customer_name.ilike(like),
             ),
             Transaction.deleted_at.is_(None),
@@ -651,7 +517,7 @@ async def global_search(
     )
     operators = [SearchOperatorItem(**row._mapping) for row in operator_rows.all()]
 
-    return SearchResults(customers=customers, transactions=transactions, operators=operators)
+    return SearchResults(transactions=transactions, operators=operators)
 
 
 @app.get("/api/stats/summary", response_model=StatsSummary)
@@ -821,63 +687,6 @@ async def stats_summary(
     )
 
 
-def _debt_totals_by_customer() -> Subquery:
-    """Aggregate DebtLedger into (customer_id, charges - payments) per customer."""
-    charges = func.sum(case((DebtLedger.type == "charge", DebtLedger.amount_cents), else_=0))
-    payments = func.sum(case((DebtLedger.type == "payment", DebtLedger.amount_cents), else_=0))
-    return (
-        select(
-            DebtLedger.customer_id.label("customer_id"),
-            (charges - payments).label("debt_cents"),
-        )
-        .group_by(DebtLedger.customer_id)
-        .subquery()
-    )
-
-
-async def list_customers_with_debt(db: AsyncSession) -> list[CustomerListItem]:
-    """Return every customer with its debt balance (charges minus payments)."""
-    debt = _debt_totals_by_customer()
-    rows = await db.execute(
-        select(
-            Customer.id,
-            Customer.phone,
-            Customer.name,
-            Customer.balance_cents,
-            func.coalesce(debt.c.debt_cents, 0).label("debt_cents"),
-        )
-        .outerjoin(debt, debt.c.customer_id == Customer.id)
-        .order_by(Customer.name, Customer.id)
-    )
-    return [
-        CustomerListItem(
-            id=row.id,
-            phone=row.phone,
-            name=row.name,
-            balance_cents=row.balance_cents,
-            debt_cents=int(row.debt_cents or 0),
-        )
-        for row in rows.all()
-    ]
-
-
-@app.get("/customers", response_class=HTMLResponse)
-async def customers_page(request: Request, db: DbSession, lang: str = "en") -> HTMLResponse:
-    language = lang if lang in {"en", "ar"} else "en"
-    customers = await list_customers_with_debt(db)
-    return templates.TemplateResponse(
-        request=request,
-        name="customers.html",
-        context={
-            "lang": language,
-            "nav_page": "customers",
-            "customers": customers,
-            "total_debt_cents": sum(customer.debt_cents for customer in customers),
-            "total_balance_cents": sum(customer.balance_cents for customer in customers),
-        },
-    )
-
-
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -968,327 +777,6 @@ async def commission_calculation(
         return await get_commission_for_transaction(db, amount_cents)
     except ValueError as exc:
         raise HTTPException(status_code=500, detail="Invalid stored commission rate") from exc
-
-
-@app.get("/api/customers/lookup", response_model=CustomerResponse)
-async def lookup_customer(
-    db: DbSession,
-    phone: Annotated[str, Query()],
-) -> Customer:
-    try:
-        phone = validate_syrian_phone(phone)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    customer = await db.scalar(select(Customer).where(Customer.phone == phone))
-    if customer is None:
-        raise HTTPException(status_code=404, detail="Customer not found")
-    return customer
-
-
-@app.get("/api/customers/lookup-by-name", response_model=CustomerResponse)
-async def lookup_customer_by_name(
-    db: DbSession,
-    name: Annotated[str, Query(min_length=1, max_length=255)],
-) -> Customer:
-    """Exact (case-insensitive) name match for POS auto-recognition."""
-    customer = await db.scalar(
-        select(Customer)
-        .where(func.lower(Customer.name) == name.strip().lower())
-        .order_by(Customer.id)
-        .limit(1)
-    )
-    if customer is None:
-        raise HTTPException(status_code=404, detail="Customer not found")
-    return customer
-
-
-@app.post("/api/customers", response_model=CustomerResponse)
-async def create_customer(data: CustomerCreate, db: DbSession) -> Customer:
-    operator = None
-    if data.operator_code is not None:
-        operator = await db.scalar(select(Operator).where(Operator.code == data.operator_code))
-        if operator is None:
-            raise HTTPException(status_code=422, detail="Unknown operator code")
-    if data.service_code is not None:
-        service_statement = select(Service).where(Service.code == data.service_code)
-        if operator is not None:
-            # The service must belong to the given operator when both are provided.
-            service_statement = service_statement.where(Service.operator_id == operator.id)
-        service = await db.scalar(service_statement.limit(1))
-        if service is None:
-            raise HTTPException(status_code=422, detail="Unknown service code")
-    customer = Customer(
-        phone=data.phone,
-        name=data.name,
-        operator_code=data.operator_code,
-        service_code=data.service_code,
-    )
-    db.add(customer)
-    try:
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        existing = await db.scalar(select(Customer).where(Customer.phone == data.phone))
-        if existing is not None:
-            raise HTTPException(status_code=409, detail="Customer phone already exists")
-        raise
-    await db.refresh(customer)
-    return customer
-
-
-@app.get("/api/customers", response_model=list[CustomerListItem])
-async def list_customers(db: DbSession) -> list[CustomerListItem]:
-    """List every customer with its aggregated debt balance."""
-    return await list_customers_with_debt(db)
-
-
-@app.get("/api/customers/search", response_model=list[CustomerListItem])
-async def search_customers(
-    q: Annotated[str, Query(min_length=1, max_length=255)],
-    db: DbSession,
-) -> list[CustomerListItem]:
-    """Search customers by phone or name fragment for POS recognition."""
-    debt = _debt_totals_by_customer()
-    like = f"%{q}%"
-    rows = await db.execute(
-        select(
-            Customer.id,
-            Customer.phone,
-            Customer.name,
-            Customer.balance_cents,
-            func.coalesce(debt.c.debt_cents, 0).label("debt_cents"),
-        )
-        .outerjoin(debt, debt.c.customer_id == Customer.id)
-        .where(Customer.phone.ilike(like) | Customer.name.ilike(like))
-        .order_by(Customer.name, Customer.id)
-        .limit(20)
-    )
-    return [
-        CustomerListItem(
-            id=row.id,
-            phone=row.phone,
-            name=row.name,
-            balance_cents=row.balance_cents,
-            debt_cents=int(row.debt_cents or 0),
-        )
-        for row in rows.all()
-    ]
-
-
-@app.put("/api/customers/{customer_id}", response_model=CustomerResponse)
-async def update_customer(customer_id: int, data: CustomerUpdate, db: DbSession) -> Customer:
-    """Rename a customer. Phone numbers are the ledger key and stay immutable."""
-    customer = await db.get(Customer, customer_id)
-    if customer is None:
-        raise HTTPException(status_code=404, detail="Customer not found")
-    customer.name = data.name
-    await db.commit()
-    await db.refresh(customer)
-    return customer
-
-
-@app.delete("/api/customers/{customer_id}", status_code=204, response_class=Response)
-async def delete_customer(customer_id: int, db: DbSession) -> Response:
-    """Remove a customer together with its transactions and debt ledger rows.
-
-    Removed failed rows are refused: a tombstoned transaction is the audit trail
-    of a sale the seller had already committed (its operator debit and profit
-    ledger row stay on disk), so deleting the customer — which would cascade to
-    the transaction and ledger rows — is not allowed. Nothing is deleted when
-    that guard trips.
-    """
-    customer = await db.get(Customer, customer_id)
-    if customer is None:
-        raise HTTPException(status_code=404, detail="Customer not found")
-    tombstoned = await db.scalar(
-        select(func.count())
-        .select_from(Transaction)
-        .where(
-            Transaction.customer_id == customer_id,
-            Transaction.deleted_at.is_not(None),
-        )
-    )
-    if tombstoned:
-        raise HTTPException(
-            status_code=409,
-            detail="Customer keeps removed transactions for the audit trail",
-        )
-    # v1.0.4 Slice 4.1: a sale charged to a SIM card is referenced by the
-    # append-only SIM ledger and can never be deleted. Every sale this build
-    # commits keeps its own phone (and is unlinked below), so this trips only
-    # for a hand-edited row; refuse instead of failing on the ledger's guard.
-    sim_history = await db.scalar(
-        select(func.count())
-        .select_from(Transaction)
-        .where(
-            Transaction.customer_id == customer_id,
-            Transaction.customer_phone.is_(None),
-            Transaction.sim_card_id.is_not(None),
-        )
-    )
-    if sim_history:
-        raise HTTPException(
-            status_code=409,
-            detail="Customer keeps SIM card sales for the audit trail",
-        )
-    # Dependent rows are removed explicitly: SQLite enforces the foreign keys,
-    # and the customer row owns this history once the customer is deleted.
-    #
-    # A transaction that already records its own phone (every sale committed by
-    # this build) does not have to disappear with the customer: it is a
-    # committed sale with its own accounting, so it is unlinked instead and
-    # stays in history as a one-time sale. Rows imported from an older build
-    # carry no phone of their own; their history lives on the customer record,
-    # so those are removed with it, exactly as before.
-    dropped_ids = select(Transaction.id).where(
-        Transaction.customer_id == customer_id,
-        Transaction.customer_phone.is_(None),
-    )
-    await db.execute(
-        sql_delete(ProfitLedger).where(ProfitLedger.transaction_id.in_(dropped_ids))
-    )
-    await db.execute(sql_delete(DebtLedger).where(DebtLedger.customer_id == customer_id))
-    await db.execute(
-        sql_delete(Transaction).where(
-            Transaction.customer_id == customer_id,
-            Transaction.customer_phone.is_(None),
-        )
-    )
-    await db.execute(
-        update(Transaction)
-        .where(
-            Transaction.customer_id == customer_id,
-            Transaction.customer_phone.is_not(None),
-        )
-        .values(customer_id=None)
-    )
-    await db.delete(customer)
-    await db.commit()
-    return Response(status_code=204)
-
-
-# --- Customer-scoped debt management ---
-
-
-def _debt_entry_response(entry: DebtLedger, customer: Customer) -> DebtLedgerResponse:
-    return DebtLedgerResponse(
-        id=entry.id,
-        customer_phone=customer.phone,
-        amount_cents=entry.amount_cents,
-        description=entry.description,
-        type=entry.type,
-        created_at=entry.created_at,
-    )
-
-
-async def _debt_totals_for(db: AsyncSession, customer_id: int) -> tuple[int, int]:
-    """Return (total_charges_cents, total_payments_cents) for one customer."""
-    row = (
-        await db.execute(
-            select(
-                func.coalesce(
-                    func.sum(case((DebtLedger.type == "charge", DebtLedger.amount_cents), else_=0)),
-                    0,
-                ),
-                func.coalesce(
-                    func.sum(case((DebtLedger.type == "payment", DebtLedger.amount_cents), else_=0)),
-                    0,
-                ),
-            ).where(DebtLedger.customer_id == customer_id)
-        )
-    ).one()
-    return int(row[0] or 0), int(row[1] or 0)
-
-
-async def _get_customer_or_404(db: AsyncSession, customer_id: int) -> Customer:
-    customer = await db.get(Customer, customer_id)
-    if customer is None:
-        raise HTTPException(status_code=404, detail="Customer not found")
-    return customer
-
-
-async def _get_debt_entry_or_404(
-    db: AsyncSession, customer_id: int, debt_id: int
-) -> DebtLedger:
-    entry = await db.scalar(
-        select(DebtLedger).where(
-            DebtLedger.id == debt_id,
-            DebtLedger.customer_id == customer_id,
-        )
-    )
-    if entry is None:
-        raise HTTPException(status_code=404, detail="Debt entry not found")
-    return entry
-
-
-@app.get("/api/customers/{customer_id}/balance", response_model=CustomerBalanceResponse)
-async def get_customer_balance(customer_id: int, db: DbSession) -> CustomerBalanceResponse:
-    """Per-customer debt summary addressed by customer id."""
-    await _get_customer_or_404(db, customer_id)
-    charges, payments = await _debt_totals_for(db, customer_id)
-    return CustomerBalanceResponse(
-        total_debt_cents=charges - payments,
-        total_charges_cents=charges,
-        total_payments_cents=payments,
-    )
-
-
-@app.post("/api/customers/{customer_id}/debt", response_model=DebtLedgerResponse)
-async def add_customer_debt(
-    customer_id: int, data: CustomerDebtCreate, db: DbSession
-) -> DebtLedgerResponse:
-    """Record a manual charge or payment against an existing customer."""
-    customer = await _get_customer_or_404(db, customer_id)
-
-    register_id = None
-    if data.type == "payment":
-        # Mirror /api/debt/payment: payments belong to the open register if any.
-        register = await db.scalar(select(CashRegister).where(CashRegister.status == "open"))
-        register_id = register.id if register is not None else None
-
-    entry = DebtLedger(
-        customer_id=customer.id,
-        register_id=register_id,
-        amount_cents=data.amount_cents,
-        description=data.description,
-        type=data.type,
-    )
-    db.add(entry)
-    await db.commit()
-    await db.refresh(entry)
-    return _debt_entry_response(entry, customer)
-
-
-@app.put("/api/customers/{customer_id}/debt/{debt_id}", response_model=DebtLedgerResponse)
-async def update_customer_debt(
-    customer_id: int, debt_id: int, data: CustomerDebtUpdate, db: DbSession
-) -> DebtLedgerResponse:
-    """Edit the amount, description and/or type of one debt entry."""
-    customer = await _get_customer_or_404(db, customer_id)
-    entry = await _get_debt_entry_or_404(db, customer_id, debt_id)
-
-    if data.amount_cents is not None:
-        entry.amount_cents = data.amount_cents
-    if data.description is not None:
-        entry.description = data.description
-    if data.type is not None:
-        entry.type = data.type
-    await db.commit()
-    await db.refresh(entry)
-    return _debt_entry_response(entry, customer)
-
-
-@app.delete("/api/customers/{customer_id}/debt/{debt_id}", status_code=204, response_class=Response)
-async def delete_customer_debt(customer_id: int, debt_id: int, db: DbSession) -> Response:
-    """Remove a single debt entry from a customer's ledger."""
-    await _get_customer_or_404(db, customer_id)
-    entry = await _get_debt_entry_or_404(db, customer_id, debt_id)
-    await db.delete(entry)
-    await db.commit()
-    return Response(status_code=204)
-
-
-# --- Operator balance endpoints ---
 
 
 @app.get("/api/operators/balance", response_model=list[OperatorBalanceResponse])
@@ -1390,12 +878,11 @@ async def _committed_transaction(
         await db.execute(
             select(
                 Transaction,
-                func.coalesce(Transaction.customer_phone, Customer.phone).label("customer_phone"),
+                Transaction.customer_phone.label("customer_phone"),
                 Operator.code.label("operator_code"),
                 Service.code.label("service_code"),
             )
             .select_from(Transaction)
-            .outerjoin(Customer, Transaction.customer_id == Customer.id)
             .join(Service, Transaction.service_id == Service.id)
             .join(Operator, Service.operator_id == Operator.id)
             .where(Transaction.idempotency_key == data.commit_key)
@@ -1418,109 +905,6 @@ async def _committed_transaction(
             detail="This commit key already belongs to a different sale",
         )
     return transaction
-
-
-#: Reported when several records carry the typed name and the phone cannot pick
-#: one, so the sale would have to be guessed.
-AMBIGUOUS_CUSTOMER_NAME = (
-    "More than one customer has this name; enter the phone number that belongs to this customer"
-)
-#: Reported when the typed phone already belongs to a different person.
-PHONE_BELONGS_TO_ANOTHER_CUSTOMER = (
-    "That phone number belongs to a different customer; check the name or open the customer page"
-)
-#: Reported when the name matches a customer but the typed number does not: it
-#: may be a new number for the same person or a different person entirely.
-NAME_DOES_NOT_MATCH_CUSTOMER_PHONE = (
-    "A customer with this name is registered under a different number; "
-    "check the number or open the customer page"
-)
-
-
-def _store_sale_preferences(
-    customer: Customer, operator_code: str, service_code: str
-) -> None:
-    """Remember the operator/service a named customer's sale used.
-
-    Only gaps are filled: a value the customer already has is kept, so a
-    preference the seller chose on the customer page is never overridden.
-    """
-    if customer.operator_code is None:
-        customer.operator_code = operator_code
-    if customer.service_code is None:
-        customer.service_code = service_code
-
-
-async def _resolve_sale_customer(
-    db: AsyncSession, name: str, phone: str, operator_code: str, service_code: str
-) -> tuple[Customer | None, str | None]:
-    """Link a named sale to the right customer, registering a new regular one.
-
-    Returns ``(customer, conflict)``. The seller's typed name identifies a
-    repeat customer; the typed phone is only used to register a new record,
-    never to overrule an existing person's number:
-
-    * no record with that name -> the phone is registered as a named regular
-      customer, with the sale's operator/service stored for next time
-      (race-free get-or-create);
-    * one record with that name and that phone -> reuse it and fill any gap in
-      its stored preferences;
-    * more than one record with that name -> only the row whose phone matches
-      is unambiguous; otherwise the name is ambiguous and nothing is written;
-    * the typed phone already belongs to somebody else -> the sale would be
-      attributed to the wrong person, so it is refused instead of guessed.
-
-    A conflict never writes anything: the caller gets the problem, not a
-    half-applied sale.
-    """
-    rows = (
-        await db.scalars(
-            select(Customer)
-            .where(func.lower(Customer.name) == name.lower())
-            .order_by(Customer.id)
-            .limit(2)
-        )
-    ).all()
-    if not rows:
-        holder = await db.scalar(select(Customer).where(Customer.phone == phone))
-        if holder is not None:
-            if holder.name.strip().lower() != name.lower():
-                # This number is somebody else's; the new name cannot take it.
-                return None, PHONE_BELONGS_TO_ANOTHER_CUSTOMER
-            # A concurrent commit just registered this sale's customer.
-            _store_sale_preferences(holder, operator_code, service_code)
-            return holder, None
-        await db.execute(
-            sqlite_insert(Customer)
-            .values(
-                phone=phone,
-                name=name,
-                operator_code=operator_code,
-                service_code=service_code,
-            )
-            .on_conflict_do_nothing(index_elements=[Customer.phone])
-        )
-        customer = await db.scalar(select(Customer).where(Customer.phone == phone))
-        if customer is None:  # pragma: no cover - the row exists after the insert
-            raise HTTPException(status_code=409, detail="Customer could not be resolved; retry")
-        return customer, None
-
-    if len(rows) > 1:
-        matched = [row for row in rows if row.phone == phone]
-        if len(matched) != 1:
-            return None, AMBIGUOUS_CUSTOMER_NAME
-        _store_sale_preferences(matched[0], operator_code, service_code)
-        return matched[0], None
-
-    customer = rows[0]
-    if customer.phone != phone:
-        # The name points at a record whose number is different: the typed
-        # number is either a new number for them or somebody else's. Neither
-        # can be assumed, so the sale is not attached and the record is left
-        # exactly as it is (the existing number is never overwritten).
-        return None, NAME_DOES_NOT_MATCH_CUSTOMER_PHONE
-    _store_sale_preferences(customer, operator_code, service_code)
-    return customer, None
 
 
 @app.post("/api/transactions/preview", response_model=TransactionPreviewResponse)
@@ -1624,7 +1008,6 @@ async def create_transaction(
             raise HTTPException(status_code=400, detail=sims.INSUFFICIENT_SIM_BALANCE)
 
         transaction = Transaction(
-            customer_id=None,
             customer_name=data.customer_name,
             service_id=service.id,
             amount_cents=data.amount_cents,
@@ -1799,8 +1182,7 @@ _TRANSACTION_LABELS = (
     Transaction.status,
     Transaction.amount_cents,
     Transaction.created_at,
-    Transaction.customer_id.label("customer_id"),
-    func.coalesce(Transaction.customer_phone, Customer.phone).label("customer_phone"),
+    Transaction.customer_phone.label("customer_phone"),
     Transaction.customer_name.label("customer_name"),
     Operator.code.label("operator_code"),
     Operator.name.label("operator_name"),
@@ -1846,19 +1228,14 @@ def _list_items(rows, context: auth.AuthContext) -> list[TransactionListItem]:
 
 
 def _transaction_list_statement():
-    """Base select of live transactions joined with customer/operator/service labels.
+    """Live sales with operator/service labels and optional performer/SIM labels.
 
-    The customer join is an OUTER join: a committed one-time sale has no
-    customer record, and it must never disappear from history, filters or
-    reports because of that. Removed (tombstoned) rows are hidden from the list
-    and the operator page; the row itself and its profit ledger entry stay on
-    disk for auditing. The performer join is an OUTER join too: legacy rows
-    have no performer and stay listed.
+    Removed rows remain on disk for audit but are hidden from reports. Legacy
+    rows without a performer or SIM remain visible through the outer joins.
     """
     return (
         select(*_TRANSACTION_LABELS)
         .select_from(Transaction)
-        .outerjoin(Customer, Transaction.customer_id == Customer.id)
         .outerjoin(User, Transaction.performed_by_user_id == User.id)
         .outerjoin(SimCard, Transaction.sim_card_id == SimCard.id)
         .join(Service, Transaction.service_id == Service.id)
@@ -1895,7 +1272,7 @@ async def list_transactions(
         statement = statement.where(Transaction.status == status)
     if customer_phone is not None:
         statement = statement.where(
-            func.coalesce(Transaction.customer_phone, Customer.phone).ilike(
+            Transaction.customer_phone.ilike(
                 f"%{customer_phone}%"
             )
         )
@@ -1903,161 +1280,6 @@ async def list_transactions(
         statement = statement.where(Transaction.performed_by_user_id == performed_by)
     rows = await db.execute(statement.order_by(Transaction.created_at.desc(), Transaction.id.desc()))
     return _list_items(rows.all(), _auth_context(request))
-
-
-# --- Debt Ledger Endpoints ---
-
-
-@app.post("/api/debt/charge", response_model=DebtLedgerResponse)
-async def create_debt_charge(data: DebtLedgerCreate, db: DbSession) -> DebtLedger:
-    """Create a debt charge for a customer (lookup by phone, create if not exists)."""
-    try:
-        phone = validate_syrian_phone(data.customer_phone)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    customer = await db.scalar(select(Customer).where(Customer.phone == phone))
-    if customer is None:
-        # Create customer with phone as name if not exists
-        customer = Customer(phone=phone, name=phone)
-        db.add(customer)
-        await db.flush()  # Get the ID
-
-    debt_entry = DebtLedger(
-        customer_id=customer.id,
-        amount_cents=data.amount_cents,
-        description=data.description,
-        type=data.type,
-    )
-    db.add(debt_entry)
-    await db.commit()
-    await db.refresh(debt_entry)
-
-    # Build response with customer_phone
-    return DebtLedgerResponse(
-        id=debt_entry.id,
-        customer_phone=customer.phone,
-        amount_cents=debt_entry.amount_cents,
-        description=debt_entry.description,
-        type=debt_entry.type,
-        created_at=debt_entry.created_at,
-    )
-
-
-@app.get("/api/debt/ledger", response_model=list[DebtLedgerResponse])
-async def get_debt_ledger(
-    db: DbSession,
-    customer_phone: Annotated[str, Query()],
-) -> list[DebtLedgerResponse]:
-    """List debt ledger entries for a customer."""
-    try:
-        phone = validate_syrian_phone(customer_phone)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    customer = await db.scalar(select(Customer).where(Customer.phone == phone))
-    if customer is None:
-        raise HTTPException(status_code=404, detail="Customer not found")
-
-    result = await db.scalars(
-        select(DebtLedger).where(DebtLedger.customer_id == customer.id).order_by(DebtLedger.created_at.desc())
-    )
-    entries = result.all()
-
-    return [
-        DebtLedgerResponse(
-            id=entry.id,
-            customer_phone=customer.phone,
-            amount_cents=entry.amount_cents,
-            description=entry.description,
-            type=entry.type,
-            created_at=entry.created_at,
-        )
-        for entry in entries
-    ]
-
-
-@app.get("/api/debt/summary")
-async def get_debt_summary(
-    db: DbSession,
-    customer_phone: Annotated[str, Query()],
-) -> dict[str, int]:
-    """Return total debt (sum of charges minus payments) for a customer."""
-    try:
-        phone = validate_syrian_phone(customer_phone)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    customer = await db.scalar(select(Customer).where(Customer.phone == phone))
-    if customer is None:
-        raise HTTPException(status_code=404, detail="Customer not found")
-
-    result = await db.scalars(
-        select(DebtLedger).where(DebtLedger.customer_id == customer.id)
-    )
-    entries = result.all()
-
-    total_charges = sum(e.amount_cents for e in entries if e.type == "charge")
-    total_payments = sum(e.amount_cents for e in entries if e.type == "payment")
-    total_debt = total_charges - total_payments
-
-    return {
-        "customer_phone": customer.phone,
-        "total_charges_cents": total_charges,
-        "total_payments_cents": total_payments,
-        "total_debt_cents": total_debt,
-    }
-
-
-# --- Debt Payment Endpoint ---
-
-
-@app.post("/api/debt/payment", response_model=DebtLedgerResponse)
-async def record_debt_payment(
-    data: DebtPaymentCreate,
-    db: DbSession,
-) -> DebtLedger:
-    """Record a debt payment for a customer."""
-    try:
-        phone = validate_syrian_phone(data.customer_phone)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    customer = await db.scalar(select(Customer).where(Customer.phone == phone))
-    if customer is None:
-        # Create customer with phone as name if not exists
-        customer = Customer(phone=phone, name=phone)
-        db.add(customer)
-        await db.flush()
-
-    # Find open register if any
-    register = await db.scalar(
-        select(CashRegister).where(CashRegister.status == "open")
-    )
-
-    debt_entry = DebtLedger(
-        customer_id=customer.id,
-        register_id=register.id if register else None,
-        amount_cents=data.amount_cents,
-        description=data.description,
-        type="payment",
-    )
-    db.add(debt_entry)
-    await db.commit()
-    await db.refresh(debt_entry)
-
-    # Build response with customer_phone
-    return DebtLedgerResponse(
-        id=debt_entry.id,
-        customer_phone=customer.phone,
-        amount_cents=debt_entry.amount_cents,
-        description=debt_entry.description,
-        type=debt_entry.type,
-        created_at=debt_entry.created_at,
-    )
-
-
-# --- Currency Denomination Endpoints ---
 
 
 @app.get("/api/currency/denomination", response_model=CurrencyDenominationResponse)
@@ -2160,18 +1382,7 @@ async def close_register(
     transactions = transactions_result.all()
     cash_collected = sum(t.amount_cents for t in transactions)
 
-    # Compute debt collected: sum of DebtLedger payments (type='payment') since register opened
-    debt_result = await db.scalars(
-        select(DebtLedger)
-        .where(
-            DebtLedger.created_at >= register.opened_at,
-            DebtLedger.type == "payment",
-        )
-    )
-    debt_entries = debt_result.all()
-    debt_collected = sum(d.amount_cents for d in debt_entries)
-
-    register.closing_balance_cents = register.opening_balance_cents + cash_collected + debt_collected
+    register.closing_balance_cents = register.opening_balance_cents + cash_collected
     register.status = "closed"
     register.closed_at = datetime.now(timezone.utc)
 
@@ -2214,26 +1425,13 @@ async def get_register_summary(
     transactions = transactions_result.all()
     cash_collected = sum(t.amount_cents for t in transactions)
 
-    # Compute debt collected: sum of DebtLedger payments (type='payment') since register opened
-    debt_result = await db.scalars(
-        select(DebtLedger)
-        .where(
-            DebtLedger.created_at >= register.opened_at,
-            DebtLedger.type == "payment",
-        )
-    )
-    debt_entries = debt_result.all()
-    debt_collected = sum(d.amount_cents for d in debt_entries)
-
-    closing_balance = register.opening_balance_cents + cash_collected + debt_collected
+    closing_balance = register.opening_balance_cents + cash_collected
 
     return RegisterSummary(
         opening_balance_cents=register.opening_balance_cents,
         cash_collected_cents=cash_collected,
-        debt_collected_cents=debt_collected,
         closing_balance_cents=closing_balance if register.status == "closed" else None,
         transaction_count=len(transactions),
-        debt_payment_count=len(debt_entries),
     )
 
 

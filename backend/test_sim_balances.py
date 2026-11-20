@@ -17,6 +17,8 @@ Every scenario runs against a disposable database under ``tmp_path``.
 """
 from __future__ import annotations
 
+from backend.historical_test_support import current_transaction_columns
+
 import asyncio
 import hashlib
 import json
@@ -360,11 +362,14 @@ def test_fresh_install_matches_an_upgraded_schema(env, tmp_path, entry) -> None:
     finally:
         asyncio.run(engine.dispose())
     upgraded_shape = shape(str(upgraded))
-    sim_column = [row for row in upgraded_shape["transactions"] if row[1] == "sim_card_id"]
-    assert sim_column == [(13, "sim_card_id", "INTEGER", 0, None, 0)]
+    for shape_ in (fresh_shape, upgraded_shape):
+        shape_["transactions"] = current_transaction_columns(shape_["transactions"])
+        shape_["fk"] = [row for row in shape_["fk"] if row[0] != "customers"]
+    sim_column = [row for row in upgraded_shape["transactions"] if row[0] == "sim_card_id"]
+    assert sim_column == [("sim_card_id", "INTEGER", 0, None, 0)]
     assert ("sim_cards", "sim_card_id", "id", "NO ACTION", "RESTRICT", "NONE") in upgraded_shape["fk"]
     assert upgraded_shape["fk"] == fresh_shape["fk"]
-    assert [row[1:] for row in upgraded_shape["transactions"]] == [row[1:] for row in fresh_shape["transactions"]]
+    assert upgraded_shape["transactions"] == fresh_shape["transactions"]
     assert {t: upgraded_shape[t] for t in NEW_TABLES} == {t: fresh_shape[t] for t in NEW_TABLES}
     assert upgraded_shape["triggers"] == fresh_shape["triggers"]
     assert {name for name, _sql in fresh_shape["triggers"]} == {"sim_ledger_no_update", "sim_ledger_no_delete"}
@@ -934,8 +939,8 @@ def test_a_legacy_sale_without_sim_is_never_refunded_to_a_guessed_sim(shop) -> N
 
     async def legacy(session):
         await session.execute(text(
-            "INSERT INTO transactions (id, customer_id, service_id, amount_cents, status, ussd_string, reference,"
-            " created_at, customer_phone) VALUES (900, NULL, 1, 5000, 'successful', '*legacy#', 'TXN-legacy-900',"
+            "INSERT INTO transactions (id, service_id, amount_cents, status, ussd_string, reference,"
+            " created_at, customer_phone) VALUES (900, 1, 5000, 'successful', '*legacy#', 'TXN-legacy-900',"
             " '2026-01-02 10:00:00', '0944123456')"))
         await session.execute(text(
             "INSERT INTO profit_ledger (transaction_id, operator_code, amount_cents, commission_cents, profit_cents,"

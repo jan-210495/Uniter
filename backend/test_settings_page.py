@@ -304,7 +304,7 @@ def test_settings_page_shows_timezone_select(client: TestClient) -> None:
 
 
 def test_base_template_renders_burger_menu_and_drawer(client: TestClient) -> None:
-    for path in ("/pos", "/settings", "/customers"):
+    for path in ("/pos", "/settings"):
         english = client.get(path)
         arabic = client.get(path, params={"lang": "ar"})
         assert english.status_code == arabic.status_code == 200
@@ -321,7 +321,7 @@ def test_base_template_renders_burger_menu_and_drawer(client: TestClient) -> Non
             assert 'id="app-drawer-backdrop"' in rendered
             assert 'id="app-drawer-close"' in rendered
             # Every page link plus the language switcher inside the drawer.
-            for href in ("/pos", "/settlement", "/transactions", "/customers", "/settings", "/operators"):
+            for href in ("/pos", "/transactions", "/settings", "/operators"):
                 assert f'href="{href}"' in rendered
             assert "?lang=en" in rendered and "?lang=ar" in rendered
             # Escape closes; the drawer slides from the start edge.

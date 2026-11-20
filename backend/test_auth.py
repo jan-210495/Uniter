@@ -229,17 +229,17 @@ def test_pending_login_forces_an_immediate_password_change(client, pending):
     assert 'name="new_password"' in page.text
     token = CSRF_FIELD.search(page.text).group(1)
 
-    for path in ("/pos", "/settings", "/customers", "/operators/mtn", "/pos?lang=ar"):
+    for path in ("/pos", "/settings", "/transactions", "/operators/mtn", "/pos?lang=ar"):
         blocked = client.get(path, follow_redirects=False)
         assert blocked.status_code == 303
         assert blocked.headers["location"].startswith("/change-password")
-    for path in ("/api/customers", "/api/transactions", "/api/settings/commission", "/api/search?q=1"):
+    for path in ("/api/operators/balance", "/api/transactions", "/api/settings/commission", "/api/search?q=1"):
         blocked = client.get(path)
         assert blocked.status_code == 403
         assert blocked.json() == {"detail": "Password change required"}
     # Even with a valid CSRF token, state-changing APIs stay closed.
     for method, path, body in (
-        ("POST", "/api/customers", {"phone": "0933123456", "name": "Bypass"}),
+        ("POST", "/api/register/open", {"opening_balance_cents": 0}),
         ("PUT", "/api/settings/timezone", {"timezone": "UTC"}),
         ("POST", "/api/operators/topup", {"operator_code": "mtn", "amount_cents": 100}),
     ):
@@ -279,7 +279,7 @@ def test_changing_password_retires_one_time_credential(client, pending):
     assert after_change and after_change != before_change  # rotated, no fixation
 
     assert client.get("/pos").status_code == 200
-    assert client.get("/api/customers").status_code == 200
+    assert client.get("/api/transactions").status_code == 200
     admin = fresh.users()[0]
     assert admin.must_change_password is False
     assert not auth.verify_password(TEMPORARY, admin.password_hash)
@@ -401,7 +401,7 @@ def test_logout_invalidates_server_side_session(client, fresh):
     assert session_cookie(client) is None
     # Replaying the old cookie no longer authenticates anything.
     assert with_cookie(client, cookie, "/pos").status_code == 303
-    assert with_cookie(client, cookie, "/api/customers").status_code == 401
+    assert with_cookie(client, cookie, "/api/transactions").status_code == 401
 
 
 def test_logout_requires_csrf_token(client, fresh):
@@ -426,7 +426,7 @@ def test_expired_and_idle_sessions_are_rejected(client, monkeypatch):
     real_now = auth.utc_now
     monkeypatch.setattr(auth, "utc_now", lambda: real_now() + auth.SESSION_IDLE_TIMEOUT + timedelta(minutes=1))
     assert client.get("/pos", follow_redirects=False).status_code == 303
-    assert client.get("/api/customers").status_code == 401
+    assert client.get("/api/transactions").status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -436,23 +436,23 @@ def test_expired_and_idle_sessions_are_rejected(client, monkeypatch):
 def test_csrf_rejects_missing_or_invalid_tokens_and_accepts_valid(client):
     complete_bootstrap(client)
     token = page_token(client)
-    body = {"phone": "0933123456", "name": "Customer"}
+    body = {"opening_balance_cents": 100}
 
-    assert client.post("/api/customers", json=body).status_code == 403
-    assert client.post("/api/customers", json=body, headers={auth.CSRF_HEADER: ""}).status_code == 403
-    assert client.post("/api/customers", json=body, headers={auth.CSRF_HEADER: "forged"}).status_code == 403
-    assert client.post("/api/customers", json=body, headers={auth.CSRF_HEADER: token[:-1]}).status_code == 403
+    assert client.post("/api/register/open", json=body).status_code == 403
+    assert client.post("/api/register/open", json=body, headers={auth.CSRF_HEADER: ""}).status_code == 403
+    assert client.post("/api/register/open", json=body, headers={auth.CSRF_HEADER: "forged"}).status_code == 403
+    assert client.post("/api/register/open", json=body, headers={auth.CSRF_HEADER: token[:-1]}).status_code == 403
     # Rejected requests wrote nothing.
-    assert client.get("/api/customers").json() == []
+    assert client.get("/api/transactions").json() == []
 
     hostile = client.post(
-        "/api/customers", json=body,
+        "/api/register/open", json=body,
         headers={auth.CSRF_HEADER: token, "Origin": "http://evil.example"},
     )
     assert hostile.status_code == 403
 
     accepted = client.post(
-        "/api/customers", json=body,
+        "/api/register/open", json=body,
         headers={auth.CSRF_HEADER: token, "Origin": "http://testserver"},
     )
     assert accepted.status_code == 200
@@ -460,7 +460,7 @@ def test_csrf_rejects_missing_or_invalid_tokens_and_accepts_valid(client):
         "/api/settings/timezone", json={"timezone": "UTC"}, headers={auth.CSRF_HEADER: token}
     ).status_code == 200
     # Safe methods never need the token.
-    assert client.get("/api/customers").status_code == 200
+    assert client.get("/api/transactions").status_code == 200
 
 
 def test_csrf_token_is_bound_to_its_session(fresh):
@@ -470,9 +470,9 @@ def test_csrf_token_is_bound_to_its_session(fresh):
         foreign = page_token(first)
         own = page_token(second)
         assert foreign != own
-        body = {"phone": "0933123456", "name": "Customer"}
-        assert second.post("/api/customers", json=body, headers={auth.CSRF_HEADER: foreign}).status_code == 403
-        assert second.post("/api/customers", json=body, headers={auth.CSRF_HEADER: own}).status_code == 200
+        body = {"opening_balance_cents": 100}
+        assert second.post("/api/register/open", json=body, headers={auth.CSRF_HEADER: foreign}).status_code == 403
+        assert second.post("/api/register/open", json=body, headers={auth.CSRF_HEADER: own}).status_code == 200
 
 
 def test_csrf_rotates_with_the_session(client, pending):
@@ -481,8 +481,8 @@ def test_csrf_rotates_with_the_session(client, pending):
     change_password(client, TEMPORARY, NEW_PASSWORD)
     after = page_token(client)
     assert before != after
-    body = {"phone": "0933123456", "name": "Customer"}
-    assert client.post("/api/customers", json=body, headers={auth.CSRF_HEADER: before}).status_code == 403
+    body = {"opening_balance_cents": 100}
+    assert client.post("/api/register/open", json=body, headers={auth.CSRF_HEADER: before}).status_code == 403
 
 
 def test_login_and_password_forms_require_csrf(client, pending):

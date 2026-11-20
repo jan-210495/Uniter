@@ -25,7 +25,6 @@ ROWS = [
         "status": "successful",
         "amount_cents": 3000,
         "created_at": "2026-11-05T09:00:00+00:00",
-        "customer_id": 1,
         "customer_phone": "0944123456",
         "customer_name": "Ahmad",
         "operator_code": "mtn",
@@ -40,7 +39,6 @@ ROWS = [
         "status": "failed",
         "amount_cents": 2000,
         "created_at": "2026-11-04T09:00:00+00:00",
-        "customer_id": 2,
         "customer_phone": "0933123456",
         "customer_name": "Rami",
         "operator_code": "syriatel",
@@ -55,7 +53,6 @@ ROWS = [
         "status": "successful",
         "amount_cents": 1000,
         "created_at": "2026-11-03T09:00:00+00:00",
-        "customer_id": 1,
         "customer_phone": "0944123456",
         "customer_name": "Ahmad",
         "operator_code": "mtn",
@@ -132,7 +129,7 @@ def test_a_one_time_sale_has_no_customer_name_a_neutral_label() -> None:
     The number is never repeated as the customer name.
     """
     one_time = dict(ROWS[0])
-    one_time.update(id=9, reference="TXN-one-time", customer_id=None,
+    one_time.update(id=9, reference="TXN-one-time",
                     customer_name=None, customer_phone="0955123456")
     result = run([], rows=[one_time])
     entry = row(result, 9)

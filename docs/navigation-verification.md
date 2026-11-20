@@ -1,5 +1,8 @@
 # Slice 2.5 navigation verification
 
+> Historical verification record, not current workflow documentation. Customer,
+> debt and settlement features have since been removed; see README for supported flows.
+
 Base: `9a325f7c910166114b8f2556bb3b2c28222d8116`, fetched target matched exactly.
 Parents: `9ed23f1a1462ad9ed820ab150fdd3f383f97c39a`, `6ff9ce86cbba4c344b3ef40d737e329e8dc8e4d3`.
 Task branch: `task/phase7-slice2.5-navigation`.

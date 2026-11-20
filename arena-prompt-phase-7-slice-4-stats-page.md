@@ -1,5 +1,9 @@
 Phase 7 Slice 4 — Stats page (profit + transaction volume over time)
 
+> Historical planning record, not current feature documentation. Customer/debt
+> directories, settlement, and POS directory suggestions have been removed.
+> The supported sale-name snapshot and manual-phone workflow are documented in README.
+
 Project: /home/jabboud/projects/Uniter
 Branch: create `phase-7-stats-page` from `arena/46c0244b-uniter` (current HEAD on origin, includes slices 7.1a–7.3 commit 0477b6f).
 arena does NOT have access to /home/jabboud/projects/friend-co/ — describe behavior inline.

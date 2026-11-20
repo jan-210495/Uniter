@@ -57,37 +57,19 @@ def test_pos_template_renders_with_base() -> None:
     assert "fetch('/api/settings/commission'" in english
 
 
-def test_pos_template_has_bidirectional_suggestion_dropdown() -> None:
+def test_pos_template_has_manual_phone_and_optional_snapshot_name() -> None:
     environment = Environment(loader=FileSystemLoader("backend/templates"), autoescape=True)
-    template = environment.get_template("pos.html")
-    english = template.render(lang="en")
-    arabic = template.render(lang="ar")
-    for rendered in (english, arabic):
-        # Shared listbox dropdown wired to both inputs.
-        assert 'id="customer-suggestions"' in rendered
-        assert 'role="listbox"' in rendered
-        assert 'id="phone-anchor"' in rendered
-        assert 'id="name-anchor"' in rendered
-        # Both fields are accessible comboboxes driving the same listbox.
+    for lang in ("en", "ar"):
+        rendered = environment.get_template("pos.html").render(lang=lang)
+        assert 'id="phone"' in rendered
+        assert 'type="tel" dir="ltr"' in rendered
+        assert 'autofocus required pattern=' in rendered
         assert 'id="customer-name"' in rendered
-        assert 'role="combobox"' in rendered
-        assert 'aria-expanded="false"' in rendered
-        assert 'aria-controls="customer-suggestions"' in rendered
-        assert 'aria-autocomplete="list"' in rendered
-        # Balance/debt feedback next to the inputs.
-        assert 'id="customer-info"' in rendered
-        assert 'id="customer-info-balance"' in rendered
-        assert 'id="customer-info-debt"' in rendered
-        # Debounced search with request cancellation.
-        assert "new AbortController()" in rendered
-        assert "const DEBOUNCE_MS = 220;" in rendered
-        assert "fetch('/api/customers/search?q=' + encodeURIComponent(query)" in rendered
-        # The old recognition card and datalist are gone.
-        assert "customer-recognized" not in rendered
-        assert "customer-search-results" not in rendered
-        assert "populateDatalist" not in rendered
-    assert "Customer name" in english
-    assert "اسم العميل" in arabic
+        assert 'maxlength="255"' in rendered
+        for removed in ("customer-suggestions", "customer-info", "customer-search-status", "/api/customers"):
+            assert removed not in rendered
+        assert "normalizePhone(phone.value)" in rendered
+        assert "customer_name: saleName" in rendered
 
 
 def test_pos_route_languages(client: TestClient) -> None:
@@ -99,5 +81,5 @@ def test_pos_route_languages(client: TestClient) -> None:
     assert '<html lang="ar" dir="rtl">' in arabic.text
     assert "الشحن السريع" in arabic.text
     assert '<html lang="en" dir="ltr">' in fallback.text
-    assert 'id="customer-suggestions"' in english.text
+    assert 'id="customer-suggestions"' not in english.text
     assert 'id="customer-name"' in arabic.text

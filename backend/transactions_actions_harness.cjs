@@ -188,7 +188,6 @@ const context = {
       if (index >= 0) rows.splice(index, 1);
       return jsonResponse(true, 204, null);
     }
-    if (url.startsWith('/api/customers/search')) return jsonResponse(true, 200, []);
     return jsonResponse(true, 200, {});
   },
 };

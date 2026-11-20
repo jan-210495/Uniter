@@ -13,6 +13,8 @@ foreign key, an extra column, ``WITHOUT ROWID``, unknown statuses, injected
 failures and two concurrent starts.
 """
 
+from backend.historical_test_support import install_historical_directory, current_transaction_columns
+
 import asyncio
 
 import pytest
@@ -21,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from backend import database
-from backend.database import Base, Customer, ProfitLedger, Transaction, enable_sqlite_foreign_keys
+from backend.database import Base, ProfitLedger, Transaction, enable_sqlite_foreign_keys
 from backend.migrations import SchemaUpgradeError, migrate_transaction_lifecycle
 from backend.seed import seed_data
 
@@ -54,9 +56,9 @@ async def _legacy_rows(engine) -> None:
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        await install_historical_directory(connection, with_customer=True)
     async with sessions() as session:
         await seed_data(session)
-        session.add(Customer(phone="0944123456", name="Ahmad"))
         await session.commit()
 
     async with engine.connect() as connection:
@@ -383,10 +385,10 @@ async def _build_with(engine, statements) -> None:
     """Create the current schema, seed it, then swap in a legacy transactions table."""
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        await install_historical_directory(connection, with_customer=True)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     async with sessions() as session:
         await seed_data(session)
-        session.add(Customer(phone="0944123456", name="Ahmad"))
         await session.commit()
     async with engine.connect() as connection:
         await _install_legacy(connection, statements)
@@ -577,10 +579,10 @@ def test_upgraded_schema_matches_a_freshly_created_database(tmp_path) -> None:
     # Column order, types, NOT NULL, DEFAULTs and primary keys match exactly.
     # The v1.0.5 snapshot is fresh-install-only; historical migrations stay unchanged.
     assert created["columns"][-1][1:4] == ("customer_name", "VARCHAR(255)", 0)
-    assert migrated["columns"] == created["columns"][:-1]
+    assert current_transaction_columns(migrated["columns"]) == current_transaction_columns(created["columns"][:-1])
     # Same foreign keys, same unique columns, same index shapes (autoindex names
     # may be numbered differently, so they are compared by uniqueness/columns).
-    assert migrated["foreign_keys"] == created["foreign_keys"]
+    assert [row for row in migrated["foreign_keys"] if row[1] != "customers"] == created["foreign_keys"]
     assert migrated["index_columns"] == created["index_columns"]
     assert sorted(entry[2] for entry in migrated["indexes"]) == sorted(
         entry[2] for entry in created["indexes"]
@@ -1211,8 +1213,8 @@ def test_widened_schema_matches_a_freshly_created_database(tmp_path) -> None:
 
     # The v1.0.5 snapshot is fresh-install-only; historical migrations stay unchanged.
     assert created["columns"][-1][1:4] == ("customer_name", "VARCHAR(255)", 0)
-    assert migrated["columns"] == created["columns"][:-1]
-    assert migrated["foreign_keys"] == created["foreign_keys"]
+    assert current_transaction_columns(migrated["columns"]) == current_transaction_columns(created["columns"][:-1])
+    assert [row for row in migrated["foreign_keys"] if row[1] != "customers"] == created["foreign_keys"]
 
 
 def test_widening_is_idempotent(tmp_path) -> None:

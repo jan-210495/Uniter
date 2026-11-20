@@ -1,5 +1,9 @@
 # Uniter Project Roadmap
 
+> Historical planning record, not current feature documentation. Customer/debt
+> directories, settlement, and POS directory suggestions have been removed.
+> The supported sale-name snapshot and manual-phone workflow are documented in README.
+
 ## Project
 - **Repo:** `/home/jabboud/projects/Uniter`
 - **Stack:** FastAPI + SQLAlchemy async + SQLite, Python 3.12 venv at `.venv/`

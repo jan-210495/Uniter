@@ -99,49 +99,10 @@ def test_pos_500_summary_matches_customer_total_api(client):
     assert calculation['net_cents'] == 47_500  # retained legacy API field
 
 
-def debt_steps(value, edit=False):
-    steps = [{'id':'customers-body','event':'click','action':'debt',
-              'row':{'customerId':'1','name':'Ahmad','phone':'0944123456'}}]
-    if edit:
-        steps.append({'id':'debt-entries','event':'click','action':'edit',
-                      'row':{'debtId':'1','amount':'50000','description':'Charge','type':'charge'}})
-    if value is not None:
-        steps.append({'values':{'debt-amount':value,'debt-type':'charge','debt-description':'Charge'}})
-    steps.append({'id':'debt-form','event':'submit'})
-    return steps
-
-
-@pytest.mark.parametrize('edit', [False, True])
-def test_debt_add_edit_syp_roundtrip(client, edit):
-    customer=client.post('/api/customers',json={'name':'Ahmad','phone':'0944123456'}).json()
-    result=run_form(client, '/customers', debt_steps('500', edit))
-    request=next(r for r in result['requests'] if r['method'] in ('POST','PUT'))
-    assert request['body']['amount_cents'] == 50_000
-    if edit:
-        client.post('/api/customers/1/debt',json=request['body'])
-    assert client.request(request['method'], request['url'], json=request['body']).status_code == 200
-    assert client.get(f"/api/customers/{customer['id']}/balance").json()['total_debt_cents'] == 50_000
-    prefill=run_form(client,'/customers',debt_steps(None, True))
-    edit_request=next(r for r in prefill['requests'] if r['method']=='PUT')
-    assert edit_request['body']['amount_cents'] == 50_000
-
-
-def test_settlement_payment_syp(client):
-    client.post('/api/customers',json={'name':'Rami','phone':'0944123456'})
-    client.post('/api/customers/1/debt',json={'amount_cents':50_000,'type':'charge'})
-    result=run_form(client,'/settlement',[{'values':{'customer-phone':'0944123456','payment-amount':'200'},'id':'payment-form','event':'submit'}])
-    request=next(r for r in result['requests'] if r['method']=='POST')
-    assert request['body']['amount_cents'] == 20_000
-    assert client.post(request['url'],json=request['body']).status_code == 200
-    assert client.get('/api/customers/1/balance').json()['total_debt_cents'] == 30_000
-
-
 @pytest.mark.parametrize('value', ['', '-1', '1.5', 'abc', '1e30', '9007199254740991'])
-@pytest.mark.parametrize('page', ['topup','customers','settlement'])
-def test_invalid_whole_syp_never_posts(client,page,value):
-    if page=='topup': result=topup_form(client,value)
-    elif page=='customers': result=run_form(client,'/customers',debt_steps(value))
-    else: result=run_form(client,'/settlement',[{'values':{'customer-phone':'0944123456','payment-amount':value},'id':'payment-form','event':'submit'}])
+
+def test_invalid_whole_syp_never_posts(client,value):
+    result=topup_form(client,value)
     assert not [r for r in result['requests'] if r['method'] in ('POST','PUT')]
 
 

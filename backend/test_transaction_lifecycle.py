@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from backend.database import (
     Base,
-    Customer,
     OperatorBalance,
     ProfitLedger,
     Transaction,
@@ -85,14 +84,13 @@ def balance(sessions: async_sessionmaker, operator_code: str = "mtn") -> int:
     return run_db(sessions, read)
 
 
-def counts(sessions: async_sessionmaker) -> tuple[int, int, int]:
-    """(transactions, profit ledger rows, customers)."""
+def counts(sessions: async_sessionmaker) -> tuple[int, int]:
+    """(transactions, profit ledger rows)."""
 
     async def read(session: AsyncSession):
         return (
             await session.scalar(select(func.count()).select_from(Transaction)),
             await session.scalar(select(func.count()).select_from(ProfitLedger)),
-            await session.scalar(select(func.count()).select_from(Customer)),
         )
 
     return run_db(sessions, read)
@@ -176,7 +174,7 @@ def test_preview_returns_a_code_and_a_commit_key_without_persisting(client) -> N
     assert payload["ussd_string"] == CODE
     assert len(payload["commit_key"]) >= 16
 
-    assert counts(sessions) == (0, 0, 0)
+    assert counts(sessions) == (0, 0)
     assert balance(sessions) == before
     assert test_client.get("/api/transactions").json() == []
     assert test_client.get("/api/stats/summary").json()["totals"]["transaction_count"] == 0
@@ -189,7 +187,7 @@ def test_preview_leaves_no_orphan_after_a_refresh(client) -> None:
         assert preview(test_client).status_code == 200
         # A refresh re-renders the page; nothing was stored by the previews.
         assert test_client.get("/pos").status_code == 200
-    assert counts(sessions) == (0, 0, 0)
+    assert counts(sessions) == (0, 0)
     assert test_client.get("/api/transactions").json() == []
 
 
@@ -198,7 +196,7 @@ def test_preview_requires_a_valid_phone_and_amount(client) -> None:
     fund(test_client)
     assert preview(test_client, phone="0923123456").status_code == 422
     assert preview(test_client, amount_cents=-1).status_code == 422
-    assert counts(sessions) == (0, 0, 0)
+    assert counts(sessions) == (0, 0)
 
 
 def test_preview_rejects_an_unknown_operator_or_service(client) -> None:
@@ -206,7 +204,7 @@ def test_preview_rejects_an_unknown_operator_or_service(client) -> None:
     fund(test_client)
     assert preview(test_client, operator_code="unknown").status_code == 404
     assert preview(test_client, service_code="unknown").status_code == 404
-    assert counts(sessions) == (0, 0, 0)
+    assert counts(sessions) == (0, 0)
 
 
 def test_preview_rejects_insufficient_operator_balance(client) -> None:
@@ -214,7 +212,7 @@ def test_preview_rejects_insufficient_operator_balance(client) -> None:
     response = preview(test_client, amount_cents=50_000)
     assert response.status_code == 400
     assert response.json()["detail"] == "Insufficient SIM balance"
-    assert counts(sessions) == (0, 0, 0)
+    assert counts(sessions) == (0, 0)
 
 
 # --- B. The commit applies accounting exactly once ------------------------
@@ -235,7 +233,7 @@ def test_commit_records_one_successful_sale_and_one_debit(client) -> None:
     assert payload["created_at"]
 
     # A sale with no customer name is a one-time sale: no customer record.
-    assert counts(sessions) == (1, 1, 0)
+    assert counts(sessions) == (1, 1)
     # 100,000 funded, 5,000 charged: exactly one debit.
     assert balance(sessions) == 95_000
     assert ledger_rows(sessions) == [
@@ -262,7 +260,7 @@ def test_commit_requires_a_commit_key(client) -> None:
         },
     )
     assert response.status_code == 422
-    assert counts(sessions) == (0, 0, 0)
+    assert counts(sessions) == (0, 0)
 
 
 @pytest.mark.parametrize(
@@ -279,7 +277,7 @@ def test_commit_rejects_malformed_keys(client, key: str) -> None:
     test_client, sessions = client
     fund(test_client)
     assert commit(test_client, key=key).status_code == 422
-    assert counts(sessions) == (0, 0, 0)
+    assert counts(sessions) == (0, 0)
 
 
 def test_replay_returns_the_same_sale_without_recharging(client) -> None:
@@ -294,7 +292,7 @@ def test_replay_returns_the_same_sale_without_recharging(client) -> None:
         assert replay.status_code == 200
         assert replay.json() == first.json()
 
-    assert counts(sessions) == (1, 1, 0)
+    assert counts(sessions) == (1, 1)
     assert balance(sessions) == 95_000
     assert len(ledger_rows(sessions)) == 1
 
@@ -309,7 +307,7 @@ def test_replay_with_different_details_is_rejected(client) -> None:
     assert commit(test_client, key=key, phone="0933123456").status_code == 409
     assert commit(test_client, key=key, operator_code="syriatel").status_code == 409
 
-    assert counts(sessions) == (1, 1, 0)
+    assert counts(sessions) == (1, 1)
     assert balance(sessions) == 95_000
     assert balance(sessions, "syriatel") == 0
 
@@ -324,7 +322,7 @@ def test_distinct_keys_are_distinct_sales(client) -> None:
     assert first.json()["id"] != second.json()["id"]
     assert first.json()["reference"] != second.json()["reference"]
 
-    assert counts(sessions) == (2, 2, 0)
+    assert counts(sessions) == (2, 2)
     assert balance(sessions) == 90_000
     assert [row["transaction_id"] for row in ledger_rows(sessions)] == [
         first.json()["id"],
@@ -341,7 +339,7 @@ def test_insufficient_balance_rejects_atomically(client) -> None:
     assert response.status_code == 400
     assert response.json()["detail"] == "Insufficient SIM balance"
     # No transaction, no ledger row, no customer, and the balance is untouched.
-    assert counts(sessions) == (0, 0, 0)
+    assert counts(sessions) == (0, 0)
     assert balance(sessions) == 1_000
     assert test_client.get("/api/transactions").json() == []
 
@@ -350,7 +348,7 @@ def test_insufficient_balance_rejects_atomically(client) -> None:
     retry = commit(test_client, key=key, amount_cents=5000)
     assert retry.status_code == 200
     assert retry.json()["status"] == "successful"
-    assert counts(sessions) == (1, 1, 0)
+    assert counts(sessions) == (1, 1)
     assert balance(sessions) == 96_000
 
 
@@ -359,8 +357,7 @@ def test_commit_rejects_unknown_configuration_without_customer_side_effects(clie
     fund(test_client)
     assert commit(test_client, operator_code="unknown").status_code == 404
     assert commit(test_client, service_code="unknown").status_code == 404
-    assert test_client.get("/api/customers/lookup", params={"phone": PHONE}).status_code == 404
-    assert counts(sessions) == (0, 0, 0)
+    assert counts(sessions) == (0, 0)
     assert balance(sessions) == 5_000_000
 
 
@@ -371,10 +368,8 @@ def test_commit_key_uniqueness_is_enforced_by_the_database(client) -> None:
 
     async def duplicate(session: AsyncSession) -> None:
         service_id = (await session.execute(select(Transaction.service_id))).scalar_one()
-        customer_id = (await session.execute(select(Transaction.customer_id))).scalar_one()
         session.add(
             Transaction(
-                customer_id=customer_id,
                 service_id=service_id,
                 amount_cents=1,
                 status="successful",
@@ -388,7 +383,7 @@ def test_commit_key_uniqueness_is_enforced_by_the_database(client) -> None:
         await session.rollback()
 
     run_db(sessions, duplicate)
-    assert counts(sessions) == (1, 1, 0)
+    assert counts(sessions) == (1, 1)
 
 
 def test_concurrent_identical_commits_charge_once(client) -> None:
@@ -410,7 +405,7 @@ def test_concurrent_identical_commits_charge_once(client) -> None:
     ]
     references = {response.json()["reference"] for response in responses}
     assert len(references) == 1
-    assert counts(sessions) == (1, 1, 0)
+    assert counts(sessions) == (1, 1)
     assert balance(sessions) == 95_000
     assert len(ledger_rows(sessions)) == 1
 

@@ -290,7 +290,7 @@ def test_generate_with_a_name_previews_without_registering_anything() -> None:
     assert commits(result) == []
     assert result["elements"]["result-badge"]["text"] == "Not recorded yet"
     assert result["elements"]["register-status"]["text"] == (
-        "The name will be saved for this sale only, without a customer account."
+        "The name will be saved for this sale only."
     )
 
 
@@ -343,7 +343,7 @@ def test_blank_name_is_a_one_time_sale_with_no_customer_call() -> None:
     assert len(commits(result)) == 1
     assert commits(result)[0]["body"]["customer_name"] is None
     assert commits(result)[0]["body"]["customer_phone"] == "0944123456"
-    assert result["elements"]["register-status"]["text"] == "One-time sale with no customer account."
+    assert result["elements"]["register-status"]["text"] == "Sale without a name."
     assert result["elements"]["result-badge"]["text"] == "Recorded"
 
 
@@ -389,7 +389,7 @@ def test_failed_commit_with_a_name_records_nothing() -> None:
 def test_one_time_sale_copy_commit_arabic_feedback() -> None:
     result = run(GENERATE_BLANK + COPY, lang="ar")
     assert commits(result)[0]["body"]["customer_name"] is None
-    assert result["elements"]["register-status"]["text"] == "بيع لمرة واحدة بلا حساب عميل."
+    assert result["elements"]["register-status"]["text"] == "بيع بلا اسم."
     assert result["elements"]["result-badge"]["text"] == "مسجّلة"
 
 

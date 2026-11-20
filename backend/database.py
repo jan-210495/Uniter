@@ -62,25 +62,6 @@ class Service(Base):
     transactions: Mapped[list[Transaction]] = relationship(back_populates="service")
 
 
-class Customer(Base):
-    __tablename__ = "customers"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    phone: Mapped[str] = mapped_column(String(32), unique=True)
-    name: Mapped[str] = mapped_column(String(255))
-    balance_cents: Mapped[int] = mapped_column(Integer, default=0)
-    # Optional POS auto-recognition preferences (free-form codes, not FKs).
-    operator_code: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)
-    service_code: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, onupdate=utc_now
-    )
-
-    transactions: Mapped[list[Transaction]] = relationship(back_populates="customer")
-    debt_ledger: Mapped[list[DebtLedger]] = relationship(back_populates="customer")
-
-
 #: The only statuses a persisted transaction can carry. A row exists only once
 #: the seller committed the sale by copying the code or opening the dialer.
 TRANSACTION_STATUSES = ("successful", "failed")
@@ -93,10 +74,6 @@ class Transaction(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # Retained for customer/debt workflows; new POS sales are never linked.
-    customer_id: Mapped[int | None] = mapped_column(
-        ForeignKey("customers.id"), nullable=True, default=None
-    )
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"))
     amount_cents: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20))
@@ -139,25 +116,7 @@ class Transaction(Base):
     # Seller-entered per-sale snapshot, independent of the customer database.
     customer_name: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
 
-    customer: Mapped[Customer | None] = relationship(back_populates="transactions")
     service: Mapped[Service] = relationship(back_populates="transactions")
-
-
-class DebtLedger(Base):
-    __tablename__ = "debt_ledger"
-    __table_args__ = (
-        CheckConstraint("type IN ('charge', 'payment')", name="debt_ledger_type"),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"))
-    register_id: Mapped[int | None] = mapped_column(ForeignKey("cash_register.id"), nullable=True)
-    amount_cents: Mapped[int] = mapped_column(Integer)
-    description: Mapped[str] = mapped_column(String(512), default="")
-    type: Mapped[str] = mapped_column(String(20))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-
-    customer: Mapped[Customer] = relationship(back_populates="debt_ledger")
 
 
 class OperatorBalance(Base):
@@ -188,8 +147,8 @@ class OperatorTopup(Base):
 class OperatorCreditRefund(Base):
     """Append-only face-credit reversal; original profit/debit history is untouched.
 
-    The reference survives legacy customer-history deletion; the optional FK is
-    cleared by SQLite on deletion, preserving existing customer deletion policy.
+    The reference survives deletion of a legacy transaction; SQLite clears the
+    optional FK while retaining the immutable refund audit.
     """
 
     __tablename__ = "operator_credit_refund"

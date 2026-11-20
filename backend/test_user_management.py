@@ -269,7 +269,7 @@ def test_temporary_password_is_shown_once_and_forces_change(admin, fresh):
         signed_in = sign_in_with(client, "sara", temporary)
         assert signed_in == (303, "/change-password")
         assert client.get("/pos", follow_redirects=False).headers["location"].startswith("/change-password")
-        assert client.get("/api/customers").status_code == 403
+        assert client.get("/api/transactions").status_code == 403
         assert client.get("/users", follow_redirects=False).headers["location"].startswith("/change-password")
         token = CSRF_META.search(client.get("/change-password").text)
         assert token is None  # the forced-change page has no app shell
@@ -400,14 +400,14 @@ def test_accounts_are_never_physically_deleted(admin, seller_account, fresh):
 
 def test_deactivated_seller_sessions_are_rejected_immediately(admin, seller, seller_account, fresh):
     user, _ = seller_account
-    assert seller.get("/api/customers").status_code == 200
+    assert seller.get("/api/transactions").status_code == 200
     response = admin.patch(f"/api/users/{user['id']}", json={"is_active": False})
     assert response.status_code == 200 and response.json()["is_active"] is False
     assert session_count(fresh, user["id"]) == 0
 
     assert seller.get("/pos", follow_redirects=False).headers["location"].startswith("/login")
-    assert seller.get("/api/customers").status_code == 401
-    assert seller.post("/api/customers", json={"phone": "0933123456", "name": "X"}).status_code == 401
+    assert seller.get("/api/transactions").status_code == 401
+    assert seller.post("/api/register/open", json={"opening_balance_cents": 0}).status_code == 401
 
     with TestClient(app) as client:
         refused = login(client, "sara", SELLER_PASSWORD)
@@ -428,7 +428,7 @@ def test_session_check_alone_rejects_inactive_accounts(seller, seller_account, f
         await session.commit()
     fresh.run(deactivate_directly)
     assert session_count(fresh, user["id"]) == 1  # the row is still there
-    assert seller.get("/api/customers").status_code == 401
+    assert seller.get("/api/transactions").status_code == 401
     assert seller.get("/pos", follow_redirects=False).headers["location"].startswith("/login")
     assert session_count(fresh, user["id"]) == 0  # and is removed on use
 
@@ -513,16 +513,15 @@ def test_last_active_admin_guard(admin, fresh):
 @pytest.mark.parametrize("role", ["admin", "seller"])
 def test_both_roles_view_settings_and_business_data(role, request):
     client = request.getfixturevalue(role)
-    for path in ("/pos", "/topup", "/transactions", "/customers", "/settlement", "/stats",
+    for path in ("/pos", "/topup", "/transactions", "/stats",
                  "/settings", "/operators/mtn", "/settings?lang=ar"):
         assert client.get(path).status_code == 200, path
     for path, _, key, _ in PROTECTED_SETTINGS:
         assert key in client.get(path).json()
-    for path in ("/api/customers", "/api/transactions", "/api/operators/balance", "/api/stats/summary",
+    for path in ("/api/sims", "/api/transactions", "/api/operators/balance", "/api/stats/summary",
                  "/api/currency/denomination", "/api/search?q=09"):
         assert client.get(path).status_code == 200, path
-    phone = "0933123456" if role == "admin" else "0944123456"
-    assert client.post("/api/customers", json={"phone": phone, "name": role}).status_code == 200
+    assert client.post("/api/register/open", json={"opening_balance_cents": 0}).status_code == 200
     fund_company(client, "mtn", 1000)
 
 

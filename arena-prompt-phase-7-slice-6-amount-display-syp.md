@@ -1,5 +1,9 @@
 Phase 7 Slice 6 — Amount display in SYP units (no raw cents)
 
+> Historical planning record, not current feature documentation. Customer/debt
+> directories, settlement, and POS directory suggestions have been removed.
+> The supported sale-name snapshot and manual-phone workflow are documented in README.
+
 Project: /home/jabboud/projects/Uniter
 Branch: arena/46c0244b-uniter (this session is pinned to that branch — commit directly to it).
 arena does NOT have access to /home/jabboud/projects/friend-co/ — describe behavior inline.

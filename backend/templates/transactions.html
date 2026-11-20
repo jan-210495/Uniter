@@ -18,7 +18,7 @@
     </header>
 
     {# Filtering approach: client-side fetch to /api/transactions with query params,
-       debounced and abortable — the same pattern as the /pos customer dropdown. #}
+       debounced and abortable, matching the stored transaction phone directly. #}
     <form id="tx-filters" class="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="filters-title" novalidate>
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div>
@@ -67,10 +67,9 @@
             <div>
                 <label for="filter-phone" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'رقم هاتف العميل' if ar else 'Customer phone' }}</label>
                 <div id="phone-anchor" class="relative">
-                    <input id="filter-phone" name="customer_phone" type="tel" dir="ltr" autocomplete="off" maxlength="32" placeholder="09XXXXXXXX" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="tx-customer-suggestions" aria-autocomplete="list" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
-                    <ul id="tx-customer-suggestions" role="listbox" aria-label="{{ 'العملاء المقترحون' if ar else 'Suggested customers' }}" class="absolute inset-x-0 top-full z-20 mt-1 hidden max-h-72 overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg"></ul>
+                    <input id="filter-phone" name="customer_phone" type="tel" dir="ltr" autocomplete="off" maxlength="32" placeholder="09XXXXXXXX" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
                 </div>
-                <p class="mt-1.5 text-xs text-slate-500">{{ 'ابدأ الكتابة لعرض العملاء المطابقين.' if ar else 'Start typing to list matching customers.' }}</p>
+                <p class="mt-1.5 text-xs text-slate-500">{{ 'تصفية حسب جزء من رقم الهاتف.' if ar else 'Filter by part of the sale phone number.' }}</p>
             </div>
         </div>
     </form>
@@ -134,9 +133,6 @@
         'countLabel': 'معاملات' if ar else 'transactions',
         'total': 'الإجمالي' if ar else 'Total',
         'currency': 'ل.س' if ar else 'SYP',
-        'searching': 'يتم البحث عن العملاء…' if ar else 'Searching customers…',
-        'noResults': 'لا يوجد عملاء مطابقون.' if ar else 'No matching customers.',
-        'searchError': 'تعذر البحث عن العملاء. حاول مرة أخرى.' if ar else 'Could not search customers. Try again.',
         'statusSuccessful': 'ناجحة' if ar else 'Successful',
         'statusFailed': 'فاشلة' if ar else 'Failed',
         'markFailed': 'تسجيل فشل الشحن' if ar else 'Mark charge failed',
@@ -164,7 +160,6 @@
     const statusFilter = document.getElementById('filter-status');
     const phoneFilter = document.getElementById('filter-phone');
     const performerFilter = document.getElementById('filter-performer');
-    const suggestions = document.getElementById('tx-customer-suggestions');
     const rowsBody = document.getElementById('tx-rows');
     const statusEl = document.getElementById('tx-status');
     const countEl = document.getElementById('tx-count');
@@ -197,141 +192,7 @@
         });
     }
 
-    // --- Customer suggestion combobox (same pattern as the /pos dropdown) ---
-    let suggestTimer = null;
-    let suggestAbort = null;
-    let customers = [];
-    let highlightIndex = -1;
-
-    function closeSuggestions() {
-        if (suggestAbort) {
-            suggestAbort.abort();
-            suggestAbort = null;
-        }
-        customers = [];
-        highlightIndex = -1;
-        suggestions.innerHTML = '';
-        suggestions.classList.add('hidden');
-        phoneFilter.setAttribute('aria-expanded', 'false');
-        phoneFilter.removeAttribute('aria-activedescendant');
-    }
-    function renderSuggestions(matches) {
-        suggestions.innerHTML = '';
-        matches.forEach((customer, index) => {
-            const option = document.createElement('li');
-            option.id = 'tx-customer-option-' + index;
-            option.setAttribute('role', 'option');
-            option.setAttribute('aria-selected', 'false');
-            option.dataset.index = String(index);
-            option.className = 'flex cursor-pointer items-baseline gap-2 px-3 py-2 text-sm';
-            const nameSpan = document.createElement('span');
-            nameSpan.className = 'min-w-0 truncate font-semibold text-slate-900';
-            nameSpan.textContent = customer.name;
-            const phoneSpan = document.createElement('span');
-            phoneSpan.dir = 'ltr';
-            phoneSpan.className = 'ms-auto shrink-0 font-mono text-xs text-slate-500';
-            phoneSpan.textContent = customer.phone;
-            option.appendChild(nameSpan);
-            option.appendChild(phoneSpan);
-            suggestions.appendChild(option);
-        });
-        customers = matches;
-        highlightIndex = -1;
-        phoneFilter.setAttribute('aria-expanded', 'true');
-        suggestions.classList.remove('hidden');
-    }
-    function setHighlight(index) {
-        highlightIndex = index;
-        const options = suggestions.children;
-        for (let i = 0; i < options.length; i += 1) {
-            const selected = i === index;
-            options[i].classList.toggle('bg-blue-50', selected);
-            options[i].classList.toggle('text-blue-950', selected);
-            options[i].setAttribute('aria-selected', String(selected));
-        }
-        const active = index >= 0 ? options[index] : null;
-        if (active) {
-            phoneFilter.setAttribute('aria-activedescendant', active.id);
-            if (active.scrollIntoView) active.scrollIntoView({ block: 'nearest' });
-        } else {
-            phoneFilter.removeAttribute('aria-activedescendant');
-        }
-    }
-    async function fetchSuggestions(query) {
-        if (suggestAbort) suggestAbort.abort();
-        const controller = new AbortController();
-        suggestAbort = controller;
-        try {
-            const response = await fetch('/api/customers/search?q=' + encodeURIComponent(query), { cache: 'no-store', signal: controller.signal });
-            if (!response.ok) throw new Error('search failed');
-            const matches = await response.json();
-            if (suggestAbort !== controller) return;
-            if (!matches.length) {
-                closeSuggestions();
-                return;
-            }
-            renderSuggestions(matches);
-        } catch (error) {
-            if (suggestAbort !== controller) return;
-            closeSuggestions();
-        }
-    }
-    function queueSuggestions() {
-        clearTimeout(suggestTimer);
-        const query = phoneFilter.value.trim();
-        if (!query) {
-            closeSuggestions();
-            return;
-        }
-        suggestTimer = setTimeout(() => { fetchSuggestions(query); }, DEBOUNCE_MS);
-    }
-    function selectCustomer(customer) {
-        phoneFilter.value = customer.phone;
-        closeSuggestions();
-        queueList();
-    }
-    phoneFilter.addEventListener('input', () => {
-        queueSuggestions();
-        queueList();
-    });
-    phoneFilter.addEventListener('keydown', (event) => {
-        const open = !suggestions.classList.contains('hidden');
-        if (event.key === 'ArrowDown') {
-            if (!open) return;
-            event.preventDefault();
-            if (customers.length) setHighlight((highlightIndex + 1) % customers.length);
-        } else if (event.key === 'ArrowUp') {
-            if (!open) return;
-            event.preventDefault();
-            if (customers.length) setHighlight((highlightIndex - 1 + customers.length) % customers.length);
-        } else if (event.key === 'Enter') {
-            if (open && highlightIndex >= 0 && customers[highlightIndex]) {
-                event.preventDefault();
-                selectCustomer(customers[highlightIndex]);
-            }
-        } else if (event.key === 'Escape') {
-            if (open) {
-                event.preventDefault();
-                closeSuggestions();
-            }
-        } else if (event.key === 'Tab') {
-            closeSuggestions();
-        }
-    });
-    suggestions.addEventListener('mousedown', (event) => event.preventDefault());
-    suggestions.addEventListener('mouseover', (event) => {
-        const option = event.target.closest('li');
-        if (option) setHighlight(Number(option.dataset.index));
-    });
-    suggestions.addEventListener('click', (event) => {
-        const option = event.target.closest('li');
-        if (!option) return;
-        const customer = customers[Number(option.dataset.index)];
-        if (customer) selectCustomer(customer);
-    });
-    document.addEventListener('click', (event) => {
-        if (event.target !== phoneFilter && !suggestions.contains(event.target)) closeSuggestions();
-    });
+    phoneFilter.addEventListener('input', queueList);
 
     // --- Transactions list (client-side filtering via /api/transactions) ---
     let listTimer = null;
@@ -422,7 +283,7 @@
         if (transaction.customer_name) {
             customerName.textContent = transaction.customer_name;
         } else {
-            // No customer record: the phone is shown on its own, with a neutral
+            // No snapshot name: the phone is shown on its own, with a neutral
             // label instead of repeating the number as a name.
             customerName.className = 'block font-semibold text-slate-500';
             customerName.textContent = messages.oneTimeCustomer;
@@ -602,7 +463,6 @@
         statusFilter.value = '';
         performerFilter.value = '';
         phoneFilter.value = '';
-        closeSuggestions();
         clearTimeout(listTimer);
         fetchTransactions();
     });

@@ -19,27 +19,24 @@ from backend.main import app
 from backend.seed import seed_data
 
 PROTECTED_PAGES = (
-    "/pos", "/topup", "/transactions", "/customers", "/settlement", "/stats",
+    "/pos", "/topup", "/transactions", "/stats",
     "/settings", "/operators/mtn", "/pos?lang=ar",
 )
 
 PROTECTED_API_READS = (
-    "/api/customers",
-    "/api/customers/lookup?phone=0933123456",
     "/api/transactions",
+    "/api/sims",
     "/api/search?q=09",
     "/api/stats/summary",
     "/api/settings/commission",
     "/api/settings/timezone",
     "/api/operators/balance",
     "/api/currency/denomination",
-    "/api/debt/summary",
     "/api/register/summary",
     "/api/commission/calculate?operator_code=mtn&service_code=prepaid&amount_cents=100",
 )
 
 PROTECTED_API_WRITES = (
-    ("post", "/api/customers", {"phone": "0933123456", "name": "Intruder"}),
     ("put", "/api/settings/commission", {"rate": "0.5"}),
     ("put", "/api/settings/timezone", {"timezone": "UTC"}),
     ("post", "/api/operators/topup", {"operator_code": "mtn", "amount_cents": 100}),
@@ -49,7 +46,6 @@ PROTECTED_API_WRITES = (
     }),
     ("patch", "/api/transactions/1/status", {"status": "failed"}),
     ("delete", "/api/transactions/1", None),
-    ("delete", "/api/customers/1", None),
     ("put", "/api/currency/denomination", {"scale_name": "post-2026"}),
 )
 
@@ -114,7 +110,7 @@ def test_protected_api_writes_are_rejected(anonymous, method, path, body):
 def test_forged_session_cookie_is_rejected(anonymous):
     anonymous.cookies.set("uniter_session", "not-a-real-session")
     assert anonymous.get("/pos", follow_redirects=False).status_code == 303
-    assert anonymous.get("/api/customers").status_code == 401
+    assert anonymous.get("/api/transactions").status_code == 401
 
 
 def test_minimal_public_surface_stays_reachable(anonymous):

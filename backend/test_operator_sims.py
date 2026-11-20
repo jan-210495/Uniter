@@ -253,8 +253,11 @@ def _remove_sim_schema(path: str) -> None:
                                (SIM_MARKER, database.SIM_BALANCE_SCHEMA_VERSION))
             ddl = connection.execute(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name='transactions'").fetchone()[0]
-            assert "\tsim_card_id INTEGER, \n" in ddl and SIM_FK_CLAUSE in ddl, ddl
-            ddl = ddl.replace("\tsim_card_id INTEGER, \n", "").replace(SIM_FK_CLAUSE, "")
+            # The dump is upgraded by ADD COLUMN (inline FK); create_all
+            # declares a table-level FK. Both represent the same old schema.
+            inline = ", sim_card_id INTEGER REFERENCES sim_cards (id) ON DELETE RESTRICT"
+            assert inline in ddl or ("\tsim_card_id INTEGER, \n" in ddl and SIM_FK_CLAUSE in ddl), ddl
+            ddl = ddl.replace(inline, "").replace("\tsim_card_id INTEGER, \n", "").replace(SIM_FK_CLAUSE, "")
             indexes = [sql for (sql,) in connection.execute(
                 "SELECT sql FROM sqlite_master WHERE tbl_name='transactions' AND type IN ('index', 'trigger')"
                 " AND sql IS NOT NULL")]
@@ -271,13 +274,13 @@ def _remove_sim_schema(path: str) -> None:
 
 def _build_v104_slice31(env) -> None:
     """A v1.0.4 (Slice 3.1) install: auth, performer column, no sim_cards."""
-    async def build():
-        # Slice 3.1 had no SIM cards (nor the Slice 4.1 SIM balance tables).
-        tables = [t for t in database.Base.metadata.sorted_tables
-                  if t.name not in {"sim_cards", "sim_balances", "sim_ledger", "sim_defaults"}]
-        async with env.engine.begin() as connection:
-            await connection.run_sync(lambda sync: database.Base.metadata.create_all(sync, tables=tables))
-    asyncio.run(build())
+    # Load the actual historical schema, including its retired directory
+    # linkage, instead of inventing old columns on current application models.
+    connection = sqlite3.connect(env.engine.url.database)
+    try:
+        connection.executescript(Path(__file__).with_name("fixtures").joinpath("v104_slice4.sql").read_text())
+    finally:
+        connection.close()
     asyncio.run(seed.main())  # pre-Slice-4 code path also ran init_db; SIM schema removed below
     _remove_sim_schema(env.engine.url.database)
     owner = add_account(env, "owner", role="admin")

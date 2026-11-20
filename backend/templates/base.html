@@ -53,7 +53,7 @@
                 <a href="/" class="text-lg font-bold text-blue-950">Uniter</a>
                 <div class="flex flex-wrap items-center gap-4 text-sm font-semibold text-slate-600 sm:gap-5">
                 <div id="global-search-anchor" class="relative">
-                    <input id="global-search" type="search" dir="auto" autocomplete="off" maxlength="255" placeholder="{{ 'البحث عن العملاء والمعاملات والمشغّلين' if lang|default('en') == 'ar' else 'Search customers, transactions, operators' }}" aria-label="{{ 'بحث عام' if lang|default('en') == 'ar' else 'Global search' }}" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="global-search-results" aria-autocomplete="list" class="w-44 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100 lg:w-56">
+                    <input id="global-search" type="search" dir="auto" autocomplete="off" maxlength="255" placeholder="{{ 'البحث عن المعاملات والمشغّلين' if lang|default('en') == 'ar' else 'Search transactions, operators' }}" aria-label="{{ 'بحث عام' if lang|default('en') == 'ar' else 'Global search' }}" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="global-search-results" aria-autocomplete="list" class="w-44 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100 lg:w-56">
                     <ul id="global-search-results" role="listbox" aria-label="{{ 'نتائج البحث' if lang|default('en') == 'ar' else 'Search results' }}" class="absolute inset-x-0 top-full z-30 mt-1 hidden max-h-80 min-w-[16rem] overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg"></ul>
                 </div>
                 <span id="header-timezone" dir="ltr" hidden class="text-xs font-semibold text-slate-400"></span>
@@ -69,15 +69,13 @@
         </div>
         <div class="drawer-search border-b border-slate-100 px-3 py-3">
             <div id="drawer-search-anchor" class="relative">
-                <input id="drawer-global-search" type="search" dir="auto" autocomplete="off" maxlength="255" placeholder="{{ 'البحث عن العملاء والمعاملات والمشغّلين' if lang|default('en') == 'ar' else 'Search customers, transactions, operators' }}" aria-label="{{ 'بحث عام' if lang|default('en') == 'ar' else 'Global search' }}" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="global-search-results" aria-autocomplete="list" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                <input id="drawer-global-search" type="search" dir="auto" autocomplete="off" maxlength="255" placeholder="{{ 'البحث عن المعاملات والمشغّلين' if lang|default('en') == 'ar' else 'Search transactions, operators' }}" aria-label="{{ 'بحث عام' if lang|default('en') == 'ar' else 'Global search' }}" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="global-search-results" aria-autocomplete="list" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
             </div>
         </div>
         <div class="nav-pages flex flex-col gap-1 px-3 py-4" aria-label="Pages">
             <a href="/pos" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'pos' %} aria-current="page"{% endif %}>{{ 'نقطة البيع' if lang|default('en') == 'ar' else 'POS' }}</a>
             <a href="/operators" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'operators' %} aria-current="page"{% endif %}>{{ 'المشغّلون' if lang|default('en') == 'ar' else 'Operators' }}</a>
             <a href="/transactions" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'transactions' %} aria-current="page"{% endif %}>{{ 'المعاملات' if lang|default('en') == 'ar' else 'Transactions' }}</a>
-            <a href="/customers" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'customers' %} aria-current="page"{% endif %}>{{ 'العملاء' if lang|default('en') == 'ar' else 'Customers' }}</a>
-            <a href="/settlement" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'settlement' %} aria-current="page"{% endif %}>{{ 'تسوية الديون' if lang|default('en') == 'ar' else 'Settlement' }}</a>
             <a href="/stats" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'stats' %} aria-current="page"{% endif %}>{{ 'الإحصائيات' if lang|default('en') == 'ar' else 'Stats' }}</a>
             <a href="/settings" class="rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:text-blue-800"{% if nav_page is defined and nav_page == 'settings' %} aria-current="page"{% endif %}>{{ 'الإعدادات' if lang|default('en') == 'ar' else 'Settings' }}</a>
             {% if is_admin is defined and request is defined and is_admin(request) %}
@@ -114,9 +112,8 @@
         }
         document.addEventListener('navigation:closed', () => closeGlobalSearch());
 
-        // --- Global search (customers, transactions, operators) ---
+        // --- Global search (transactions, operators) ---
         const searchMessages = {{ {
-            'customers': 'العملاء' if lang|default('en') == 'ar' else 'Customers',
             'transactions': 'المعاملات' if lang|default('en') == 'ar' else 'Transactions',
             'operators': 'المشغّلون' if lang|default('en') == 'ar' else 'Operators',
             'balance': 'الرصيد' if lang|default('en') == 'ar' else 'Balance',
@@ -164,7 +161,6 @@
         }
 
         function searchUrlFor(kind, item) {
-            if (kind === 'customer') return '/customers';
             if (kind === 'transaction') {
                 return '/transactions?customer_phone=' + encodeURIComponent(item.customer_phone);
             }
@@ -202,12 +198,6 @@
         function renderSearchResults(data) {
             searchResults.innerHTML = '';
             searchOptions = [];
-            if (data.customers.length) {
-                appendSearchGroup(searchMessages.customers);
-                data.customers.forEach((customer) => {
-                    appendSearchOption('customer', customer, customer.name, customer.phone);
-                });
-            }
             if (data.transactions.length) {
                 appendSearchGroup(searchMessages.transactions);
                 data.transactions.forEach((transaction) => {

@@ -89,8 +89,6 @@ def transactions(client: TestClient) -> dict[str, dict]:
     for operator_code in ("mtn", "syriatel"):
         # Slice 4.1: sales are charged to a SIM card, funded by its own top-up.
         fund_company(client, operator_code, 1000000)
-    client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
-    client.post("/api/customers", json={"phone": "0944123456", "name": "Rami"})
     created = {
         "ahmad_mtn_a": post_transaction(
             client, "0933123456", "mtn", "prepaid", 5000, customer_name="Ahmad"
@@ -137,7 +135,7 @@ def test_list_without_filters_returns_all_transactions(
     item = next(i for i in items if i["id"] == transactions["ahmad_mtn_a"]["id"])
     assert set(item) == {
         "id", "reference", "ussd_string", "status", "amount_cents", "created_at",
-        "customer_id", "customer_phone", "customer_name", "operator_code", "operator_name",
+        "customer_phone", "customer_name", "operator_code", "operator_name",
         "service_code", "service_name", "performed_by_user_id", "performed_by_username",
         "funding", "sim_card_id", "sim_display_name",
     }
@@ -158,7 +156,6 @@ def test_list_without_filters_returns_all_transactions(
     # The one-time sale is listed too: its phone is shown, its name is empty
     # (a number is never presented as a customer name).
     one_time = next(i for i in items if i["id"] == transactions["one_time"]["id"])
-    assert one_time["customer_id"] is None
     assert one_time["customer_phone"] == "0955123456"
     assert one_time["customer_name"] is None
     assert one_time["amount_cents"] == 1200
@@ -266,22 +263,18 @@ def test_transactions_template_markup() -> None:
     english = template.render(lang="en", nav_page="transactions")
     arabic = template.render(lang="ar", nav_page="transactions")
     for rendered in (english, arabic):
-        # Filter card with the slice-2 suggestion combobox on the phone filter.
+        # Direct phone filtering does not depend on a customer directory.
         assert 'id="tx-filters"' in rendered
         assert 'id="filter-operator"' in rendered
         assert 'id="filter-service"' in rendered
         assert 'id="filter-status"' in rendered
         assert 'id="filter-phone"' in rendered
-        assert 'role="combobox"' in rendered
-        assert 'role="listbox"' in rendered
-        assert 'aria-expanded="false"' in rendered
-        assert 'aria-controls="tx-customer-suggestions"' in rendered
-        assert 'aria-autocomplete="list"' in rendered
         # Debounced, abortable client-side fetches.
         assert "const DEBOUNCE_MS = 220;" in rendered
         assert "new AbortController()" in rendered
         assert "fetch('/api/transactions' + buildQuery()" in rendered
-        assert "fetch('/api/customers/search?q=' + encodeURIComponent(query)" in rendered
+        assert "/api/customers" not in rendered
+        assert "tx-customer-suggestions" not in rendered
         # Ten table columns: Slice 2.3 added actions, v1.0.4 Slice 3 the performer.
         assert rendered.count('scope="col"') == 10
         assert 'id="tx-action-status" role="status" aria-live="polite"' in rendered

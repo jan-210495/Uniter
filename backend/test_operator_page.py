@@ -122,8 +122,6 @@ def test_operator_page_languages(client: TestClient) -> None:
 def test_operator_page_shows_only_that_operators_transactions(client: TestClient) -> None:
     topup(client, "mtn", 1000000)
     topup(client, "syriatel", 1000000)
-    client.post("/api/customers", json={"phone": "0933123456", "name": "Ahmad"})
-    client.post("/api/customers", json={"phone": "0944123456", "name": "Rami"})
     mtn_transactions = [
         post_transaction(client, "0933123456", "mtn", "prepaid", 1000),
         post_transaction(client, "0933123456", "mtn", "prepaid", 2000),
@@ -163,7 +161,7 @@ def test_operator_page_links_from_settings_and_transactions(client: TestClient) 
 
 
 def test_base_template_renders_global_search(client: TestClient) -> None:
-    for path in ("/pos", "/settings", "/customers"):
+    for path in ("/pos", "/settings", "/transactions"):
         english = client.get(path)
         arabic = client.get(path, params={"lang": "ar"})
         assert english.status_code == arabic.status_code == 200
@@ -183,8 +181,8 @@ def test_base_template_renders_global_search(client: TestClient) -> None:
             assert "const SEARCH_DEBOUNCE_MS = 220;" in rendered
             assert "new AbortController()" in rendered
             assert "'/api/search?q=' + encodeURIComponent(query)" in rendered
-    assert "Search customers, transactions, operators" in client.get("/pos").text
-    assert "البحث عن العملاء والمعاملات والمشغّلين" in client.get(
+    assert "Search transactions, operators" in client.get("/pos").text
+    assert "البحث عن المعاملات والمشغّلين" in client.get(
         "/pos", params={"lang": "ar"}
     ).text
 
