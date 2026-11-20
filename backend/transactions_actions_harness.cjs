@@ -299,6 +299,7 @@ function actionButton(txId, action) {
           {
             text: entry.textContent,
             value: entry.value,
+            href: entry.href || null,
             hidden: Boolean(entry.hidden),
             focused: Boolean(entry.focused),
             classes: [...entry.classes],

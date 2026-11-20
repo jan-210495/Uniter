@@ -17,12 +17,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
-    from . import auth, sims, users
+    from . import auth, sims, users, xlsx
     from .commission import get_commission_for_transaction
     from .database import TRANSACTION_STATUSES, MAX_MINOR_UNITS, Operator, Service, SimCard, SimLedger, Transaction, User, OperatorTopup, OperatorBalance, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from .seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from .validation import validate_syrian_phone
 else:
+    import xlsx
     import auth
     import sims
     import users
@@ -1310,34 +1311,17 @@ class TransactionLedgerPage(BaseModel):
     offset: int
 
 
-@app.get("/api/transaction-ledger", response_model=TransactionLedgerPage)
-async def transaction_ledger(
-    request: Request,
-    db: DbSession,
+def _ledger_selection(
     record_type: Literal["all", "sale", "topup"] = "all",
     operator_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
     service_code: Annotated[str | None, Query(min_length=1, max_length=50)] = None,
     performed_by: Annotated[int | None, Query(ge=1, le=MAX_MINOR_UNITS)] = None,
     customer_phone: Annotated[str | None, Query(min_length=1, max_length=32)] = None,
     status: Literal["successful", "failed"] = "successful",
-    limit: Annotated[int, Query(ge=1, le=200)] = 50,
-    offset: Annotated[int, Query(ge=0, le=MAX_MINOR_UNITS)] = 0,
-) -> TransactionLedgerPage:
-    """Successful sales and persisted top-ups; read-only, not a revenue report.
-
-    SQL UNION ALL is ordered by (created_at DESC, source DESC, id DESC), then
-    paginated. IDs are source-local: (source, id) identifies a ledger record.
-    Operator filters both types. Sale-only filters require record_type=sale
-    (422 otherwise), never silently remove top-ups from an all-types view.
-    status=failed returns an empty page: failed sales/attempts are never listed.
-    The original /api/transactions remains the sales-management API.
-    Offset pages describe current history, not a frozen snapshot across writes.
-    """
+):
+    """Authoritative filter validation and source selection for listing/export."""
     if record_type != "sale" and any(value is not None for value in (service_code, performed_by, customer_phone)):
         raise HTTPException(status_code=422, detail="Sale-only filters require record_type=sale")
-    if status == "failed":
-        return TransactionLedgerPage(items=[], total=0, limit=limit, offset=offset)
-
     sales = (
         select(literal("transaction").label("source"), Transaction.id, Transaction.created_at)
         .join(Service, Transaction.service_id == Service.id)
@@ -1366,11 +1350,32 @@ async def transaction_ledger(
     if record_type == "all":
         sources.insert(0, sales)
     combined = union_all(*sources).subquery()
-    total = await db.scalar(select(func.count()).select_from(combined))
-    keys = (await db.execute(select(combined).order_by(
+    return select(combined).where(literal(False)).subquery() if status == "failed" else combined
+
+
+def _ordered_ledger(combined):
+    return select(combined).order_by(
         combined.c.created_at.desc(), combined.c.source.desc(), combined.c.id.desc()
-    ).limit(limit).offset(offset))).all()
-    context = _auth_context(request)
+    )
+
+
+@app.get("/api/transaction-ledger", response_model=TransactionLedgerPage)
+async def transaction_ledger(
+    request: Request,
+    db: DbSession,
+    combined: Annotated[object, Depends(_ledger_selection)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0, le=MAX_MINOR_UNITS)] = 0,
+) -> TransactionLedgerPage:
+    """Successful-only live history; source-local IDs, ordered before paging."""
+    total = await db.scalar(select(func.count()).select_from(combined))
+    keys = (await db.execute(_ordered_ledger(combined).limit(limit).offset(offset))).all()
+    items = await _hydrate_ledger(db, keys, _auth_context(request))
+    return TransactionLedgerPage(items=items, total=total, limit=limit, offset=offset)
+
+
+async def _hydrate_ledger(db, keys, context):
+    """Shared projection: preserve sale snapshots and per-user SIM redaction."""
     items = {}
     sale_ids = [row.id for row in keys if row.source == "transaction"]
     if sale_ids:
@@ -1407,10 +1412,33 @@ async def transaction_ledger(
                 sim_display_name=sim.display_name if visible else None,
                 performed_by_user_id=entry.performed_by_user_id, performed_by_username=username,
             )
-    return TransactionLedgerPage(
-        items=[items[(row.source, row.id)] for row in keys],
-        total=total, limit=limit, offset=offset,
-    )
+    return [items[(row.source, row.id)] for row in keys]
+
+
+@app.get("/api/transaction-ledger/export")
+async def export_transaction_ledger(
+    request: Request,
+    db: DbSession,
+    combined: Annotated[object, Depends(_ledger_selection)],
+    lang: Literal["en", "ar"] = "en",
+) -> Response:
+    """Export every matching key once, never walk shifting offset pages.
+
+    limit/offset are intentionally not selection parameters for this download.
+    Bounded hydration batches avoid SQLite bind limits on large histories.
+    """
+    keys = (await db.execute(_ordered_ledger(combined))).all()
+    if len(keys) > xlsx.MAX_DATA_ROWS:
+        raise HTTPException(status_code=413, detail="Too many records for one Excel worksheet")
+    context = _auth_context(request)
+    items = []
+    for start in range(0, len(keys), 200):
+        items.extend(await _hydrate_ledger(db, keys[start:start + 200], context))
+    payload = xlsx.ledger_workbook(items, lang)
+    filename = "uniter-transactions-" + datetime.now(timezone.utc).strftime("%Y%m%d") + ".xlsx"
+    return Response(payload, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"',
+                             "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
 
 @app.get("/api/currency/denomination", response_model=CurrencyDenominationResponse)

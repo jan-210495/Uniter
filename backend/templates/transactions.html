@@ -14,6 +14,7 @@
             <h1 class="text-3xl font-bold tracking-tight text-blue-950 sm:text-4xl">{{ 'المعاملات' if ar else 'Transactions' }}</h1>
             <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{{ 'المبيعات الناجحة وتعبئات الرصيد فقط؛ التعبئات ليست إيرادات مبيعات.' if ar else 'Successful sales and credit top-ups only. Top-ups are not sale revenue.' }}</p>
         </div>
+        <a id="tx-export" href="/api/transaction-ledger/export?lang={{ lang|default('en') }}" aria-label="{{ 'تصدير جميع النتائج المطابقة إلى Excel' if ar else 'Export all matching records to Excel' }}" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-blue-800 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-700">{{ 'تصدير XLSX' if ar else 'Export XLSX' }}</a>
         <span id="tx-count" class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">—</span>
     </header>
 
@@ -218,10 +219,10 @@
     let listTimer = null;
     let listAbort = null;
 
-    function buildQuery() {
+    function buildQuery(includePaging = true) {
         const params = new URLSearchParams();
         if (typeFilter.value !== 'all') params.set('record_type', typeFilter.value);
-        if (pageOffset) params.set('offset', String(pageOffset));
+        if (includePaging && pageOffset) params.set('offset', String(pageOffset));
         if (operatorFilter.value) params.set('operator_code', operatorFilter.value);
         if (typeFilter.value === 'sale' && serviceFilter.value) params.set('service_code', serviceFilter.value);
         const phone = phoneFilter.value.trim();
@@ -230,6 +231,12 @@
         const query = params.toString();
         return query ? '?' + query : '';
     }
+    function updateExportLink() {
+        const params = new URLSearchParams(buildQuery(false));
+        params.set('lang', pageLang);
+        document.getElementById('tx-export').href = '/api/transaction-ledger/export?' + params.toString();
+    }
+    document.getElementById('tx-export').addEventListener('click', updateExportLink);
     function makeCell(className) {
         const cell = document.createElement('td');
         cell.className = className;
@@ -482,6 +489,7 @@
         }
     }
     function queueList() {
+        updateExportLink();
         pageOffset = 0;
         clearTimeout(listTimer);
         listTimer = setTimeout(fetchTransactions, DEBOUNCE_MS);
