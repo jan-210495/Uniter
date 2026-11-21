@@ -241,8 +241,8 @@ def test_commit_records_one_successful_sale_and_one_debit(client) -> None:
             "transaction_id": payload["id"],
             "operator_code": "mtn",
             "amount_cents": 5000,
-            "commission_cents": 250,
-            "profit_cents": 250,
+            "commission_cents": 1000,
+            "profit_cents": 1000,
         }
     ]
 

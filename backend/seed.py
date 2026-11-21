@@ -47,6 +47,17 @@ SYRIATEL_MODES = {"prepaid": "1", "postpaid": "5"}
 
 async def seed_data(session: AsyncSession) -> None:
     """Insert missing configuration and commit; leave existing rows unchanged."""
+    # Fixtures and fresh initialization may call seed_data after create_all.
+    # Insert missing independent defaults only; never overwrite saved choices.
+    if __package__:
+        from .commission import DEFAULT_COMMISSION_RATES, commission_key
+    else:
+        from commission import DEFAULT_COMMISSION_RATES, commission_key
+    for service, default in DEFAULT_COMMISSION_RATES.items():
+        await session.execute(sqlite_insert(Setting).values(
+            key=commission_key(service), value=str(default), updated_at=utc_now()
+        ).on_conflict_do_nothing(index_elements=[Setting.key]))
+
     # Insert active CurrencyDenomination row if not exists
     denom = await session.scalar(
         select(CurrencyDenomination).where(CurrencyDenomination.scale_name == "post-2026")

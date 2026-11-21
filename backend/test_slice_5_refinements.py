@@ -190,8 +190,8 @@ def test_pos_flow_creates_transaction_deducts_balance_and_records_profit(client)
                 )
             ).scalar_one()
             assert profit.operator_code == "mtn"
-            assert profit.commission_cents == 250  # 5% of 5000
-            assert profit.profit_cents == 250
+            assert profit.commission_cents == 1000  # 20% prepaid rate on 5000
+            assert profit.profit_cents == 1000
 
     asyncio.run(check_ledger())
 

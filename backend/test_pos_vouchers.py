@@ -262,7 +262,7 @@ def test_voucher_selection_fills_custom_amount_summary_and_payload() -> None:
     assert result["elements"]["amount"]["value"] == "4.80"
     assert result["elements"]["amount"]["invalid"] == ""
     assert result["elements"]["summary-amount"]["text"] == "4.8"
-    assert result["elements"]["summary-net"]["text"] == "5.04"
+    assert result["elements"]["summary-net"]["text"] == "5.76"
     pressed = [voucher for voucher in result["vouchers"] if voucher["pressed"] == "true"]
     assert [(voucher["operator"], voucher["amount"]) for voucher in pressed] == [
         ("syriatel", "4.80")

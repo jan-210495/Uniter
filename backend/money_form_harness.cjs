@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 class Element {
-  constructor(id = '') { this.id=id; this.value=''; this.textContent=''; this.dataset={}; this.handlers={}; this.children=[]; this.hidden=false; this.classList={add(){},remove(){},toggle(){},contains(){return false;}}; }
+  constructor(id = '') { this.id=id; this.value=''; this.validity={badInput:false}; this.textContent=''; this.dataset={}; this.handlers={}; this.children=[]; this.hidden=false; this.classList={add(){},remove(){},toggle(){},contains(){return false;}}; }
   addEventListener(type, fn) { this.handlers[type]=fn; }
   querySelector(selector) { return element(this.id+':'+selector); }
   querySelectorAll() { return []; }
@@ -23,12 +23,13 @@ element('pos-sim-data').textContent=input.posSims||'';
 const requests=[];
 const document={ getElementById:element, querySelector:element, querySelectorAll(s){ return s==='[data-operator-card]'?[card]:s==='.topup-form'?[topup]:[]; }, createElement:()=>new Element(), createDocumentFragment:()=>new Element(), addEventListener(){} };
 let balance=0;
+const rates={commission_rate_prepaid:'0.20',commission_rate_postpaid:'0.06'};
 const context={document, console, AbortController, Date, setTimeout:()=>0, clearTimeout(){}, window:{confirm:()=>true}, navigator:{}, alert(){}, fetch:async(url,opts={})=>{
   const body=opts.body?JSON.parse(opts.body):null; requests.push({url,method:opts.method||'GET',body});
   let data=[];
   if(/^\/api\/sims\/\d+\/topup$/.test(url)) { balance+=body.amount_cents; data={sim_id:Number(topup.dataset.simId),amount_cents:body.amount_cents,balance_cents:balance,reference:'SIMTOPUP-test'}; }
   else if(url==='/api/operators/balance') data=[{operator_code:'mtn',balance_cents:balance}];
-  else if(url==='/api/settings/commission') data={commission_rate:'0.05'};
+  else if(url==='/api/settings/commission') { if(body) Object.assign(rates,body); data={...rates}; }
   else if(url==='/api/transactions/preview') data={ussd_string:'captured', commit_key:'moneyboundarykey0000000001'};
   return {ok:true,status:200,json:async()=>data};
 }};

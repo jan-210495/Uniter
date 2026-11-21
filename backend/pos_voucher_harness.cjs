@@ -154,7 +154,7 @@ const context = {
     const body = options.body ? JSON.parse(options.body) : null;
     requests.push({ url, method: options.method || 'GET', body });
     let data = {};
-    if (url === '/api/settings/commission') data = { commission_rate: '0.05' };
+    if (url === '/api/settings/commission') data = { commission_rate_prepaid: '0.20', commission_rate_postpaid: '0.06' };
     else if (url === '/api/transactions/preview') data = { ussd_string: '*stub*', commit_key: 'voucherpreviewkey000000000001' };
     return { ok: true, status: 200, json: async () => data };
   },

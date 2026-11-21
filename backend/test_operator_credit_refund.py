@@ -133,7 +133,7 @@ def test_refund_uses_original_ledger_operator_not_mutable_service(client):
         other = await session.scalar(select(Operator.id).where(Operator.code == 'syriatel'))
         # Avoid the per-operator service-code uniqueness guard in this hostile probe.
         await session.execute(update(Service).where(Service.id == service_id).values(operator_id=other, code='moved'))
-        await database.set_setting(session, 'commission_rate', '0.99')
+        await database.set_setting(session, 'commission_rate_prepaid', '0.99')
         await session.commit()
     run_db(sessions, change)
     assert set_failed(http, sale['id']).status_code == 200
@@ -179,7 +179,7 @@ def test_nameless_refund_reports_keep_existing_profit_and_register_policy(client
     assert set_failed(http, sale['id']).status_code == 200
     summary = http.get('/api/stats/summary').json()
     assert summary['totals']['volume_cents'] == 12_000
-    assert summary['totals']['profit_cents'] == 600
+    assert summary['totals']['profit_cents'] == 2400
     assert summary['by_status'][1] == {'status': 'failed', 'count': 1, 'volume_cents': 12_000}
     assert http.get('/api/register/summary').json()['cash_collected_cents'] == 0
     assert http.get('/api/transactions', params={'status': 'failed'}).json()[0]['id'] == sale['id']

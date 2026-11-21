@@ -38,23 +38,25 @@
         <section id="commission-card" class="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="commission-title">
             <div class="mb-5 border-b border-slate-100 pb-4">
                 <h2 id="commission-title" class="text-lg font-bold text-slate-900">{{ 'نسبة العمولة' if ar else 'Commission rate' }}</h2>
-                <p class="mt-1 text-sm text-slate-500">{{ 'النسبة المطبقة على كل معاملة شحن.' if ar else 'The rate applied to every charging transaction.' }}</p>
+                <p class="mt-1 text-sm text-slate-500">{{ 'نسبتان مستقلتان للمبيعات الجديدة فقط.' if ar else 'Independent rates for future sales only.' }}</p>
             </div>
-            <p id="commission-current" role="status" aria-live="polite" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-semibold text-slate-700">…</p>
-            <form id="commission-form" class="mt-4 space-y-3" novalidate>
-                <fieldset id="commission-fieldset" class="min-w-0 space-y-3"{% if settings_locked %} disabled aria-describedby="commission-locked"{% endif %}>
-                    <div>
-                        <label for="commission-input" class="mb-2 block text-sm font-semibold text-slate-700">{{ 'نسبة جديدة (من 0 إلى 1)' if ar else 'New rate (0 to 1)' }}</label>
-                        <input id="commission-input" name="rate" type="number" min="0" max="1" step="any" inputmode="decimal" dir="ltr" required placeholder="0.05" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
-                        <p class="mt-1.5 text-xs text-slate-500">{{ 'قيمة عشرية بين 0 و 1، مثل 0.05.' if ar else 'A decimal between 0 and 1, e.g. 0.05.' }}</p>
-                    </div>
-                    <button type="submit" class="w-full rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تحديث النسبة' if ar else 'Update rate' }}</button>
-                </fieldset>
-                {% if settings_locked %}
-                <p id="commission-locked" class="admin-only-note rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">{{ 'يمكن للمدير فقط تغيير هذا الإعداد.' if ar else 'Only an admin can change this setting.' }}</p>
-                {% endif %}
-                <p id="commission-feedback" role="status" aria-live="polite" class="min-h-[1.25rem] text-sm font-medium text-slate-600"></p>
-            </form>
+            <fieldset id="commission-fieldset" class="min-w-0 space-y-5"{% if settings_locked %} disabled aria-describedby="commission-locked"{% endif %}>
+            {% for code, default, label in [('prepaid', '0.20', 'شحن مسبق الدفع' if ar else 'Pre-Paid Charging'), ('postpaid', '0.06', 'دفع الفواتير' if ar else 'Post-Paid Bill Payment')] %}
+                <div class="min-w-0 rounded-xl border border-slate-200 p-3">
+                    <h3 class="mb-2 font-semibold text-slate-900">{{ label }}</h3>
+                    <p id="commission-current-{{ code }}" role="status" aria-live="polite" class="text-sm text-slate-700">…</p>
+                    <form id="commission-form-{{ code }}" class="mt-3 space-y-3" novalidate>
+                        <label for="commission-input-{{ code }}" class="block text-sm font-semibold text-slate-700">{{ label }} — {{ 'نسبة جديدة (من 0 إلى 1)' if ar else 'New rate (0 to 1)' }}</label>
+                        <input id="commission-input-{{ code }}" name="commission_rate_{{ code }}" type="number" min="0" max="1" step="any" inputmode="decimal" dir="ltr" required placeholder="{{ default }}" class="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-start text-slate-900 outline-none focus:border-blue-700 focus:ring-2 focus:ring-blue-100">
+                        <button type="submit" class="w-full rounded-lg bg-blue-950 px-4 py-3 text-sm font-bold text-white hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">{{ 'تحديث النسبة' if ar else 'Update rate' }} — {{ label }}</button>
+                        <p id="commission-feedback-{{ code }}" role="status" aria-live="polite" class="min-h-[1.25rem] text-sm font-medium text-slate-600"></p>
+                    </form>
+                </div>
+            {% endfor %}
+            </fieldset>
+            {% if settings_locked %}
+            <p id="commission-locked" class="admin-only-note mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">{{ 'يمكن للمدير فقط تغيير هذا الإعداد.' if ar else 'Only an admin can change this setting.' }}</p>
+            {% endif %}
         </section>
 
         <section id="denomination-card" class="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="denomination-title">
@@ -263,10 +265,13 @@
         'timezoneUpdateFailed': 'تعذر تحديث المنطقة الزمنية. حاول مرة أخرى.' if ar else 'Could not update the timezone. Try again.',
         'adminOnly': 'يمكن للمدير فقط تغيير هذا الإعداد.' if ar else 'Only an admin can change this setting.'
     }|tojson }};
-    const commissionForm = document.getElementById('commission-form');
-    const commissionInput = document.getElementById('commission-input');
-    const commissionCurrent = document.getElementById('commission-current');
-    const commissionFeedback = document.getElementById('commission-feedback');
+    const commissionControls = ['prepaid', 'postpaid'].map((service) => ({
+        key: 'commission_rate_' + service,
+        form: document.getElementById('commission-form-' + service),
+        input: document.getElementById('commission-input-' + service),
+        current: document.getElementById('commission-current-' + service),
+        feedback: document.getElementById('commission-feedback-' + service)
+    }));
     const denominationForm = document.getElementById('denomination-form');
 
     function setFeedback(element, text, tone) {
@@ -278,46 +283,44 @@
         if (!Number.isFinite(rate)) return '';
         return (rate * 100).toLocaleString('en-US', { maximumFractionDigits: 4 }) + '%';
     }
-    function showRate(value) {
-        commissionCurrent.textContent = value === null
+    function showRate(control, value) {
+        control.current.textContent = value === null
             ? messages.rateUnavailable
             : messages.currentRate + ': ' + value + ' (' + formatRatePercent(value) + ')';
     }
     async function loadRate() {
         try {
             const response = await fetch('/api/settings/commission', { cache: 'no-store' });
-            if (!response.ok) throw new Error('rate unavailable');
+            if (!response.ok) throw new Error('rates unavailable');
             const data = await response.json();
-            showRate(data.commission_rate);
+            commissionControls.forEach((control) => showRate(control, data[control.key] ?? null));
         } catch (_) {
-            showRate(null);
+            commissionControls.forEach((control) => showRate(control, null));
         }
     }
-
-    commissionForm.addEventListener('submit', async (event) => {
+    commissionControls.forEach((control) => control.form.addEventListener('submit', async (event) => {
         event.preventDefault();
-        if (commissionInput.validity.badInput || !commissionInput.value.trim()) {
-            setFeedback(commissionFeedback, messages.invalidRate, 'error');
+        if (control.input.validity.badInput || !control.input.value.trim()) {
+            setFeedback(control.feedback, messages.invalidRate, 'error');
             return;
         }
-        const rate = commissionInput.value.trim();
         try {
             const response = await fetch('/api/settings/commission', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ rate })
+                body: JSON.stringify({ [control.key]: control.input.value.trim() })
             });
             if (!response.ok) {
-                setFeedback(commissionFeedback, response.status === 403 ? messages.adminOnly : response.status === 422 ? messages.invalidRate : messages.updateFailed, 'error');
+                setFeedback(control.feedback, response.status === 403 ? messages.adminOnly : response.status === 422 ? messages.invalidRate : messages.updateFailed, 'error');
                 return;
             }
             const data = await response.json();
-            showRate(data.commission_rate);
-            setFeedback(commissionFeedback, messages.updated, 'success');
+            showRate(control, data[control.key]);
+            setFeedback(control.feedback, messages.updated, 'success');
         } catch (_) {
-            setFeedback(commissionFeedback, messages.updateFailed, 'error');
+            setFeedback(control.feedback, messages.updateFailed, 'error');
         }
-    });
+    }));
 
     if (denominationForm) {
         const denominationSelect = document.getElementById('denom-select');

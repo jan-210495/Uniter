@@ -45,27 +45,62 @@ def test_settings_seed_updates_and_missing_rate(tmp_path, monkeypatch) -> None:
             async with sessions() as session:
                 assert await database.get_setting(session, "missing") is None
                 assert await database.get_setting(session, "missing", "fallback") == "fallback"
-                assert (await get_commission_for_transaction(session, 5000))["commission_cents"] == 250
+                assert (await get_commission_for_transaction(session, 5000, "prepaid"))["commission_cents"] == 1000
             await database.init_db()
             async with sessions() as session:
-                assert await database.get_setting(session, "commission_rate") == "0.05"
-                first = await database.set_setting(session, "commission_rate", "0.12")
+                assert await database.get_setting(session, "commission_rate_prepaid") == "0.20"
+                assert await database.get_setting(session, "commission_rate_postpaid") == "0.06"
+                await database.set_setting(session, "commission_rate_postpaid", "0.18")
+                first = await database.set_setting(session, "commission_rate_prepaid", "0.12")
                 first_id = first.id
                 await session.commit()
-                assert (await get_commission_for_transaction(session, 5000))["commission_cents"] == 600
+                assert (await get_commission_for_transaction(session, 5000, "prepaid"))["commission_cents"] == 600
             await database.init_db()
             async with sessions() as session:
-                assert await database.get_setting(session, "commission_rate") == "0.12"
-                setting = await database.set_setting(session, "commission_rate", "0.30")
+                assert await database.get_setting(session, "commission_rate_prepaid") == "0.12"
+                assert await database.get_setting(session, "commission_rate_postpaid") == "0.18"
+                setting = await database.set_setting(session, "commission_rate_prepaid", "0.30")
                 assert setting.id == first_id
                 await session.rollback()
             async with sessions() as session:
-                assert await database.get_setting(session, "commission_rate") == "0.12"
-                await database.set_setting(session, "commission_rate", "bad")
+                assert await database.get_setting(session, "commission_rate_prepaid") == "0.12"
+                await database.set_setting(session, "commission_rate_prepaid", "bad")
                 await session.commit()
                 with pytest.raises(ValueError, match="valid decimal"):
-                    await get_commission_for_transaction(session, 5000)
+                    await get_commission_for_transaction(session, 5000, "prepaid")
         finally:
             await engine.dispose()
 
+    asyncio.run(check())
+
+
+def test_seed_preserves_both_rates_and_ignores_legacy_setting(tmp_path):
+    from backend.seed import seed_data
+
+    async def check():
+        engine = create_async_engine(URL.create("sqlite+aiosqlite", database=str(tmp_path / "seed.db")))
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(database.Base.metadata.create_all)
+            async with sessions() as session:
+                await database.set_setting(session, 'commission_rate', '0.99')
+                await session.commit()
+                assert (await get_commission_for_transaction(session, 5000, 'prepaid'))['commission_cents'] == 1000
+                assert (await get_commission_for_transaction(session, 5000, 'postpaid'))['commission_cents'] == 300
+                await seed_data(session)
+                assert await database.get_setting(session, 'commission_rate_prepaid') == '0.20'
+                assert await database.get_setting(session, 'commission_rate_postpaid') == '0.06'
+                await database.set_setting(session, 'commission_rate_prepaid', '0.13')
+                await database.set_setting(session, 'commission_rate_postpaid', '0.17')
+                await session.commit()
+                await seed_data(session)
+            async with sessions() as session:
+                assert await database.get_setting(session, 'commission_rate_prepaid') == '0.13'
+                assert await database.get_setting(session, 'commission_rate_postpaid') == '0.17'
+                assert await database.get_setting(session, 'commission_rate') == '0.99'
+                with pytest.raises(ValueError, match='Unsupported'):
+                    await get_commission_for_transaction(session, 5000, 'unknown')
+        finally:
+            await engine.dispose()
     asyncio.run(check())

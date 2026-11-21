@@ -91,12 +91,12 @@ def test_pos_500_summary_matches_customer_total_api(client):
     pos_ready(client)
     result = run_form(client, '/pos', [{'values':{'amount':'500','phone':'0944123456','operator':'mtn','service':'prepaid'},'id':'amount','event':'input'},
                                      {'id':'charge-form','event':'submit'}])
-    assert result['elements']['summary-net']['text'] == '525'
+    assert result['elements']['summary-net']['text'] == '600'
     payload = next(r['body'] for r in result['requests'] if r['url']=='/api/transactions/preview')
     assert payload['amount_cents'] == 50_000
     calculation=client.get('/api/commission/calculate', params={'amount_cents':50_000,'operator_code':'mtn','service_code':'prepaid'}).json()
-    assert calculation['total_cents'] == 52_500
-    assert calculation['net_cents'] == 47_500  # retained legacy API field
+    assert calculation['total_cents'] == 60_000
+    assert calculation['net_cents'] == 40_000  # retained legacy API field
 
 
 @pytest.mark.parametrize('value', ['', '-1', '1.5', 'abc', '1e30', '9007199254740991'])
@@ -129,3 +129,58 @@ _COMMIT_KEYS = itertools.count(1)
 def new_commit_key() -> str:
     """A fresh commit key: every call is a deliberate, distinct sale."""
     return f"boundarykey{next(_COMMIT_KEYS):021d}"
+
+
+@pytest.mark.parametrize('lang', ['en', 'ar'])
+@pytest.mark.parametrize('service,other', [('prepaid', 'postpaid'), ('postpaid', 'prepaid')])
+def test_settings_independent_controls_send_only_selected_key(client, lang, service, other):
+    html = client.get('/settings', params={'lang': lang}).text
+    assert f'id="commission-input-{service}"' in html
+    assert f'id="commission-current-{other}"' in html
+    result = run_form(client, '/settings?lang=' + lang, [{
+        'values': {'commission-input-' + service: '0.12345678901234567890123456789'},
+        'id': 'commission-form-' + service, 'event': 'submit'
+    }])
+    requests = [r for r in result['requests'] if r['method'] == 'PUT']
+    assert len(requests) == 1
+    assert requests[0]['body'] == {'commission_rate_' + service: '0.12345678901234567890123456789'}
+    elements = result['elements']
+    assert '0.12345678901234567890123456789' in elements['commission-current-' + service]['text']
+    assert ('0.20' if other == 'prepaid' else '0.06') in elements['commission-current-' + other]['text']
+    assert elements['commission-feedback-' + service]['text']
+    assert elements['commission-feedback-' + other]['text'] == ''
+
+
+@pytest.mark.parametrize('lang', ['en', 'ar'])
+@pytest.mark.parametrize('service,amount', [('prepaid', 25), ('prepaid', 15), ('postpaid', 25), ('postpaid', 75), ('postpaid', 5000)])
+def test_pos_service_switch_matches_exact_cents_api_and_commit(client, lang, service, amount):
+    from contextlib import aclosing
+    import asyncio
+    from sqlalchemy import select
+    from backend.database import ProfitLedger, get_db
+    from backend.main import app
+    pos_ready(client)
+    other = 'postpaid' if service == 'prepaid' else 'prepaid'
+    result = run_form(client, '/pos?lang=' + lang, [
+        {'values': {'amount': format(amount / 100, '.2f'), 'service': other}, 'id': 'amount', 'event': 'input'},
+        {'values': {'service': service}, 'id': 'service', 'event': 'change'}
+    ])
+    calculation = client.get('/api/commission/calculate', params={
+        'operator_code': 'mtn', 'service_code': service, 'amount_cents': amount
+    }).json()
+    def display(cents):
+        return f'{cents // 100:,}' + (('.' + f'{cents % 100:02d}'.rstrip('0')) if cents % 100 else '')
+    assert result['elements']['summary-rate']['text'] == ('20%' if service == 'prepaid' else '6%')
+    assert result['elements']['summary-commission']['text'] == display(calculation['commission_cents'])
+    assert result['elements']['summary-net']['text'] == display(calculation['total_cents'])
+    response = client.post('/api/transactions', json=with_sim(client, {
+        'customer_phone': '0944123456', 'operator_code': 'mtn', 'service_code': service,
+        'amount_cents': amount, 'commit_key': new_commit_key()
+    }))
+    assert response.status_code == 200
+    async def check():
+        async with aclosing(app.dependency_overrides[get_db]()) as dependency:
+            session = await anext(dependency)
+            entry = await session.scalar(select(ProfitLedger).where(ProfitLedger.transaction_id == response.json()['id']))
+            assert entry.commission_cents == entry.profit_cents == calculation['commission_cents']
+    asyncio.run(check())

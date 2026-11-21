@@ -228,7 +228,7 @@
     const summaryRate = document.getElementById('summary-rate');
     const summaryCommission = document.getElementById('summary-commission');
     const summaryNet = document.getElementById('summary-net');
-    let rate = null;
+    let rates = { prepaid: null, postpaid: null };
 
     function parseAmount(value) {
         const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(value.trim());
@@ -274,6 +274,7 @@
         return quotient + (remainder * 2n > denominator || (remainder * 2n === denominator && quotient % 2n !== 0n) ? 1n : 0n);
     }
     function updateSummary() {
+        const rate = rates[service.value] ?? null;
         const cents = parseAmount(amount.value);
         summaryAmount.textContent = cents === null ? '—' : formatCents(cents);
         summaryRate.textContent = rate === null ? '—' : formatRate(rate);
@@ -615,19 +616,19 @@
     });
     nameInput.addEventListener('input', clearResult);
     async function loadRate() {
-        rate = null;
+        rates = { prepaid: null, postpaid: null };
         updateSummary();
         try {
             const response = await fetch('/api/settings/commission', { cache: 'no-store' });
             if (!response.ok) throw new Error('Rate unavailable');
             const data = await response.json();
-            rate = parseRate(data.commission_rate);
-            if (rate === null) throw new Error('Invalid rate');
+            rates = { prepaid: parseRate(data.commission_rate_prepaid), postpaid: parseRate(data.commission_rate_postpaid) };
+            if (rates.prepaid === null || rates.postpaid === null) throw new Error('Invalid rate');
             rateStatus.textContent = messages.rateLoaded;
             // The rate line is desktop-only; a failure still surfaces on phones.
             rateStatus.classList.add('hidden');
         } catch (_) {
-            rate = null;
+            rates = { prepaid: null, postpaid: null };
             rateStatus.textContent = messages.rateError;
             rateStatus.classList.remove('hidden');
         }
@@ -655,6 +656,7 @@
         clearResult();
     });
     service.addEventListener('change', () => {
+        updateSummary();
         syncVoucherVisibility();
         clearResult();
     });

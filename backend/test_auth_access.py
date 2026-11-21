@@ -37,7 +37,7 @@ PROTECTED_API_READS = (
 )
 
 PROTECTED_API_WRITES = (
-    ("put", "/api/settings/commission", {"rate": "0.5"}),
+    ("put", "/api/settings/commission", {"commission_rate_prepaid": "0.5", "commission_rate_postpaid": "0.3"}),
     ("put", "/api/settings/timezone", {"timezone": "UTC"}),
     ("post", "/api/operators/topup", {"operator_code": "mtn", "amount_cents": 100}),
     ("post", "/api/transactions", {

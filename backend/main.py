@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 from sqlalchemy import func, literal, or_, select, union_all, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 if __package__:
     from . import auth, sims, users, xlsx
-    from .commission import get_commission_for_transaction
+    from .commission import get_commission_for_transaction, read_commission_rates
     from .database import TRANSACTION_STATUSES, MAX_MINOR_UNITS, Operator, Service, SimCard, SimLedger, Transaction, User, OperatorTopup, OperatorBalance, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from .seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from .validation import validate_syrian_phone
@@ -27,7 +27,7 @@ else:
     import auth
     import sims
     import users
-    from commission import get_commission_for_transaction
+    from commission import get_commission_for_transaction, read_commission_rates
     from database import TRANSACTION_STATUSES, MAX_MINOR_UNITS, Operator, Service, SimCard, SimLedger, Transaction, User, OperatorTopup, OperatorBalance, ProfitLedger, CashRegister, CurrencyDenomination, get_db, get_setting, set_setting, upgrade_existing_database
     from seed import DEFAULT_MTN_DOMAIN, DEFAULT_SYRIATEL_DOMAIN, generate_ussd
     from validation import validate_syrian_phone
@@ -162,7 +162,16 @@ class TransactionPreviewResponse(BaseModel):
 
 
 class CommissionSettingUpdate(BaseModel):
-    rate: Decimal = Field(ge=0, le=1, allow_inf_nan=False)
+    """Partial, atomic update; explicit service keys, no shared-rate alias."""
+    model_config = ConfigDict(extra="forbid")
+    commission_rate_prepaid: Decimal | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    commission_rate_postpaid: Decimal | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def require_rates(self):
+        if not self.model_fields_set or any(getattr(self, key) is None for key in self.model_fields_set):
+            raise ValueError("Provide at least one non-null service commission rate")
+        return self
 
 
 class DomainSettingUpdate(BaseModel):
@@ -695,17 +704,15 @@ def health() -> dict[str, str]:
 
 @app.get("/api/settings/commission")
 async def read_commission_setting(db: DbSession) -> dict[str, str]:
-    rate = await get_setting(db, "commission_rate", "0.05")
-    assert rate is not None
-    return {"commission_rate": rate}
+    return await read_commission_rates(db)
 
 
 @app.put("/api/settings/commission", dependencies=ADMIN_ONLY)
 async def update_commission_setting(data: CommissionSettingUpdate, db: DbSession) -> dict[str, str]:
-    setting = await set_setting(db, "commission_rate", str(data.rate))
-    value = setting.value
+    for key, rate in data.model_dump(exclude_unset=True).items():
+        await set_setting(db, key, str(rate))
     await db.commit()
-    return {"commission_rate": value}
+    return await read_commission_rates(db)
 
 
 @app.get("/api/settings/mtn-domain")
@@ -775,7 +782,7 @@ async def commission_calculation(
     if service is None:
         raise HTTPException(status_code=404, detail="Service not found for operator")
     try:
-        return await get_commission_for_transaction(db, amount_cents)
+        return await get_commission_for_transaction(db, amount_cents, service.code)
     except ValueError as exc:
         raise HTTPException(status_code=500, detail="Invalid stored commission rate") from exc
 
@@ -985,7 +992,7 @@ async def create_transaction(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     try:
-        commission = await get_commission_for_transaction(db, data.amount_cents)
+        commission = await get_commission_for_transaction(db, data.amount_cents, service.code)
     except ValueError as exc:
         raise HTTPException(status_code=500, detail="Invalid stored commission rate") from exc
     commission_cents = int(commission["commission_cents"])

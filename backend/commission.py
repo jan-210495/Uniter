@@ -8,7 +8,23 @@ if __package__:
 else:
     from database import get_setting
 
-DEFAULT_COMMISSION_RATE = Decimal("0.05")
+# Fresh-install defaults only. The old shared commission_rate is never read.
+DEFAULT_COMMISSION_RATES = {"prepaid": Decimal("0.20"), "postpaid": Decimal("0.06")}
+
+
+def commission_key(service_code: str) -> str:
+    if service_code not in DEFAULT_COMMISSION_RATES:
+        raise ValueError("Unsupported commission service")
+    return "commission_rate_" + service_code
+
+
+async def read_commission_rates(session: AsyncSession) -> dict[str, str]:
+    rates = {}
+    for service, default in DEFAULT_COMMISSION_RATES.items():
+        value = await get_setting(session, commission_key(service), str(default))
+        assert value is not None
+        rates[commission_key(service)] = value
+    return rates
 
 
 class CommissionResult(TypedDict):
@@ -39,11 +55,11 @@ def calculate_commission(amount_cents: int, rate: Decimal) -> CommissionResult:
 
 
 async def get_commission_for_transaction(
-    session: AsyncSession, amount_cents: int
+    session: AsyncSession, amount_cents: int, service_code: str
 ) -> CommissionResult:
-    stored_rate = await get_setting(session, "commission_rate")
+    stored_rate = await get_setting(session, commission_key(service_code), str(DEFAULT_COMMISSION_RATES[service_code]))
     try:
-        rate = DEFAULT_COMMISSION_RATE if stored_rate is None else Decimal(stored_rate)
+        rate = Decimal(stored_rate)
     except InvalidOperation as exc:
         raise ValueError("Stored commission rate is not a valid decimal") from exc
     return calculate_commission(amount_cents, rate)

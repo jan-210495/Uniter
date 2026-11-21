@@ -159,7 +159,9 @@ def test_seed_inserts_domain_settings_idempotently(client: TestClient) -> None:
     # Existing values are preserved; defaults are not duplicated or reset.
     assert settings["MTN_DOMAIN"] == "99999"
     assert settings["SYRIATEL_DOMAIN"] == "67858"
-    assert len(settings) == 2
+    assert settings["commission_rate_prepaid"] == "0.20"
+    assert settings["commission_rate_postpaid"] == "0.06"
+    assert len(settings) == 4
 
 
 def test_transaction_deducts_balance_and_records_profit(client: TestClient) -> None:
@@ -184,8 +186,8 @@ def test_transaction_deducts_balance_and_records_profit(client: TestClient) -> N
             assert entry.transaction_id == transaction["id"]
             assert entry.operator_code == "mtn"
             assert entry.amount_cents == 5000
-            assert entry.commission_cents == 250  # 5% of 5000
-            assert entry.profit_cents == 250
+            assert entry.commission_cents == 1000  # 20% of 5000
+            assert entry.profit_cents == 1000
             assert entry.created_at
 
     asyncio.run(check_profit())
@@ -232,7 +234,7 @@ def test_profit_ledger_accumulates_across_transactions(client: TestClient) -> No
     assert post_transaction(client, "0933123456", "mtn", "prepaid", 5000).status_code == 200
     assert post_transaction(client, "0944123456", "mtn", "prepaid", 2500).status_code == 200
     # A changed commission rate applies to later transactions only.
-    assert client.put("/api/settings/commission", json={"rate": "0.10"}).status_code == 200
+    assert client.put("/api/settings/commission", json={"commission_rate_postpaid": "0.10"}).status_code == 200
     assert post_transaction(client, "0933123456", "syriatel", "postpaid", 10000).status_code == 200
 
     # Slice 4.1: each company's SIM card carries the face debits.
@@ -249,12 +251,12 @@ def test_profit_ledger_accumulates_across_transactions(client: TestClient) -> No
             ).scalars().all()
             assert len(entries) == 3
             assert [(e.operator_code, e.amount_cents, e.commission_cents, e.profit_cents) for e in entries] == [
-                ("mtn", 5000, 250, 250),
-                ("mtn", 2500, 125, 125),
+                ("mtn", 5000, 1000, 1000),
+                ("mtn", 2500, 500, 500),
                 ("syriatel", 10000, 1000, 1000),
             ]
-            assert sum(e.commission_cents for e in entries) == 1375
-            assert sum(e.profit_cents for e in entries) == 1375
+            assert sum(e.commission_cents for e in entries) == 2500
+            assert sum(e.profit_cents for e in entries) == 2500
 
     asyncio.run(check_ledger())
 

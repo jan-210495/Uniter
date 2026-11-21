@@ -163,19 +163,19 @@ def test_phone_validation_errors(client: TestClient) -> None:
 
 
 def test_commission_settings_and_calculation(client: TestClient) -> None:
-    assert client.get("/api/settings/commission").json() == {"commission_rate": "0.05"}
+    assert client.get("/api/settings/commission").json() == {"commission_rate_prepaid": "0.20", "commission_rate_postpaid": "0.06"}
     params = {"amount_cents": 5000, "operator_code": "mtn", "service_code": "prepaid"}
     response = client.get("/api/commission/calculate", params=params)
     assert response.status_code == 200
-    assert response.json() == {"amount_cents": 5000, "commission_cents": 250, "net_cents": 4750, "total_cents": 5250, "rate": "0.05"}
-    update = client.put("/api/settings/commission", json={"rate": "0.12"})
+    assert response.json() == {"amount_cents": 5000, "commission_cents": 1000, "net_cents": 4000, "total_cents": 6000, "rate": "0.20"}
+    update = client.put("/api/settings/commission", json={"commission_rate_prepaid": "0.12"})
     assert update.status_code == 200
-    assert update.json() == {"commission_rate": "0.12"}
-    assert client.get("/api/settings/commission").json() == {"commission_rate": "0.12"}
+    assert update.json() == {"commission_rate_prepaid": "0.12", "commission_rate_postpaid": "0.06"}
+    assert client.get("/api/settings/commission").json() == {"commission_rate_prepaid": "0.12", "commission_rate_postpaid": "0.06"}
     response = client.get("/api/commission/calculate", params=params)
     assert response.json() == {"amount_cents": 5000, "commission_cents": 600, "net_cents": 4400, "total_cents": 5600, "rate": "0.12"}
     params.update(operator_code="syriatel", service_code="postpaid")
-    assert client.get("/api/commission/calculate", params=params).json()["commission_cents"] == 600
+    assert client.get("/api/commission/calculate", params=params).json()["commission_cents"] == 300
     params["operator_code"] = "unknown"
     assert client.get("/api/commission/calculate", params=params).status_code == 404
     params.update(operator_code="mtn", service_code="unknown")
@@ -186,8 +186,8 @@ def test_commission_settings_and_calculation(client: TestClient) -> None:
 
 @pytest.mark.parametrize("rate", ["-0.01", "1.01", "NaN", "Infinity", "-Infinity", "not a number"])
 def test_invalid_commission_setting(client: TestClient, rate: str) -> None:
-    assert client.put("/api/settings/commission", json={"rate": rate}).status_code == 422
-    assert client.get("/api/settings/commission").json() == {"commission_rate": "0.05"}
+    assert client.put("/api/settings/commission", json={"commission_rate_prepaid": rate}).status_code == 422
+    assert client.get("/api/settings/commission").json() == {"commission_rate_prepaid": "0.20", "commission_rate_postpaid": "0.06"}
 
 
 _COMMIT_KEYS = itertools.count(1)
@@ -203,3 +203,39 @@ def post_transaction(client: TestClient, payload: dict, **overrides):
     body.update(overrides)
     body["commit_key"] = new_commit_key()
     return client.post("/api/transactions", json=with_sim(client, body))
+
+
+@pytest.mark.parametrize('operator', ['mtn', 'syriatel'])
+def test_service_rates_commit_ledger_and_future_only_edits(client, operator):
+    from backend.database import ProfitLedger
+    fund_company(client, operator, 100000)
+    committed = []
+    for service, expected in [('prepaid', 1000), ('postpaid', 300)]:
+        params = {'amount_cents': 5000, 'operator_code': operator, 'service_code': service}
+        calculation = client.get('/api/commission/calculate', params=params).json()
+        assert calculation['commission_cents'] == expected
+        body = with_sim(client, dict(params, customer_phone='0944123456', commit_key=new_commit_key()))
+        response = client.post('/api/transactions', json=body)
+        assert response.status_code == 200, response.text
+        committed.append((body, response.json(), expected))
+    assert client.put('/api/settings/commission', json={
+        'commission_rate_prepaid': '0.30', 'commission_rate_postpaid': '0.08'
+    }).status_code == 200
+    # Replays return the stored sale, not a newly priced sale.
+    for body, saved, _ in committed:
+        assert client.post('/api/transactions', json=body).json() == saved
+    for service, expected in [('prepaid', 1500), ('postpaid', 400)]:
+        body = with_sim(client, {'amount_cents': 5000, 'operator_code': operator, 'service_code': service,
+                                'customer_phone': '0944123456', 'commit_key': new_commit_key()})
+        response = client.post('/api/transactions', json=body)
+        assert response.status_code == 200
+        committed.append((body, response.json(), expected))
+
+    async def check():
+        async with aclosing(app.dependency_overrides[get_db]()) as dependency:
+            session = await anext(dependency)
+            ledger = (await session.scalars(select(ProfitLedger).order_by(ProfitLedger.id))).all()
+            assert [(e.transaction_id, e.amount_cents, e.commission_cents, e.profit_cents) for e in ledger] == [
+                (saved['id'], 5000, expected, expected) for _, saved, expected in committed]
+    asyncio.run(check())
+    assert sim_balance(client, client.sim_ids[operator]) == 80000

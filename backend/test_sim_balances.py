@@ -302,7 +302,14 @@ def test_slice4_upgrade_with_sims_and_legacy_money_moves_nothing(env) -> None:
 
     run_all_startups()
 
-    assert _snapshot(env) == before
+    after = _snapshot(env)
+    # Default initialization inserts the two fresh independent settings only.
+    # Every historical row (including the unused shared rate) is unchanged.
+    additions = [row for row in after["settings"] if row[1].startswith("commission_rate_")]
+    assert [(row[1], row[2]) for row in additions] == [
+        ("commission_rate_prepaid", "0.20"), ("commission_rate_postpaid", "0.06")]
+    after["settings"] = [row for row in after["settings"] if row not in additions]
+    assert after == before
     _assert_installed_and_empty(env)
     # This old-schema fixture needs the fresh-only v1.0.5 column before
     # exercising current API serialization; no production migration is added.
@@ -709,9 +716,9 @@ def test_commit_debits_exactly_the_face_value_of_the_selected_sim(shop) -> None:
     assert balance(env, ids["sara"]) == 950_000
     assert {name: balance(env, ids[name]) for name in others} == others
     assert legacy_money(env)["operator_balance"] == legacy_before  # legacy credit untouched
-    # Commission/profit are computed exactly as before (5% of the face value).
+    # Commission/profit are computed at the prepaid default (20% of the face value).
     assert rows(env, "SELECT amount_cents, commission_cents, profit_cents FROM profit_ledger"
-                     " WHERE transaction_id = :id", id=committed["id"]) == [(50_000, 2_500, 2_500)]
+                     " WHERE transaction_id = :id", id=committed["id"]) == [(50_000, 10_000, 10_000)]
     assert rows(env, "SELECT sim_card_id, performed_by_user_id, amount_cents FROM transactions WHERE id = :id",
                 id=committed["id"]) == [(ids["sara"], sara_id, 50_000)]
     sale_rows = [row for row in ledger(env) if row[1] == "sale"]

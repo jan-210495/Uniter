@@ -234,8 +234,8 @@ const context = {
     if (url === '/api/settings/commission') {
       const commission = input.commission || 'ok';
       if (commission === 'error') return jsonResponse(false, 500, { detail: 'Rate unavailable' });
-      const rate = commission === 'invalid' ? 'nope' : '0.05';
-      return jsonResponse(true, 200, { commission_rate: rate });
+      const rate = commission === 'invalid' ? 'nope' : '0.20';
+      return jsonResponse(true, 200, { commission_rate_prepaid: rate, commission_rate_postpaid: '0.06' });
     }
     if (url === '/api/transactions/preview' && method === 'POST') {
       if (previewMode === 'insufficient') {

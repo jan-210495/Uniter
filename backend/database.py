@@ -892,8 +892,14 @@ async def init_db() -> None:
     await validate_existing_sim_balance_schema(engine)
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
-        statement = sqlite_insert(Setting).values(
-            key="commission_rate", value="0.05", updated_at=utc_now()
-        ).on_conflict_do_nothing(index_elements=[Setting.key])
-        await connection.execute(statement)
+        # Local import avoids a module cycle; these are fresh defaults, not a
+        # conversion of the historical shared setting or any stored sale.
+        if __package__:
+            from .commission import DEFAULT_COMMISSION_RATES, commission_key
+        else:
+            from commission import DEFAULT_COMMISSION_RATES, commission_key
+        for service, default in DEFAULT_COMMISSION_RATES.items():
+            await connection.execute(sqlite_insert(Setting).values(
+                key=commission_key(service), value=str(default), updated_at=utc_now()
+            ).on_conflict_do_nothing(index_elements=[Setting.key]))
     await _migrate_schema()

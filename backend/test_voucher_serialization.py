@@ -47,14 +47,14 @@ def test_every_voucher_generator_preserves_operator_contract(client, service, mo
 
 @pytest.mark.parametrize('lang', ['en', 'ar'])
 @pytest.mark.parametrize('value,cents,summary,total', [
-    ('1.92', 192, '1.92', '2.02'),
-    ('4.80', 480, '4.8', '5.04'),
-    ('62.50', 6250, '62.5', '65.62'),
-    ('192.30', 19230, '192.3', '201.92'),
-    ('432.69', 43269, '432.69', '454.32'),
-    ('3846.15', 384615, '3,846.15', '4,038.46'),
-    ('12.34', 1234, '12.34', '12.96'),  # custom amount, not a voucher
-    ('12.3', 1230, '12.3', '12.92'),
+    ('1.92', 192, '1.92', '2.3'),
+    ('4.80', 480, '4.8', '5.76'),
+    ('62.50', 6250, '62.5', '75'),
+    ('192.30', 19230, '192.3', '230.76'),
+    ('432.69', 43269, '432.69', '519.23'),
+    ('3846.15', 384615, '3,846.15', '4,615.38'),
+    ('12.34', 1234, '12.34', '14.81'),  # custom amount, not a voucher
+    ('12.3', 1230, '12.3', '14.76'),
 ])
 def test_display_and_payload_remain_decimal(lang, value, cents, summary, total):
     select_amount = ({'voucher': {'operator': 'syriatel', 'amount': value}}
@@ -95,7 +95,7 @@ def test_preview_commit_persistence_and_accounting(client, service, mode, cents)
             db = await anext(dependency)
             return (await db.scalars(select(ProfitLedger))).all()
     assert asyncio.run(ledger_rows()) == []
-    commission = int((Decimal(cents) * Decimal('0.05')).quantize(Decimal('1'), rounding=ROUND_HALF_EVEN))
+    commission = int((Decimal(cents) * Decimal('0.20' if service == 'prepaid' else '0.06')).quantize(Decimal('1'), rounding=ROUND_HALF_EVEN))
     pricing = client.get('/api/commission/calculate', params=payload).json()
     assert pricing['commission_cents'] == commission
     assert pricing['total_cents'] == cents + commission

@@ -235,9 +235,14 @@ def test_init_db_runs_the_upgrade_on_a_legacy_database(tmp_path, monkeypatch) ->
 
         async def read_setting():
             async with sessions() as session:
-                return await database.get_setting(session, "commission_rate")
+                return {
+                    key: await database.get_setting(session, key)
+                    for key in ("commission_rate_prepaid", "commission_rate_postpaid", "commission_rate")
+                }
 
-        assert asyncio.run(read_setting()) == "0.05"
+        assert asyncio.run(read_setting()) == {
+            "commission_rate_prepaid": "0.20", "commission_rate_postpaid": "0.06", "commission_rate": None
+        }
     finally:
         asyncio.run(engine.dispose())
 

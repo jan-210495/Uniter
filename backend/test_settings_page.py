@@ -108,21 +108,21 @@ def test_settings_page_lists_denominations_with_active_selected(client: TestClie
 def test_commission_get_returns_current_rate(client: TestClient) -> None:
     response = client.get("/api/settings/commission")
     assert response.status_code == 200
-    assert response.json() == {"commission_rate": "0.05"}
+    assert response.json() == {"commission_rate_prepaid": "0.20", "commission_rate_postpaid": "0.06"}
 
 
 def test_commission_put_updates_rate(client: TestClient) -> None:
-    update = client.put("/api/settings/commission", json={"rate": "0.12"})
+    update = client.put("/api/settings/commission", json={"commission_rate_prepaid": "0.12"})
     assert update.status_code == 200
-    assert update.json() == {"commission_rate": "0.12"}
+    assert update.json() == {"commission_rate_prepaid": "0.12", "commission_rate_postpaid": "0.06"}
     # The update persists for later requests.
-    assert client.get("/api/settings/commission").json() == {"commission_rate": "0.12"}
+    assert client.get("/api/settings/commission").json() == {"commission_rate_prepaid": "0.12", "commission_rate_postpaid": "0.06"}
 
 
 @pytest.mark.parametrize("rate", ["-0.01", "1.01", "1.5", "abc", "NaN", "Infinity"])
 def test_commission_put_rejects_invalid_rate(client: TestClient, rate: str) -> None:
-    assert client.put("/api/settings/commission", json={"rate": rate}).status_code == 422
-    assert client.get("/api/settings/commission").json() == {"commission_rate": "0.05"}
+    assert client.put("/api/settings/commission", json={"commission_rate_prepaid": rate}).status_code == 422
+    assert client.get("/api/settings/commission").json() == {"commission_rate_prepaid": "0.20", "commission_rate_postpaid": "0.06"}
 
 
 def test_denomination_get_returns_active_denomination(client: TestClient) -> None:
@@ -338,3 +338,33 @@ def test_base_template_renders_burger_menu_and_drawer(client: TestClient) -> Non
     # The drawer labels follow the page language.
     assert "Navigation menu" in client.get("/pos").text
     assert "قائمة التنقل" in client.get("/pos", params={"lang": "ar"}).text
+
+
+@pytest.mark.parametrize("service", ["prepaid", "postpaid"])
+def test_commission_independent_partial_and_combined_updates(client, service):
+    key = "commission_rate_" + service
+    expected = {"commission_rate_prepaid": "0.20", "commission_rate_postpaid": "0.06"}
+    expected[key] = "0.12345678901234567890123456789"
+    assert client.put('/api/settings/commission', json={key: expected[key]}).json() == expected
+    assert client.get('/api/settings/commission').json() == expected
+    both = {"commission_rate_prepaid": "0", "commission_rate_postpaid": "1"}
+    assert client.put('/api/settings/commission', json=both).json() == both
+    assert client.get('/api/settings/commission').json() == both
+
+
+@pytest.mark.parametrize("bad", ["-0.01", "1.01", "NaN", "sNaN", "Infinity", "-Infinity", "abc", None])
+@pytest.mark.parametrize("service", ["prepaid", "postpaid"])
+def test_commission_invalid_combined_update_is_atomic(client, service, bad):
+    before = client.get('/api/settings/commission').json()
+    payload = {"commission_rate_prepaid": "0.33", "commission_rate_postpaid": "0.44"}
+    payload['commission_rate_' + service] = bad
+    assert client.put('/api/settings/commission', json=payload).status_code == 422
+    assert client.get('/api/settings/commission').json() == before
+
+
+@pytest.mark.parametrize("payload", [{}, {"rate": "0.5"}, {"commission_rate": "0.5"},
+                                      {"commission_rate_prepaid": "0.3", "rate": "0.4"}])
+def test_commission_requires_explicit_service_keys(client, payload):
+    before = client.get('/api/settings/commission').json()
+    assert client.put('/api/settings/commission', json=payload).status_code == 422
+    assert client.get('/api/settings/commission').json() == before

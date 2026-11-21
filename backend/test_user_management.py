@@ -30,7 +30,8 @@ PROTECTED_SETTINGS = (
     ("/api/settings/timezone", {"timezone": "UTC"}, "timezone", "UTC"),
     ("/api/settings/mtn-domain", {"domain": "11111"}, "mtn_domain", "11111"),
     ("/api/settings/syriatel-domain", {"domain": "22222"}, "syriatel_domain", "22222"),
-    ("/api/settings/commission", {"rate": "0.07"}, "commission_rate", "0.07"),
+    ("/api/settings/commission", {"commission_rate_prepaid": "0.07"}, "commission_rate_prepaid", "0.07"),
+    ("/api/settings/commission", {"commission_rate_postpaid": "0.08"}, "commission_rate_postpaid", "0.08"),
 )
 
 

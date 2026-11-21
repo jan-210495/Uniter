@@ -369,7 +369,7 @@ def test_stats_count_failed_sales_but_drop_removed_ones(client) -> None:
     summary = test_client.get("/api/stats/summary").json()
     assert summary["totals"]["transaction_count"] == 3
     assert summary["totals"]["volume_cents"] == 15_000
-    assert summary["totals"]["profit_cents"] == 750  # 500 + 200 + 50
+    assert summary["totals"]["profit_cents"] == 3000  # 2000 + 800 + 200
     assert summary["by_status"] == [
         {"status": "successful", "count": 3, "volume_cents": 15_000},
         {"status": "failed", "count": 0, "volume_cents": 0},
@@ -384,14 +384,14 @@ def test_stats_count_failed_sales_but_drop_removed_ones(client) -> None:
         {"status": "successful", "count": 2, "volume_cents": 14_000},
         {"status": "failed", "count": 1, "volume_cents": 1000},
     ]
-    assert summary["totals"]["profit_cents"] == 750  # no automatic reversal
+    assert summary["totals"]["profit_cents"] == 3000  # no automatic reversal
 
     # Removal is a reporting tombstone: volume and profit both go.
     assert test_client.delete(f"/api/transactions/{third['id']}").status_code == 204
     summary = test_client.get("/api/stats/summary").json()
     assert summary["totals"]["transaction_count"] == 2
     assert summary["totals"]["volume_cents"] == 14_000
-    assert summary["totals"]["profit_cents"] == 700
+    assert summary["totals"]["profit_cents"] == 2800
     assert summary["by_status"] == [
         {"status": "successful", "count": 2, "volume_cents": 14_000},
         {"status": "failed", "count": 0, "volume_cents": 0},
