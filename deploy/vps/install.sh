@@ -41,20 +41,48 @@ fi
 missing=()
 declare -A package_commands=( [git]=git [curl]=curl [openssl]=openssl [iproute2]=ss [systemd]=systemctl [sudo]=sudo [ca-certificates]=update-ca-certificates )
 if [[ -z $PYTHON_BIN ]]; then
-  if [[ $OS_CODENAME == trixie || $OS_CODENAME == forky || $OS_CODENAME == sid || $OS_MAJOR -ge 24 ]]; then package_commands[python3]=python3; package_commands[python3-venv]=python3
-  elif [[ ${ID:-} == ubuntu && $OS_MAJOR == 22 ]]; then package_commands[python3.12]=python3.12; package_commands[python3.12-venv]=python3.12
+  if [[ $OS_CODENAME == trixie || $OS_CODENAME == forky || $OS_CODENAME == sid || $OS_MAJOR -ge 24 ]]; then package_commands[python3]=python3
+  elif [[ ${ID:-} == ubuntu && $OS_MAJOR == 22 ]]; then package_commands[python3.12]=python3.12
   else fail "No supported Python >=3.12 interpreter is available from this OS release's configured repositories. No changes were made; install Python 3.12+ with venv support using a supported OS source, then rerun."; fi
 fi
 for pkg in "${!package_commands[@]}"; do
   if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed' || ! command -v "${package_commands[$pkg]}" >/dev/null 2>&1; then missing+=("$pkg"); fi
 done
+# Probe venv creation capability before package approval; Debian splits ensurepip
+# into python3.<minor>-venv and its package name differs by suite.
+VENV_PROBE=$(mktemp -d /tmp/uniter-venv-probe.XXXXXX)
+if ! "$PYTHON_BIN" -m venv "$VENV_PROBE/env" >/dev/null 2>&1; then
+  rmdir "$VENV_PROBE" 2>/dev/null || true
+  case "$PYTHON_BIN:$OS_CODENAME" in
+    python3:trixie|python3:forky|python3:sid) missing+=("python3.13-venv") ;;
+    python3:*) missing+=("python3-venv") ;;
+    python3.12:*) missing+=("python3.12-venv") ;;
+  esac
+  PYTHON_VENV_AVAILABLE=0
+else
+  rm -rf -- "$VENV_PROBE"
+  PYTHON_VENV_AVAILABLE=1
+fi
 if ((${#missing[@]})); then
+  if [[ $PYTHON_VENV_AVAILABLE -eq 0 ]]; then
+    case "$PYTHON_BIN:$OS_CODENAME" in
+      python3:trixie|python3:forky|python3:sid) missing+=("python3.13-venv") ;;
+      python3:*) missing+=("python3-venv") ;;
+      python3.12:*) missing+=("python3.12-venv") ;;
+    esac
+  fi
   printf '\nThe following required Debian/Ubuntu packages are missing:\n'; printf '  - %s\n' "${missing[@]}"
   say "I can install these from the configured OS repositories using apt. This updates package indexes and installs software system-wide."
   confirm "Approve installing the missing packages?" || fail "Cannot continue until prerequisites are installed. No apt command was run."
   apt-get update
   apt-get install -y --no-install-recommends "${missing[@]}"
 fi
+if [[ ${PYTHON_VENV_AVAILABLE:-1} -eq 0 ]]; then
+  VENV_RETRY=$(mktemp -d /tmp/uniter-venv-check.XXXXXX)
+  if ! "$PYTHON_BIN" -m venv "$VENV_RETRY/env" >/dev/null 2>&1; then rm -rf -- "$VENV_RETRY"; fail "Python virtual-environment support is still unavailable after package installation. No Uniter files were created."; fi
+  rm -rf -- "$VENV_RETRY"
+fi
+
 if [[ -z $PYTHON_BIN ]]; then
   if command -v python3.12 >/dev/null 2>&1 && python3.12 -c 'import ssl, sqlite3, venv' >/dev/null 2>&1; then PYTHON_BIN=python3.12
   elif command -v python3 >/dev/null 2>&1 && python3 -c 'import ssl, sqlite3, venv; import sys; raise SystemExit(sys.version_info < (3, 12))' >/dev/null 2>&1; then PYTHON_BIN=python3

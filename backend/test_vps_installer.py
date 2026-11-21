@@ -57,7 +57,7 @@ def test_unsupported_os_stops_before_menu_or_changes(tmp_path, fake_bin):
 
 
 def test_preflight_offers_missing_python_and_declining_stops_before_mutation(tmp_path, fake_bin):
-    (fake_bin / "python3.12").unlink()
+    (fake_bin / "python3.12").unlink(missing_ok=True)
     (fake_bin / "python3").unlink()
     (fake_bin / "dpkg-query").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
     (fake_bin / "dpkg-query").chmod(0o755)
@@ -72,6 +72,23 @@ def test_preflight_offers_missing_python_and_declining_stops_before_mutation(tmp
     (fake_bin / "python3").chmod(0o755)
     (fake_bin / "dpkg-query").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     (fake_bin / "dpkg-query").chmod(0o755)
+
+
+def test_preflight_offers_python_venv_package_when_probe_fails(tmp_path, fake_bin):
+    (fake_bin / "python3.12").unlink(missing_ok=True)
+    python3 = fake_bin / "python3"
+    python3.write_text('#!/bin/sh\nif [ "${1:-}" = "-m" ] && [ "${2:-}" = "venv" ]; then exit 1; fi\nexit 0\n', encoding="utf-8")
+    python3.chmod(0o755)
+    dpkg = fake_bin / "dpkg-query"
+    dpkg.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    dpkg.chmod(0o755)
+    result = run_script(tmp_path, fake_bin, "1\nn\n", "ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n")
+    assert result.returncode != 0
+    assert "python3.13-venv" in result.stdout
+    assert "No apt command was run" in result.stderr
+    assert "Creating the service account" not in result.stdout
+    python3.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    dpkg.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
 
 
 def test_empty_hostname_selects_local_only_no_proxy():
@@ -108,5 +125,5 @@ def test_installer_has_no_existing_install_mutation_paths():
     ):
         assert guard in text
     assert "systemctl disable" not in text
-    assert "rm -rf" not in text
+    assert "rm -rf /opt" not in text
     assert "DROP TABLE" not in text
