@@ -15,7 +15,7 @@ less install.sh
 sudo bash install.sh
 ```
 
-On Debian/Ubuntu, missing OS packages (including Python 3.12 and venv support) are listed, with a separate approval before apt updates/installation. The wizard uses only the configured Debian/Ubuntu repositories, does not add a PPA, and stops if you decline. Then follow the prompts for tag and hostname; carefully review the final plan before approving the Uniter install.
+On Debian/Ubuntu, the wizard checks which Python version the OS supports: Debian 13/Trixie can use its native Python 3.13 (`python3` and `python3-venv`); releases with supported Python 3.12 packages can use those. It lists and asks before installing missing packages from the configured repositories, and never replaces the system Python or adds a PPA. If that OS doesn't provide Python 3.12 or newer from its current repositories, it stops and explains what's needed.
 
 Do not run this on TrueNAS or any host with data/services you need. The current prototype lives on the pushed feature branch and is not included in v1.0.5; it has mock/preflight tests but not a real disposable-VM installation yet.
 
@@ -45,7 +45,7 @@ WARP. No Cloudflare settings are changed by this project package.
 ## Safety and recovery
 
 - Existing service, service user, install/config/state/backup directories, service file, Nginx site, or database: **refuse and stop**.
-- The script requires Python 3.12, Git, curl, systemd, and standard Debian/Ubuntu user-management tools. If required OS packages (including Python 3.12/venv) are missing, it lists them and asks before installing from the configured OS repositories; it stops if you decline. It does not add third-party repositories.
+- The wizard selects Python 3.12 or newer. Debian 13/Trixie uses its supported `python3`/`python3-venv` packages; on other supported Debian/Ubuntu releases it offers only interpreter packages known to exist in that release's configured repositories. If a suitable interpreter is unavailable, it stops before installing Uniter and explains the prerequisite; it never changes the system default Python or adds a third-party repository.
 - If a command fails after creation starts, stop and inspect its last completed stage. The script does **not** claim a whole-host transactional rollback: preserve generated files for inspection and use the documented manual recovery. Never blindly rerun after a partial install.
 - No admin password, API token, DNS key, or private key is prompted for, embedded, or logged.
 

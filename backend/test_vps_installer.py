@@ -57,16 +57,23 @@ def test_unsupported_os_stops_before_menu_or_changes(tmp_path, fake_bin):
 
 
 def test_preflight_offers_missing_python_and_declining_stops_before_mutation(tmp_path, fake_bin):
-    python312 = fake_bin / "python3.12"
-    python312.unlink()
-    result = run_script(tmp_path, fake_bin, "1\nn\n")
+    (fake_bin / "python3.12").unlink()
+    (fake_bin / "python3").unlink()
+    (fake_bin / "dpkg-query").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    (fake_bin / "dpkg-query").chmod(0o755)
+    result = run_script(tmp_path, fake_bin, "1\nn\n", "ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n")
     assert result.returncode != 0
     assert "The following required Debian/Ubuntu packages are missing" in result.stdout
-    assert "This will update package indexes" in result.stdout
+    assert "following required Debian/Ubuntu packages are missing" in result.stdout
+    assert "No apt command was run" in result.stderr
     assert "No apt command was run" in result.stderr
     assert not (tmp_path / "opt").exists()
-    python312.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    python312.chmod(0o755)
+    (fake_bin / "python3.12").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (fake_bin / "python3.12").chmod(0o755)
+    (fake_bin / "python3").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (fake_bin / "python3").chmod(0o755)
+    (fake_bin / "dpkg-query").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (fake_bin / "dpkg-query").chmod(0o755)
 
 
 def test_installer_static_safety_contract():
@@ -74,7 +81,7 @@ def test_installer_static_safety_contract():
     for required in (
         "127.0.0.1:8000", "UNITER_DB=", "runuser -u uniter", "systemd-analyze verify",
         "REPLACE_WITH_DOMAIN", "setup_code == 200", "No automatic rollback was attempted",
-        "apt-get install -y", "Approve installing the missing packages?", "refs/tags/$tag",
+        "Using Python interpreter", "apt-get install -y", "Approve installing the missing packages?", "refs/tags/$tag",
     ):
         assert required in text
     lowered = text.lower()
