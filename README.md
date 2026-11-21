@@ -65,3 +65,10 @@ For the Python 3.12 web-service path (not the Windows executable), see
 [owner-run configuration bundle](deploy/vps/). It covers private first setup,
 HTTPS/proxy trust, persistent SQLite state, backups, updates and recovery.
 These files do not deploy or modify any server automatically.
+
+## Windows release packaging
+
+For v1.0.5 installer metadata, portable input checks and the separate
+**non-publishing** Windows build verification path, see
+[Windows release readiness](docs/windows-release.md). Tag creation/publication
+remains a separately approved final action; v1.0.4 stays immutable.

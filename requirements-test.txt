@@ -2,3 +2,5 @@
 # Independent standards-based reader for validating our stdlib XLSX writer.
 # Test-only: not imported or bundled by the application/PyInstaller.
 openpyxl==3.1.5
+# Real YAML parsing for packaging/workflow contract tests (not runtime).
+PyYAML==6.0.2

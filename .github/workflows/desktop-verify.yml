@@ -16,14 +16,55 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Parse PowerShell verification script
+        shell: pwsh
+        run: |
+          $Errors = $null
+          $Tokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'scripts/verify_windows_package.ps1'), [ref]$Tokens, [ref]$Errors) | Out-Null
+          if ($Errors.Count -gt 0) { throw ($Errors | Out-String) }
+      - name: Validate release packaging inputs
+        run: python scripts/check_release.py
       - name: Install dependencies
         run: |
           python -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw 'runtime dependencies failed' }
           python -m pip install pyinstaller
+          if ($LASTEXITCODE -ne 0) { throw 'PyInstaller install failed' }
       - name: Desktop regression tests (mocked UI)
         run: python -m pytest backend/test_desktop.py -v
       - name: Build and verify Windows tray bundle
-        run: python scripts/build_exe.py
+        shell: pwsh
+        run: |
+          python scripts/build_exe.py
+          if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed' }
+          ./scripts/verify_windows_package.ps1 -Stage Bundle
+      - name: Install Inno Setup 6 (verification only)
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup install failed' }
+      - name: Compile installer (no publishing)
+        shell: pwsh
+        run: |
+          # Do not let a stale installer satisfy output checks or enter fallback inputs.
+          foreach ($Path in @('dist/UniterSetup.exe', 'installer/Output/UniterSetup.exe')) {
+            if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force -ErrorAction Stop }
+          }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\uniter.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed' }
+          if (-not (Test-Path 'dist/UniterSetup.exe' -PathType Leaf)) { throw 'Installer output missing' }
+          if ((Get-Item 'dist/UniterSetup.exe').Length -le 0) { throw 'Installer output empty' }
+          New-Item -ItemType Directory -Force -Path 'installer/Output' | Out-Null
+          Copy-Item 'dist/UniterSetup.exe' 'installer/Output/UniterSetup.exe' -Force
+      - name: Verify installer version and exact upload copy
+        shell: pwsh
+        run: ./scripts/verify_windows_package.ps1 -Stage Installer
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-verification
+          path: installer/Output/UniterSetup.exe
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: windows-desktop-verification

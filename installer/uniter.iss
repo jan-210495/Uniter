@@ -9,8 +9,8 @@
 
 #define AppName       "Uniter"
 #define AppPublisher  "Uniter"
-; Keep in sync with the tag/version used for releases.
-#define AppVersion    "1.0.4"
+; Authoritative release version; scripts/check_release.py validates tag alignment.
+#define AppVersion    "1.0.5"
 #define AppExeName    "uniter-server.exe"
 #define StartupRunValueName "Uniter"
 #define AppDataSubDir "uniter\\data"

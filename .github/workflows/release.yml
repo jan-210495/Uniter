@@ -22,30 +22,49 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Validate release version against tag
+        run: python scripts/check_release.py --tag "$env:GITHUB_REF_NAME"
+        shell: pwsh
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
+          if ($LASTEXITCODE -ne 0) { throw 'pip upgrade failed' }
+          python -m pip install -r requirements.txt
+          if ($LASTEXITCODE -ne 0) { throw 'runtime dependencies failed' }
+          python -m pip install pyinstaller
+          if ($LASTEXITCODE -ne 0) { throw 'PyInstaller install failed' }
         shell: pwsh
 
       - name: Build PyInstaller bundle
         run: |
           python scripts/build_exe.py
+          if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed' }
+          ./scripts/verify_windows_package.ps1 -Stage Bundle
         shell: pwsh
 
       - name: Install Inno Setup 6
         run: |
           choco install innosetup --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup install failed' }
         shell: pwsh
 
       - name: Compile installer with Inno Setup
         run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\uniter.iss
-          if (Test-Path "dist\UniterSetup.exe") {
-            New-Item -ItemType Directory -Force -Path "installer\Output" | Out-Null
-            Copy-Item "dist\UniterSetup.exe" "installer\Output\UniterSetup.exe" -Force
+          # Do not let a stale installer satisfy output checks or enter fallback inputs.
+          foreach ($Path in @('dist/UniterSetup.exe', 'installer/Output/UniterSetup.exe')) {
+            if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force -ErrorAction Stop }
           }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\uniter.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed' }
+          if (-not (Test-Path 'dist/UniterSetup.exe' -PathType Leaf)) { throw 'Installer output missing' }
+          if ((Get-Item 'dist/UniterSetup.exe').Length -le 0) { throw 'Installer output empty' }
+          New-Item -ItemType Directory -Force -Path 'installer/Output' | Out-Null
+          Copy-Item 'dist/UniterSetup.exe' 'installer/Output/UniterSetup.exe' -Force
+        shell: pwsh
+
+      - name: Verify installer resources and upload artifact
+        run: ./scripts/verify_windows_package.ps1 -Stage Installer
         shell: pwsh
 
       - name: Upload UniterSetup.exe as GitHub Release asset
@@ -53,9 +72,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: installer/Output/UniterSetup.exe
+          fail_on_unmatched_files: true
 
       - name: Upload UniterSetup.exe as workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: UniterSetup
           path: installer/Output/UniterSetup.exe
+          if-no-files-found: error
