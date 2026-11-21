@@ -137,3 +137,42 @@ def test_runtime_test_dependency_and_bundle_separation():
     for path in (ROOT / '.github/workflows').glob('*.yml'):
         parsed = workflow(path.name)
         assert 'on' in parsed and True not in parsed
+
+
+def test_inno_product_name_padding_contract(tmp_path):
+    """Portable source contract; synthetic cases are NOT native PE evidence."""
+    text = (ROOT / 'scripts/verify_windows_package.ps1').read_text()
+    assert '$RawProductName = [string]$Info.ProductName' in text
+    assert "$ProductName = $RawProductName.TrimEnd([char]' ')" in text
+    assert "if ($ProductName -cne 'Uniter') { throw 'Unexpected installer product name.' }" in text
+    assert 'raw=<{0}> (length {1}); normalized=<{2}>' in text
+    assert '.Trim()' not in text.split('$RawProductName =', 1)[1]
+    assert 'VersionInfoProductName={#AppName}' in (ROOT / 'installer/uniter.iss').read_text()
+    if shutil.which('pwsh'):
+        # Exercise the EXACT normalization/comparison statements from the checker
+        # against synthetic values, without pretending to inspect a real EXE.
+        normalization = next(line.strip() for line in text.splitlines()
+                             if line.strip().startswith('$ProductName ='))
+        validation = next(line.strip() for line in text.splitlines()
+                          if line.strip().startswith("if ($ProductName -cne"))
+        script = tmp_path / 'product-name-cases.ps1'
+        script.write_text("""$ErrorActionPreference = 'Stop'
+$Cases = @(
+    @{Value = 'Uniter'; Valid = $true},
+    @{Value = ('Uniter' + (' ' * 54)); Valid = $true},
+    @{Value = ''; Valid = $false},
+    @{Value = ' Uniter'; Valid = $false},
+    @{Value = 'uniter'; Valid = $false},
+    @{Value = 'OtherProduct'; Valid = $false},
+    @{Value = "Uniter`t"; Valid = $false}
+)
+foreach ($Case in $Cases) {
+    $RawProductName = [string]$Case.Value
+    $Accepted = $true
+    try {
+""" + normalization + '\n' + validation + """
+    } catch { $Accepted = $false }
+    if ($Accepted -ne $Case.Valid) { throw 'ProductName padding regression' }
+}
+""")
+        subprocess.run(['pwsh', '-NoProfile', '-File', str(script)], check=True)

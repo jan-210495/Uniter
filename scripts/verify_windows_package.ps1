@@ -33,7 +33,12 @@ if ($Stage -eq 'Installer') {
     if ($FileVersion -ne $Expected -or $ProductVersion -ne $Expected) {
         throw "Installer resource mismatch: file=$FileVersion product=$ProductVersion expected=$Expected"
     }
-    if ($Info.ProductName -ne 'Uniter') { throw 'Unexpected installer product name.' }
+    # Inno Setup 6 updates a fixed-width, space-filled ProductName resource.
+    # Remove only its trailing ASCII-space padding, not leading/other whitespace.
+    $RawProductName = [string]$Info.ProductName
+    $ProductName = $RawProductName.TrimEnd([char]' ')
+    Write-Output ("Installer ProductName raw=<{0}> (length {1}); normalized=<{2}>" -f $RawProductName, $RawProductName.Length, $ProductName)
+    if ($ProductName -cne 'Uniter') { throw 'Unexpected installer product name.' }
     $Hash = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash
     if ($Hash -ne (Get-FileHash -LiteralPath $Upload -Algorithm SHA256).Hash) {
         throw 'Upload artifact differs from verified installer.'

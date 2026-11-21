@@ -139,3 +139,56 @@ bundle, actual installer PE version metadata and artifact upload. Its run result
 is separate CI evidence, not something these portable tests can fabricate. A
 successful real Windows run remains required before final publication approval.
 No installation/upgrade/browser/signature/VPS test is claimed by this slice.
+
+## Follow-up: Inno ProductName resource padding
+
+Non-publishing Windows run
+[44880856628](https://github.com/jan-210495/Uniter/actions/runs/44880856628),
+at source `e16ac28a0815aeebec769b1b98f20e8c669f0ba0`, successfully built the
+bundle and compiled the installer, then failed with `Unexpected installer product
+name.` Numeric version checks precede that check and did not fail. Both artifact
+uploads were skipped; the run API reports no artifacts. Raw log downloads were
+unavailable from this sandbox, and the old exception did not print the raw name.
+Consequently no exact raw PE string from that runner is claimed here.
+
+The Inno directive is correct: `VersionInfoProductName={#AppName}` writes the
+PE `ProductName`, so the verifier must continue checking that field, not another
+field or a substring. Inno Setup 6 compiler source explains the representation:
+
+- [`SetupLdr.version.rc` at is-6_7_4](https://github.com/jrsoftware/issrc/blob/is-6_7_4/Projects/Res/SetupLdr.version.rc)
+  reserves 60 spaces plus a NUL for ProductName.
+- [`UpdateStringValue` at is-6_7_4](https://github.com/jrsoftware/issrc/blob/is-6_7_4/Projects/Src/Compiler.ExeUpdateFunc.pas)
+  copies only the new string's characters into that slot, leaving unused spaces.
+  This supports a padded `Uniter` value; it is source evidence, not a claim that
+  the runner's compiler patch version/raw bytes were recovered.
+
+The verifier now removes **only trailing ASCII spaces** from the ProductName
+before a case-sensitive exact `Uniter` comparison. It still rejects missing,
+empty, different, wrong-case or leading-whitespace names and trailing tabs. It
+logs the raw value, length and normalized value on Windows, preserving the
+numeric file/product version, nonempty-artifact and exact-copy/hash gates.
+Installer directives/identity/behavior, both workflows, requirements and the
+approved VPS bundle are unchanged by this follow-up.
+
+Portable tests assert this source contract; when PowerShell is available they
+also execute the check against synthetic padded and invalid names. Neither is a
+substitute for native PE verification. Required native confirmation is a **new
+run of `desktop-verify.yml` on the fixed `arena/48839799-uniter` commit**, through
+its existing manual, read-only, non-publishing path. It must show raw/normalized
+ProductName, versions 1.0.5.0 and matching upload hash, and finish artifact upload.
+Do not rerun the old source SHA as proof of the fix; do not invoke `release.yml`
+or push a tag to test it.
+
+Follow-up verification on Python **3.12.8**, Linux (exit 0):
+
+```text
+python3 -m pytest backend/test_release_packaging.py backend/test_desktop.py --tb=short -q
+50 passed in 1.09s
+python3 -m pytest backend/ --tb=short -q
+904 passed, 724 warnings in 226.60s (0:03:46)
+```
+
+Python syntax compilation and `git diff --check` passed. PowerShell is absent
+locally, so its optional synthetic execution/parser checks did not run here.
+No native PE result is inferred from these portable passes. Full diff review
+confirmed that only the verifier, regression test and this documentation changed.
