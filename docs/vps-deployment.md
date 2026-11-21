@@ -10,11 +10,7 @@ or chat. Enter passwords only in the owner's browser/server prompts.
 
 # Guided Debian/Ubuntu VPS installer
 
-The wizard script is not yet included in the published v1.0.5 tag. Do not use the
-v1.0.5 raw-file URL for it. When a reviewed follow-up release is published, its
-installer can be downloaded from that exact tag; use the small `INSTALLER.md`
-quick start from the same tag, then run it only on a fresh disposable server
-until an owner has completed acceptance.
+This preliminary revision was implemented on `arena/guided-vps-installer`, which is not included in the published v1.0.5 tag. It asks before installing supported missing OS packages from configured repositories. Review it and test only on a fresh disposable Debian/Ubuntu VM before using it elsewhere.
 
 ## Existing detailed procedure
 

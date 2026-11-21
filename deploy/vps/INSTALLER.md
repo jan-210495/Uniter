@@ -15,9 +15,9 @@ less install.sh
 sudo bash install.sh
 ```
 
-The script requires Python 3.12, Git, curl, systemd, and standard Debian/Ubuntu user-management tools. It stops before changes if Python 3.12 is unavailable; install it from an OS-supported source first. It deliberately does not install packages or add repositories.
+On Debian/Ubuntu, missing OS packages (including Python 3.12 and venv support) are listed, with a separate approval before apt updates/installation. The wizard uses only the configured Debian/Ubuntu repositories, does not add a PPA, and stops if you decline. Then follow the prompts for tag and hostname; carefully review the final plan before approving the Uniter install.
 
-Do not run this uncommitted prototype on TrueNAS, on an existing host, or against production data.
+Do not run this on TrueNAS or any host with data/services you need. The current prototype lives on the pushed feature branch and is not included in v1.0.5; it has mock/preflight tests but not a real disposable-VM installation yet.
 
 ## What it automates
 
@@ -45,7 +45,7 @@ WARP. No Cloudflare settings are changed by this project package.
 ## Safety and recovery
 
 - Existing service, service user, install/config/state/backup directories, service file, Nginx site, or database: **refuse and stop**.
-- Invalid input, unsupported OS, missing Python 3.12 or unavailable prerequisite: stop before continuing.
+- The script requires Python 3.12, Git, curl, systemd, and standard Debian/Ubuntu user-management tools. If required OS packages (including Python 3.12/venv) are missing, it lists them and asks before installing from the configured OS repositories; it stops if you decline. It does not add third-party repositories.
 - If a command fails after creation starts, stop and inspect its last completed stage. The script does **not** claim a whole-host transactional rollback: preserve generated files for inspection and use the documented manual recovery. Never blindly rerun after a partial install.
 - No admin password, API token, DNS key, or private key is prompted for, embedded, or logged.
 

@@ -18,7 +18,6 @@ fail() { printf '\n%s ERROR: %s\n' "$PREFIX" "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "Required command missing: $1"; }
 confirm() { local answer; read -r -p "$1 [y/N] " answer; [[ "$answer" == [yY] ]]; }
 refuse_path() { [[ ! -e "$1" && ! -L "$1" ]] || fail "Found existing $2 at $1. This is fresh-install only; nothing was overwritten."; }
-
 trap 'rc=$?; printf "\n%s Stopped at line %s (exit %s). No automatic rollback was attempted. Review the last stage before retrying.\n" "$PREFIX" "$LINENO" "$rc" >&2; exit "$rc"' ERR
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || fail "Start with: sudo bash $0"
@@ -26,7 +25,7 @@ trap 'rc=$?; printf "\n%s Stopped at line %s (exit %s). No automatic rollback wa
 # shellcheck disable=SC1091
 source /etc/os-release
 [[ ${ID:-} == debian || ${ID:-} == ubuntu || ${ID_LIKE:-} == *debian* ]] || fail "Supported systems are Debian/Ubuntu; found ${PRETTY_NAME:-unknown}."
-for cmd in systemctl systemd-analyze install getent id python3 git curl ss useradd runuser; do need "$cmd"; done
+for cmd in systemctl systemd-analyze install getent id git curl ss useradd runuser; do need "$cmd"; done
 
 say "Welcome. This wizard installs Uniter on a fresh Debian/Ubuntu server."
 printf '\n  1) Install on this fresh server\n  2) Check an existing Uniter service (read-only)\n  3) Safety notes\n  4) Exit\n'
@@ -47,11 +46,50 @@ case "$choice" in
   *) fail "Choose 1, 2, 3, or 4." ;;
 esac
 
-# Read-only preflight before asking for install details or changing anything.
+# Read-only preflight. Missing packages are offered explicitly before apt changes.
 [[ -z "$(id -u uniter 2>/dev/null || true)" ]] || fail "The 'uniter' service account already exists; refusing this host."
 systemctl cat uniter >/dev/null 2>&1 && fail "An Uniter service already exists; this wizard never upgrades." || true
 for path in "$INSTALL_ROOT" "$ENV_DIR" "$STATE_DIR" "$BACKUP_DIR" "$NGINX_SITE" "$UNIT_FILE"; do refuse_path "$path" "Uniter path/configuration"; done
-command -v python3.12 >/dev/null 2>&1 || fail "Python 3.12 is required. Install it using your OS's supported packages; this script will not replace system Python or add repositories."
+refuse_path "$INSTALL_ROOT/current" "active release symlink"
+
+PACKAGE_MANAGER=""
+if command -v apt-get >/dev/null 2>&1 && command -v dpkg-query >/dev/null 2>&1; then
+  PACKAGE_MANAGER=apt
+elif command -v dnf >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
+  PACKAGE_MANAGER=dnf
+else
+  fail "Supported package manager not found. Need apt/dpkg (Debian/Ubuntu) or dnf/rpm (Fedora/RHEL family)."
+fi
+
+missing=()
+if [[ $PACKAGE_MANAGER == apt ]]; then
+  declare -A package_commands=( [python3.12]=python3.12 [python3.12-venv]=python3.12 [git]=git [curl]=curl [openssl]=openssl [iproute2]=ss [systemd]=systemctl [sudo]=sudo [ca-certificates]=update-ca-certificates )
+  for pkg in "${!package_commands[@]}"; do
+    if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed' || ! command -v "${package_commands[$pkg]}" >/dev/null 2>&1; then missing+=("$pkg"); fi
+  done
+  if ((${#missing[@]})); then
+    printf '\nThe following required Debian/Ubuntu packages are missing:\n'
+    printf '  - %s\n' "${missing[@]}"
+    say "I can install these packages from the configured OS repositories using apt. This will update package indexes and install software system-wide."
+    confirm "Approve installing the missing packages?" || fail "Cannot continue until prerequisites are installed. No apt command was run."
+    apt-get update
+    apt-get install -y --no-install-recommends "${missing[@]}"
+  fi
+else
+  declare -A package_commands=( [python3.12]=python3.12 [git]=git [curl]=curl [openssl]=openssl [iproute]=ss [systemd]=systemctl [sudo]=sudo [ca-certificates]=update-ca-trust )
+  for pkg in "${!package_commands[@]}"; do
+    if ! rpm -q "$pkg" >/dev/null 2>&1 || ! command -v "${package_commands[$pkg]}" >/dev/null 2>&1; then missing+=("$pkg"); fi
+  done
+  if ((${#missing[@]})); then
+    printf '\nThe following required Fedora/RHEL packages are missing:\n'
+    printf '  - %s\n' "${missing[@]}"
+    say "I can install these packages from the configured OS repositories using dnf. This will install software system-wide."
+    confirm "Approve installing the missing packages?" || fail "Cannot continue until prerequisites are installed. No dnf command was run."
+    dnf install -y "${missing[@]}"
+  fi
+fi
+
+for cmd in python3.12 git curl openssl ss useradd runuser systemctl systemd-analyze; do need "$cmd"; done
 python3.12 -c 'import ssl, sqlite3, venv; print("Python", __import__("sys").version.split()[0], "SQLite", sqlite3.sqlite_version)' || fail "Python 3.12 needs SSL, SQLite, and venv support."
 
 printf '\nRelease to install (tag, e.g. v1.0.5).\n'
@@ -69,11 +107,9 @@ printf '  • Keep Uniter private on 127.0.0.1; prepare localhost-only Nginx exa
 printf '  • Initialize a brand-new database; no admin account/password will be created here\n'
 printf '  • Do NOT change firewall, SSH, DNS, Cloudflare, certificates, or public access\n'
 confirm "Proceed with these system changes?" || { say "Cancelled before changes."; exit 0; }
-# Repeat path checks immediately before mutation.
 [[ -z "$(id -u uniter 2>/dev/null || true)" ]] || fail "The 'uniter' account appeared during preflight; stopping."
 systemctl cat uniter >/dev/null 2>&1 && fail "An Uniter service appeared during preflight; stopping." || true
-for path in "$INSTALL_ROOT" "$ENV_DIR" "$STATE_DIR" "$BACKUP_DIR" "$NGINX_SITE" "$UNIT_FILE"; do refuse_path "$path" "Uniter path/configuration"; done
-refuse_path "$INSTALL_ROOT/current" "active release symlink"
+for path in "$INSTALL_ROOT" "$ENV_DIR" "$STATE_DIR" "$BACKUP_DIR" "$NGINX_SITE" "$UNIT_FILE" "$INSTALL_ROOT/current"; do refuse_path "$path" "Uniter path/configuration"; done
 
 say "Creating the service account and protected directories."
 useradd --system --user-group --home-dir "$STATE_DIR" --shell /usr/sbin/nologin uniter
@@ -84,8 +120,7 @@ install -d -o uniter -g uniter -m 0700 "$STATE_DIR"
 release_dir="$INSTALL_ROOT/releases/$tag"
 refuse_path "$release_dir" "release directory"
 install -d -o root -g uniter -m 0750 "$release_dir"
-refuse_path "$INSTALL_ROOT/current" "active release symlink"
-say "Fetching and verifying the exact tagged source."
+say "Downloading tagged source and checking out the exact tag."
 git clone --quiet --no-checkout "$REPO_URL" "$release_dir"
 git -C "$release_dir" fetch --quiet --depth 1 origin "refs/tags/$tag:refs/tags/$tag"
 git -C "$release_dir" checkout --quiet --detach "$tag"

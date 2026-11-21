@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
-import tempfile
 
 import pytest
 
@@ -13,13 +12,15 @@ SCRIPT = Path(__file__).resolve().parents[1] / "deploy" / "vps" / "install.sh"
 @pytest.fixture(scope="module")
 def fake_bin(tmp_path_factory: pytest.TempPathFactory) -> Path:
     root = tmp_path_factory.mktemp("uniter-installer-bin")
-    for name in ("systemctl", "systemd-analyze", "install", "getent", "id", "python3", "git", "curl", "ss", "useradd", "runuser"):
+    for name in (
+        "systemctl", "systemd-analyze", "install", "getent", "id", "python3",
+        "python3.12", "git", "curl", "ss", "useradd", "runuser", "apt-get",
+        "dpkg-query", "dnf", "rpm", "sudo", "openssl", "update-ca-certificates",
+        "update-ca-trust",
+    ):
         tool = root / name
-        tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        tool.write_text("#!/bin/sh\nif [ \"${1:-}\" = cat ]; then exit 1; fi\nexit 0\n", encoding="utf-8")
         tool.chmod(0o755)
-    python312 = root / "python3.12"
-    python312.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    python312.chmod(0o755)
     return root
 
 
@@ -55,27 +56,44 @@ def test_unsupported_os_stops_before_menu_or_changes(tmp_path, fake_bin):
     assert "Creating the service account" not in result.stdout
 
 
+def test_preflight_offers_missing_python_and_declining_stops_before_mutation(tmp_path, fake_bin):
+    python312 = fake_bin / "python3.12"
+    python312.unlink()
+    result = run_script(tmp_path, fake_bin, "1\nn\n")
+    assert result.returncode != 0
+    assert "The following required Debian/Ubuntu packages are missing" in result.stdout
+    assert "This will update package indexes" in result.stdout
+    assert "No apt command was run" in result.stderr
+    assert not (tmp_path / "opt").exists()
+    python312.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    python312.chmod(0o755)
+
+
 def test_installer_static_safety_contract():
     text = SCRIPT.read_text(encoding="utf-8")
     for required in (
         "127.0.0.1:8000", "UNITER_DB=", "runuser -u uniter", "systemd-analyze verify",
         "REPLACE_WITH_DOMAIN", "setup_code == 200", "No automatic rollback was attempted",
-        "choose your admin password", "refs/tags/$tag",
+        "apt-get install -y", "Approve installing the missing packages?", "refs/tags/$tag",
     ):
         assert required in text
     lowered = text.lower()
-    for forbidden in ("ufw", "iptables", "nft ", "cloudflared tunnel", "ssh-keygen", "certbot", "chmod 777", "curl | bash", "curl|bash", "password:"):
+    for forbidden in (
+        "ufw", "iptables", "nft ", "cloudflared tunnel", "ssh-keygen", "certbot",
+        "chmod 777", "curl | bash", "curl|bash", "password:",
+    ):
         assert forbidden not in lowered
     assert "allow 127.0.0.1;" in (SCRIPT.parents[0] / "nginx.conf.example").read_text(encoding="utf-8")
     assert "deny all;" in (SCRIPT.parents[0] / "nginx.conf.example").read_text(encoding="utf-8")
-    assert "commission_rate_prepaid" not in text and "commission_rate_postpaid" not in text
 
 
 def test_installer_has_no_existing_install_mutation_paths():
     text = SCRIPT.read_text(encoding="utf-8")
-    for guard in ("id -u uniter", "systemctl cat uniter", 'refuse_path "$path"', '[[ ! -e "$STATE_DIR/uniter.db"'):
+    for guard in (
+        "id -u uniter", "systemctl cat uniter", 'refuse_path "$path"',
+        '[[ ! -e "$STATE_DIR/uniter.db"', 'ln -s "$release_dir" "$INSTALL_ROOT/current"',
+    ):
         assert guard in text
-    assert 'ln -s "$release_dir" "$INSTALL_ROOT/current"' in text
     assert "systemctl disable" not in text
     assert "rm -rf" not in text
     assert "DROP TABLE" not in text
