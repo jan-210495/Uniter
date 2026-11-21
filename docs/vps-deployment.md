@@ -8,7 +8,15 @@ Files: [`deploy/vps/`](../deploy/vps/). Read this entire document before acting.
 Never put passwords, DNS API credentials, TLS private keys or real data in Git
 or chat. Enter passwords only in the owner's browser/server prompts.
 
-## 1. Prerequisites and security boundary
+# Guided Debian/Ubuntu VPS installer
+
+The wizard script is not yet included in the published v1.0.5 tag. Do not use the
+v1.0.5 raw-file URL for it. When a reviewed follow-up release is published, its
+installer can be downloaded from that exact tag; use the small `INSTALLER.md`
+quick start from the same tag, then run it only on a fresh disposable server
+until an owner has completed acceptance.
+
+## Existing detailed procedure
 
 Use a fresh dedicated Ubuntu/Debian VPS with systemd, a sudo-capable owner,
 sufficient persistent disk/RAM, accurate time, working DNS resolution and a

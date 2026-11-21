@@ -64,7 +64,10 @@ For the Python 3.12 web-service path (not the Windows executable), see
 [the VPS installation and recovery guide](docs/vps-deployment.md) and the
 [owner-run configuration bundle](deploy/vps/). It covers private first setup,
 HTTPS/proxy trust, persistent SQLite state, backups, updates and recovery.
-These files do not deploy or modify any server automatically.
+These files do not deploy or modify any server automatically. A guided, fresh-host
+Debian/Ubuntu CLI installer is available at [`deploy/vps/INSTALLER.md`](deploy/vps/INSTALLER.md).
+It preserves the private, loopback-only staging defaults and does not change firewall,
+SSH, DNS, Cloudflare, certificates, or public reachability.
 
 ## Windows release packaging
 
