@@ -10,7 +10,7 @@ or chat. Enter passwords only in the owner's browser/server prompts.
 
 # Guided Debian/Ubuntu VPS installer
 
-This preliminary revision was implemented on `arena/guided-vps-installer`, which is not included in the published v1.0.5 tag. It asks before installing supported missing OS packages from configured repositories. Review it and test only on a fresh disposable Debian/Ubuntu VM before using it elsewhere.
+The wizard installs a fresh Uniter service. The DNS hostname prompt is optional: leave it blank for a local-only service with no Nginx config, or enter a valid hostname if you intend to configure an HTTPS proxy later. Uniter remains bound to `127.0.0.1:8000` in both cases.
 
 ## Existing detailed procedure
 

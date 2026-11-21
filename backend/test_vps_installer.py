@@ -64,8 +64,6 @@ def test_preflight_offers_missing_python_and_declining_stops_before_mutation(tmp
     result = run_script(tmp_path, fake_bin, "1\nn\n", "ID=debian\nVERSION_ID=13\nVERSION_CODENAME=trixie\n")
     assert result.returncode != 0
     assert "The following required Debian/Ubuntu packages are missing" in result.stdout
-    assert "following required Debian/Ubuntu packages are missing" in result.stdout
-    assert "No apt command was run" in result.stderr
     assert "No apt command was run" in result.stderr
     assert not (tmp_path / "opt").exists()
     (fake_bin / "python3.12").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -74,6 +72,14 @@ def test_preflight_offers_missing_python_and_declining_stops_before_mutation(tmp
     (fake_bin / "python3").chmod(0o755)
     (fake_bin / "dpkg-query").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     (fake_bin / "dpkg-query").chmod(0o755)
+
+
+def test_empty_hostname_selects_local_only_no_proxy():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "No hostname entered; configure DNS/TLS later" in text
+    assert "Proxy configuration will not be created." in text
+    assert 'if [[ -n $domain ]]; then' in text
+    assert 'refuse_path "$NGINX_SITE"' in text
 
 
 def test_installer_static_safety_contract():

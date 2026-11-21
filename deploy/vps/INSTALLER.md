@@ -1,6 +1,6 @@
 # Uniter guided Debian/Ubuntu installer (source only)
 
-The CLI installer is `deploy/vps/install.sh`. It is intentionally **fresh-host-only**. It checks OS/Python/prerequisites, offers Install / Read-only check / Safety notes / Exit, asks for a release tag and DNS hostname, prints the scope, and requires confirmation before making changes. It installs a dedicated non-root service, protected files, a venv, and a fresh SQLite database; it does not create an admin user. First admin password is chosen in the browser.
+The hostname is optional. Leave it blank to install Uniter as a local-only service with no Nginx proxy file; the app still listens on `127.0.0.1:8000`. Add HTTPS/DNS/proxy later when you have an owned hostname.
 
 ## Run
 

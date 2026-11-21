@@ -66,13 +66,20 @@ python_version="$($PYTHON_BIN --version 2>&1)"; say "Using Python interpreter: $
 
 printf '\nRelease to install (tag, e.g. v1.0.5).\n'; read -r -p 'Release tag [v1.0.5]: ' tag; tag=${tag:-v1.0.5}
 [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Use a version tag like v1.0.5."
-printf '\nHostname you plan to use for HTTPS (e.g. uniter.example.com; no scheme/port).\n'; read -r -p 'DNS hostname: ' domain
-[[ $domain =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $domain == *.* && $domain != *..* ]] || fail "Enter a valid DNS hostname."
-say "Review this plan:"; printf '  • Install %s from %s\n  • Create dedicated non-root service and protected data\n  • Keep Uniter private on 127.0.0.1; prepare localhost-only Nginx example for %s\n  • Initialize a brand-new database; no admin account/password is created\n  • Use Python: %s\n  • Do NOT change firewall, SSH, DNS, Cloudflare, certificates, or public access\n' "$tag" "$REPO_URL" "$domain" "$python_version"
+printf '\nHostname for a future HTTPS proxy (optional; e.g. uniter.example.com). Leave blank to keep this install local-only.\n'; read -r -p 'DNS hostname (blank for local-only): ' domain
+if [[ -n $domain ]]; then
+  [[ $domain =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && $domain == *.* && $domain != *..* ]] || fail "Enter a valid DNS hostname, or leave it blank."
+  NGINX_ACTION="prepare localhost-only Nginx example for $domain"
+else
+  NGINX_ACTION="do not create Nginx config; configure HTTPS/proxy later if desired"
+  say "No hostname entered; configure DNS/TLS later. Proxy configuration will not be created."
+fi
+say "Review this plan:"; printf '  • Install %s from %s\n  • Create dedicated non-root service and protected data\n  • Keep Uniter private on 127.0.0.1; %s\n  • Initialize a brand-new database; no admin account/password is created\n  • Use Python: %s\n  • Do NOT change firewall, SSH, DNS, Cloudflare, certificates, or public access\n' "$tag" "$REPO_URL" "$NGINX_ACTION" "$python_version"
 confirm "Proceed with these system changes?" || { say "Cancelled before changes."; exit 0; }
 [[ -z "$(id -u uniter 2>/dev/null || true)" ]] || fail "The 'uniter' account appeared during preflight; stopping."
 systemctl cat uniter >/dev/null 2>&1 && fail "An Uniter service appeared during preflight; stopping." || true
-for path in "$INSTALL_ROOT" "$ENV_DIR" "$STATE_DIR" "$BACKUP_DIR" "$NGINX_SITE" "$UNIT_FILE" "$INSTALL_ROOT/current"; do refuse_path "$path" "Uniter path/configuration"; done
+for path in "$INSTALL_ROOT" "$ENV_DIR" "$STATE_DIR" "$BACKUP_DIR" "$UNIT_FILE" "$INSTALL_ROOT/current"; do refuse_path "$path" "Uniter path/configuration"; done
+if [[ -n $domain ]]; then refuse_path "$NGINX_SITE" "Nginx site configuration"; fi
 
 say "Creating the service account and protected directories."
 useradd --system --user-group --home-dir "$STATE_DIR" --shell /usr/sbin/nologin uniter
@@ -92,11 +99,10 @@ say "Creating isolated Python environment and installing runtime requirements."
 "$release_dir/.venv/bin/python" -m pip check
 chown -R root:uniter "$release_dir"; chmod -R u=rwX,g=rX,o= "$release_dir"; ln -s "$release_dir" "$INSTALL_ROOT/current"
 say "Installing protected configuration and system service."
-install -d -o root -g root -m 0755 "$(dirname "$NGINX_SITE")"
-install -o root -g root -m 0600 "$release_dir/deploy/vps/uniter.env.example" "$ENV_DIR/uniter.env"
-install -o root -g root -m 0644 "$release_dir/deploy/vps/uniter.service" "$UNIT_FILE"
-install -o root -g root -m 0644 "$release_dir/deploy/vps/nginx.conf.example" "$NGINX_SITE"
-"$PYTHON_BIN" - "$NGINX_SITE" "$domain" <<'PY'
+if [[ -n $domain ]]; then
+  install -d -o root -g root -m 0755 "$(dirname "$NGINX_SITE")"
+  install -o root -g root -m 0644 "$release_dir/deploy/vps/nginx.conf.example" "$NGINX_SITE"
+  "$PYTHON_BIN" - "$NGINX_SITE" "$domain" <<'PY'
 from pathlib import Path
 import sys
 p = Path(sys.argv[1]); domain = sys.argv[2]
@@ -104,6 +110,7 @@ text = p.read_text(encoding="utf-8")
 if text.count("REPLACE_WITH_DOMAIN") != 4: raise SystemExit("Unexpected Nginx template: expected four hostname placeholders")
 p.write_text(text.replace("REPLACE_WITH_DOMAIN", domain), encoding="utf-8")
 PY
+fi
 say "Initializing new database only (configuration rows; no admin or sale data)."
 [[ ! -e "$STATE_DIR/uniter.db" && ! -L "$STATE_DIR/uniter.db" ]] || fail "Database path exists; refusing overwrite."
 runuser -u uniter -- env UNITER_DB="$STATE_DIR/uniter.db" PYTHONDONTWRITEBYTECODE=1 "$release_dir/.venv/bin/python" -m backend.seed
