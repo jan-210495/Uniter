@@ -29,67 +29,57 @@ case "$choice" in
   *) fail "Choose 1, 2, 3, or 4." ;;
 esac
 
+# Refuse existing state before checking or installing prerequisites.
 [[ -z "$(id -u uniter 2>/dev/null || true)" ]] || fail "The 'uniter' service account already exists; refusing this host."
 systemctl cat uniter >/dev/null 2>&1 && fail "An Uniter service already exists; this wizard never upgrades." || true
-for path in "$INSTALL_ROOT" "$ENV_DIR" "$STATE_DIR" "$BACKUP_DIR" "$NGINX_SITE" "$UNIT_FILE" "$INSTALL_ROOT/current"; do refuse_path "$path" "Uniter path/configuration"; done
+for path in "$INSTALL_ROOT" "$ENV_DIR" "$STATE_DIR" "$BACKUP_DIR" "$UNIT_FILE" "$INSTALL_ROOT/current"; do refuse_path "$path" "Uniter path/configuration"; done
 
 PACKAGE_MANAGER=apt
 PYTHON_BIN=""
-if command -v python3.12 >/dev/null 2>&1 && python3.12 -c 'import ssl, sqlite3, venv' >/dev/null 2>&1; then PYTHON_BIN=python3.12
-elif [[ ( $OS_CODENAME == trixie || $OS_CODENAME == forky || $OS_CODENAME == sid || $OS_MAJOR -ge 24 ) ]] && command -v python3 >/dev/null 2>&1 && python3 -c 'import ssl, sqlite3, venv; import sys; raise SystemExit(sys.version_info < (3, 12))' >/dev/null 2>&1; then PYTHON_BIN=python3
+if command -v python3.12 >/dev/null 2>&1 && python3.12 -c 'import ssl, sqlite3' >/dev/null 2>&1; then PYTHON_BIN=python3.12
+elif [[ ( $OS_CODENAME == trixie || $OS_CODENAME == forky || $OS_CODENAME == sid || $OS_MAJOR -ge 24 ) ]] && command -v python3 >/dev/null 2>&1 && python3 -c 'import ssl, sqlite3, sys; raise SystemExit(sys.version_info < (3, 12))' >/dev/null 2>&1; then PYTHON_BIN=python3
 fi
+[[ -n $PYTHON_BIN ]] || {
+  if [[ $OS_CODENAME == trixie || $OS_CODENAME == forky || $OS_CODENAME == sid || $OS_MAJOR -ge 24 ]]; then PYTHON_BIN=python3
+  elif [[ ${ID:-} == ubuntu && $OS_MAJOR == 22 ]]; then PYTHON_BIN=python3.12
+  else fail "This OS repository set is not known to provide Python 3.12+. No changes made; install Python 3.12+ from a supported OS source, then rerun."; fi
+}
+
 missing=()
 declare -A package_commands=( [git]=git [curl]=curl [openssl]=openssl [iproute2]=ss [systemd]=systemctl [sudo]=sudo [ca-certificates]=update-ca-certificates )
-if [[ -z $PYTHON_BIN ]]; then
-  if [[ $OS_CODENAME == trixie || $OS_CODENAME == forky || $OS_CODENAME == sid || $OS_MAJOR -ge 24 ]]; then package_commands[python3]=python3
-  elif [[ ${ID:-} == ubuntu && $OS_MAJOR == 22 ]]; then package_commands[python3.12]=python3.12
-  else fail "No supported Python >=3.12 interpreter is available from this OS release's configured repositories. No changes were made; install Python 3.12+ with venv support using a supported OS source, then rerun."; fi
-fi
 for pkg in "${!package_commands[@]}"; do
   if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed' || ! command -v "${package_commands[$pkg]}" >/dev/null 2>&1; then missing+=("$pkg"); fi
 done
-# Probe venv creation capability before package approval; Debian splits ensurepip
-# into python3.<minor>-venv and its package name differs by suite.
+
+# Probe ensurepip/venv itself; importability alone missed Debian's split package.
 VENV_PROBE=$(mktemp -d /tmp/uniter-venv-probe.XXXXXX)
-if ! "$PYTHON_BIN" -m venv "$VENV_PROBE/env" >/dev/null 2>&1; then
+if "$PYTHON_BIN" -m venv "$VENV_PROBE/env" >/dev/null 2>&1; then
+  rm -rf -- "$VENV_PROBE"
+else
   rmdir "$VENV_PROBE" 2>/dev/null || true
   case "$PYTHON_BIN:$OS_CODENAME" in
     python3:trixie|python3:forky|python3:sid) missing+=("python3.13-venv") ;;
     python3:*) missing+=("python3-venv") ;;
     python3.12:*) missing+=("python3.12-venv") ;;
   esac
-  PYTHON_VENV_AVAILABLE=0
-else
-  rm -rf -- "$VENV_PROBE"
-  PYTHON_VENV_AVAILABLE=1
 fi
+
 if ((${#missing[@]})); then
-  if [[ $PYTHON_VENV_AVAILABLE -eq 0 ]]; then
-    case "$PYTHON_BIN:$OS_CODENAME" in
-      python3:trixie|python3:forky|python3:sid) missing+=("python3.13-venv") ;;
-      python3:*) missing+=("python3-venv") ;;
-      python3.12:*) missing+=("python3.12-venv") ;;
-    esac
-  fi
   printf '\nThe following required Debian/Ubuntu packages are missing:\n'; printf '  - %s\n' "${missing[@]}"
   say "I can install these from the configured OS repositories using apt. This updates package indexes and installs software system-wide."
   confirm "Approve installing the missing packages?" || fail "Cannot continue until prerequisites are installed. No apt command was run."
   apt-get update
   apt-get install -y --no-install-recommends "${missing[@]}"
 fi
-if [[ ${PYTHON_VENV_AVAILABLE:-1} -eq 0 ]]; then
-  VENV_RETRY=$(mktemp -d /tmp/uniter-venv-check.XXXXXX)
-  if ! "$PYTHON_BIN" -m venv "$VENV_RETRY/env" >/dev/null 2>&1; then rm -rf -- "$VENV_RETRY"; fail "Python virtual-environment support is still unavailable after package installation. No Uniter files were created."; fi
-  rm -rf -- "$VENV_RETRY"
-fi
 
-if [[ -z $PYTHON_BIN ]]; then
-  if command -v python3.12 >/dev/null 2>&1 && python3.12 -c 'import ssl, sqlite3, venv' >/dev/null 2>&1; then PYTHON_BIN=python3.12
-  elif command -v python3 >/dev/null 2>&1 && python3 -c 'import ssl, sqlite3, venv; import sys; raise SystemExit(sys.version_info < (3, 12))' >/dev/null 2>&1; then PYTHON_BIN=python3
-  else fail "Python >=3.12 with SSL, SQLite and venv is still unavailable. No Uniter files were created."; fi
+VENV_RETRY=$(mktemp -d /tmp/uniter-venv-check.XXXXXX)
+if ! "$PYTHON_BIN" -m venv "$VENV_RETRY/env" >/dev/null 2>&1; then
+  rmdir "$VENV_RETRY" 2>/dev/null || true
+  fail "Python venv/ensurepip support is still unavailable after prerequisites. No Uniter state was created."
 fi
-for cmd in git curl openssl ss useradd runuser systemctl systemd-analyze; do need "$cmd"; done
+rm -rf -- "$VENV_RETRY"
 "$PYTHON_BIN" -c 'import ssl, sqlite3, venv; print("Python", __import__("sys").version.split()[0], "SQLite", sqlite3.sqlite_version)' || fail "Selected Python lacks required SSL/SQLite/venv support."
+for cmd in git curl openssl ss useradd runuser systemctl systemd-analyze; do need "$cmd"; done
 python_version="$($PYTHON_BIN --version 2>&1)"; say "Using Python interpreter: $PYTHON_BIN ($python_version)"
 
 printf '\nRelease to install (tag, e.g. v1.0.5).\n'; read -r -p 'Release tag [v1.0.5]: ' tag; tag=${tag:-v1.0.5}
@@ -127,6 +117,8 @@ say "Creating isolated Python environment and installing runtime requirements."
 "$release_dir/.venv/bin/python" -m pip check
 chown -R root:uniter "$release_dir"; chmod -R u=rwX,g=rX,o= "$release_dir"; ln -s "$release_dir" "$INSTALL_ROOT/current"
 say "Installing protected configuration and system service."
+install -o root -g root -m 0600 "$release_dir/deploy/vps/uniter.env.example" "$ENV_DIR/uniter.env"
+install -o root -g root -m 0644 "$release_dir/deploy/vps/uniter.service" "$UNIT_FILE"
 if [[ -n $domain ]]; then
   install -d -o root -g root -m 0755 "$(dirname "$NGINX_SITE")"
   install -o root -g root -m 0644 "$release_dir/deploy/vps/nginx.conf.example" "$NGINX_SITE"
